@@ -93,8 +93,8 @@ class RexInterpreterTest {
                 rex.makeInputRef(intType(), 0),
                 rex.makeExactLiteral(java.math.BigDecimal.ONE, intType()));
         ValueVector out = interpreter.eval(expr, input);
-        assertEquals(2L, ((BigIntVector) out).get(0));
-        assertEquals(6L, ((BigIntVector) out).get(1));
+        assertEquals(2, ((IntVector) out).get(0));
+        assertEquals(6, ((IntVector) out).get(1));
         assertTrue(out.isNull(2));
         out.close();
     }

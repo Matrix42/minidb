@@ -66,7 +66,7 @@ public class RexInterpreter {
             case MINUS:
             case TIMES:
             case DIVIDE:
-                return arithmetic(kind, call.getOperands(), input);
+                return arithmetic(kind, call.getOperands(), call.getType(), input);
             default:
                 throw new UnsupportedOperationException("unsupported operator: " + kind);
         }
@@ -121,13 +121,16 @@ public class RexInterpreter {
     }
 
     private ValueVector arithmetic(SqlKind kind, List<RexNode> operands,
-                                   VectorSchemaRoot input) {
+                                   RelDataType resultType, VectorSchemaRoot input) {
         int rows = input.getRowCount();
         ValueVector left = eval(operands.get(0), input);
         ValueVector right = eval(operands.get(1), input);
         try {
-            boolean doubleDomain = isDouble(left) || isDouble(right)
-                    || kind == SqlKind.DIVIDE;
+            SqlTypeName resultSqlType = resultType.getSqlTypeName();
+            boolean doubleDomain = isFloating(resultSqlType);
+            boolean intDomain = resultSqlType == SqlTypeName.INTEGER
+                    || resultSqlType == SqlTypeName.SMALLINT
+                    || resultSqlType == SqlTypeName.TINYINT;
             if (doubleDomain) {
                 Float8Vector out = new Float8Vector("arith", allocator);
                 out.allocateNew(rows);
@@ -143,6 +146,19 @@ public class RexInterpreter {
                 out.setValueCount(rows);
                 return out;
             }
+            if (intDomain) {
+                IntVector out = new IntVector("arith", allocator);
+                out.allocateNew(rows);
+                for (int i = 0; i < rows; i++) {
+                    if (left.isNull(i) || right.isNull(i)) {
+                        out.setNull(i);
+                        continue;
+                    }
+                    out.setSafe(i, (int) applyLong(kind, asLong(left, i), asLong(right, i)));
+                }
+                out.setValueCount(rows);
+                return out;
+            }
             BigIntVector out = new BigIntVector("arith", allocator);
             out.allocateNew(rows);
             for (int i = 0; i < rows; i++) {
@@ -150,9 +166,7 @@ public class RexInterpreter {
                     out.setNull(i);
                     continue;
                 }
-                long a = asLong(left, i);
-                long b = asLong(right, i);
-                out.setSafe(i, applyLong(kind, a, b));
+                out.setSafe(i, applyLong(kind, asLong(left, i), asLong(right, i)));
             }
             out.setValueCount(rows);
             return out;
@@ -160,6 +174,11 @@ public class RexInterpreter {
             left.close();
             right.close();
         }
+    }
+
+    private static boolean isFloating(SqlTypeName type) {
+        return type == SqlTypeName.DOUBLE || type == SqlTypeName.FLOAT
+                || type == SqlTypeName.REAL || type == SqlTypeName.DECIMAL;
     }
 
     private static double applyDouble(SqlKind kind, double a, double b) {
@@ -184,8 +203,13 @@ public class RexInterpreter {
                 return a + b;
             case MINUS:
                 return a - b;
-            default:
+            case TIMES:
                 return a * b;
+            default:
+                if (b == 0L) {
+                    throw new ArithmeticException("division by zero");
+                }
+                return a / b;
         }
     }
 

@@ -58,26 +58,34 @@ public class CalciteContext {
     }
 
     public RelRoot plan(String sql) {
-        SqlNode parsed = parse(sql);
-
+        HepPlanner planner = new HepPlanner(new HepProgramBuilder().build());
         SqlTypeFactoryImpl typeFactory =
                 new SqlTypeFactoryImpl(RelDataTypeSystem.DEFAULT);
-        CalciteCatalogReader catalogReader = new CalciteCatalogReader(
-                CalciteSchema.from(createRootSchema()),
-                List.of(SCHEMA_NAME),
-                typeFactory,
-                new CalciteConnectionConfigImpl(new Properties()));
+        RelOptCluster cluster = RelOptCluster.create(planner, new RexBuilder(typeFactory));
+        return planInCluster(sql, cluster);
+    }
+
+    public RelRoot planInCluster(String sql, RelOptCluster cluster) {
+        SqlNode parsed = parse(sql);
+        SqlTypeFactoryImpl typeFactory =
+                (SqlTypeFactoryImpl) cluster.getTypeFactory();
+        CalciteCatalogReader catalogReader = buildCatalogReader(typeFactory);
         SqlValidator validator = SqlValidatorUtil.newValidator(
                 SqlStdOperatorTable.instance(), catalogReader, typeFactory,
                 SqlValidator.Config.DEFAULT.withIdentifierExpansion(true));
         SqlNode validated = validator.validate(parsed);
-
-        HepPlanner planner = new HepPlanner(new HepProgramBuilder().build());
-        RelOptCluster cluster = RelOptCluster.create(planner, new RexBuilder(typeFactory));
         SqlToRelConverter converter = new SqlToRelConverter(
                 null, validator, catalogReader, cluster,
                 StandardConvertletTable.INSTANCE,
                 SqlToRelConverter.config());
         return converter.convertQuery(validated, false, true);
+    }
+
+    private CalciteCatalogReader buildCatalogReader(SqlTypeFactoryImpl typeFactory) {
+        return new CalciteCatalogReader(
+                CalciteSchema.from(createRootSchema()),
+                List.of(SCHEMA_NAME),
+                typeFactory,
+                new CalciteConnectionConfigImpl(new Properties()));
     }
 }
