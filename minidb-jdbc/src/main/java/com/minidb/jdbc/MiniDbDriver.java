@@ -1,16 +1,41 @@
 package com.minidb.jdbc;
 
+import com.minidb.protocol.Protocol;
+import java.net.URI;
 import java.sql.Connection;
 import java.sql.Driver;
+import java.sql.DriverManager;
 import java.sql.DriverPropertyInfo;
 import java.sql.SQLException;
 import java.util.Properties;
 import java.util.logging.Logger;
 
 public class MiniDbDriver implements Driver {
+
+    static {
+        try {
+            DriverManager.registerDriver(new MiniDbDriver());
+        } catch (SQLException e) {
+            throw new RuntimeException("failed to register MiniDbDriver", e);
+        }
+    }
+
     @Override
     public Connection connect(String url, Properties info) throws SQLException {
-        throw new UnsupportedOperationException("implemented in Task 11");
+        if (!acceptsURL(url)) {
+            return null;
+        }
+        URI uri = URI.create(url.substring("jdbc:".length()));
+        String host = uri.getHost();
+        int port = uri.getPort() > 0 ? uri.getPort() : Protocol.DEFAULT_PORT;
+        MiniDbClient client = new MiniDbClient();
+        try {
+            client.connect(host, port);
+        } catch (SQLException e) {
+            client.close();
+            throw e;
+        }
+        return new MiniDbConnection(client, url);
     }
 
     @Override
