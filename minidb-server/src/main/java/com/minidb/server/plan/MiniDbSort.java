@@ -52,12 +52,12 @@ public class MiniDbSort extends Sort implements MiniDbRel {
             batches.add(b);
             total += b.getRowCount();
         }
+        VectorSchemaRoot materialized = batches.isEmpty()
+                ? null : mergeBatches(batches, total, ctx);
+        // close input only AFTER copying: Filter/Project own their batches
         input.close();
-
-        VectorSchemaRoot materialized = mergeBatches(batches, total, ctx);
-        for (VectorSchemaRoot b : batches) {
-            // batches were copied into materialized; originals from Scan are table-owned,
-            // from Project/Filter are iterator-owned — iterator already closed above.
+        if (materialized == null) {
+            throw new IllegalStateException("sort received no input batches");
         }
 
         int rows = materialized.getRowCount();

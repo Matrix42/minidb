@@ -46,8 +46,16 @@ public class MiniDbModify extends TableModify implements MiniDbRel {
         affected = 0;
         while (input.hasNext()) {
             VectorSchemaRoot batch = input.next();
+            // copy rows into a table-owned root; never take ownership of
+            // batches that may belong to another table (Scan) or the iterator
+            VectorSchemaRoot copy = target.newBatchRoot();
+            copy.allocateNew();
+            for (int i = 0; i < batch.getRowCount(); i++) {
+                com.minidb.server.exec.RowCopier.copyRow(batch, i, copy, i);
+            }
+            copy.setRowCount(batch.getRowCount());
             affected += batch.getRowCount();
-            target.appendBatch(batch);
+            target.appendBatch(copy);
         }
         input.close();
         ctx.storage().markDirty(tableName);
