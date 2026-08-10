@@ -17,8 +17,12 @@ import java.net.InetSocketAddress;
 import java.nio.file.Path;
 import org.apache.arrow.memory.BufferAllocator;
 import org.apache.arrow.memory.RootAllocator;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 
 public class MiniDbServer implements AutoCloseable {
+
+    private static final Logger LOG = LoggerFactory.getLogger(MiniDbServer.class);
 
     private final MiniDbCatalog catalog = new MiniDbCatalog();
     private BufferAllocator allocator;
@@ -47,6 +51,7 @@ public class MiniDbServer implements AutoCloseable {
                     }
                 });
         channel = bootstrap.bind(port).sync().channel();
+        LOG.info("MiniDB server bound to port {}", port);
     }
 
     public int port() {
@@ -55,6 +60,7 @@ public class MiniDbServer implements AutoCloseable {
 
     @Override
     public void close() {
+        LOG.info("MiniDB server closed");
         if (channel != null) {
             channel.close();
         }

@@ -1,8 +1,12 @@
 package com.minidb.server;
 
 import java.nio.file.Path;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 
 public final class Main {
+    private static final Logger LOG = LoggerFactory.getLogger(Main.class);
+
     public static void main(String[] args) throws Exception {
         int port = 8899;
         Path dataDir = Path.of("data");
@@ -13,10 +17,14 @@ public final class Main {
                 dataDir = Path.of(args[++i]);
             }
         }
+        LOG.info("MiniDB starting on port {} with data dir {}", port, dataDir);
         MiniDbServer server = new MiniDbServer();
         server.start(port, dataDir);
-        System.out.println("MiniDB listening on port " + server.port());
-        Runtime.getRuntime().addShutdownHook(new Thread(server::close));
+        LOG.info("MiniDB listening on port {}", server.port());
+        Runtime.getRuntime().addShutdownHook(new Thread(() -> {
+            LOG.info("MiniDB shutting down");
+            server.close();
+        }));
         Thread.currentThread().join();
     }
 }
