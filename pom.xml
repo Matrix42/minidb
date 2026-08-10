@@ -46,6 +46,12 @@
         <artifactId>arrow-memory-netty</artifactId>
         <version>${arrow.version}</version>
         <scope>runtime</scope>
+        <exclusions>
+          <exclusion>
+            <groupId>org.apache.arrow</groupId>
+            <artifactId>arrow-memory-unsafe</artifactId>
+          </exclusion>
+        </exclusions>
       </dependency>
       <dependency>
         <groupId>org.apache.calcite</groupId>
