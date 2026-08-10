@@ -50,6 +50,15 @@ public class ArrowTable implements AutoCloseable {
         batches.add(batch);
     }
 
+    /**
+     * Swap the table's batches for {@code newBatches}. The caller keeps the
+     * references to the previous batches and is responsible for closing them.
+     */
+    public void replaceBatches(List<VectorSchemaRoot> newBatches) {
+        batches.clear();
+        batches.addAll(newBatches);
+    }
+
     public List<VectorSchemaRoot> batches() {
         return List.copyOf(batches);
     }

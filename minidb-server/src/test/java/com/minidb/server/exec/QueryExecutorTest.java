@@ -84,6 +84,63 @@ class QueryExecutorTest {
     }
 
     @Test
+    void updateModifiesRows() {
+        executor.execute("CREATE TABLE t (id INTEGER, name VARCHAR)");
+        executor.execute("INSERT INTO t VALUES (1, 'a'), (2, 'b'), (3, 'c')");
+        QueryResult update = executor.execute(
+                "UPDATE t SET name = 'x' WHERE id = 1");
+        assertEquals(1L, ((QueryResult.Update) update).count());
+
+        QueryResult select = executor.execute(
+                "SELECT id, name FROM t ORDER BY id");
+        VectorSchemaRoot root = ((QueryResult.Rows) select).data();
+        assertEquals(3, root.getRowCount());
+        assertEquals("x", new String(((VarCharVector) root.getVector("name")).get(0)));
+        assertEquals("b", new String(((VarCharVector) root.getVector("name")).get(1)));
+        assertEquals("c", new String(((VarCharVector) root.getVector("name")).get(2)));
+        root.close();
+    }
+
+    @Test
+    void updateIntegerColumnWithLiteral() {
+        executor.execute("CREATE TABLE t (id INTEGER, name VARCHAR)");
+        executor.execute("INSERT INTO t VALUES (1, 'a'), (2, 'b')");
+        QueryResult update = executor.execute("UPDATE t SET id = 10 WHERE id = 1");
+        assertEquals(1L, ((QueryResult.Update) update).count());
+
+        QueryResult select = executor.execute("SELECT id, name FROM t ORDER BY id");
+        VectorSchemaRoot root = ((QueryResult.Rows) select).data();
+        assertEquals(2, root.getRowCount());
+        assertEquals(2, ((IntVector) root.getVector("id")).get(0));
+        assertEquals(10, ((IntVector) root.getVector("id")).get(1));
+        root.close();
+    }
+
+    @Test
+    void updateNoMatchLeavesTableUnchanged() {
+        executor.execute("CREATE TABLE t (id INTEGER, name VARCHAR)");
+        executor.execute("INSERT INTO t VALUES (1, 'a'), (2, 'b')");
+        QueryResult update = executor.execute("UPDATE t SET name = 'x' WHERE id = 99");
+        assertEquals(0L, ((QueryResult.Update) update).count());
+        assertEquals(2L, storage.getTable("t").rowCount());
+    }
+
+    @Test
+    void deleteRemovesRows() {
+        executor.execute("CREATE TABLE t (id INTEGER, name VARCHAR)");
+        executor.execute("INSERT INTO t VALUES (1, 'a'), (2, 'b'), (3, 'c')");
+        QueryResult delete = executor.execute("DELETE FROM t WHERE id = 2");
+        assertEquals(1L, ((QueryResult.Update) delete).count());
+
+        QueryResult select = executor.execute("SELECT id FROM t ORDER BY id");
+        VectorSchemaRoot root = ((QueryResult.Rows) select).data();
+        assertEquals(2, root.getRowCount());
+        assertEquals(1, ((IntVector) root.getVector("id")).get(0));
+        assertEquals(3, ((IntVector) root.getVector("id")).get(1));
+        root.close();
+    }
+
+    @Test
     void dropTableRemovesIt() {
         executor.execute("CREATE TABLE t (id INTEGER)");
         executor.execute("DROP TABLE t");

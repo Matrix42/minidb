@@ -1,8 +1,18 @@
 package com.minidb.server.exec;
 
+import java.nio.charset.StandardCharsets;
 import java.util.List;
+import org.apache.arrow.vector.BigIntVector;
+import org.apache.arrow.vector.BitVector;
+import org.apache.arrow.vector.DateDayVector;
 import org.apache.arrow.vector.FieldVector;
+import org.apache.arrow.vector.Float8Vector;
+import org.apache.arrow.vector.IntVector;
+import org.apache.arrow.vector.TimeStampMilliVector;
+import org.apache.arrow.vector.ValueVector;
+import org.apache.arrow.vector.VarCharVector;
 import org.apache.arrow.vector.VectorSchemaRoot;
+import org.apache.arrow.vector.util.Text;
 
 public final class RowCopier {
 
@@ -31,5 +41,65 @@ public final class RowCopier {
         for (int i = 0; i < srcVectors.size(); i++) {
             dstVectors.get(i).copyFromSafe(srcRow, dstRow, srcVectors.get(i));
         }
+    }
+
+    /**
+     * Copy the value at {@code srcRow} from {@code src} into {@code dst} at
+     * {@code dstRow}, coercing between compatible numeric/text types when the
+     * source and destination vector types differ (e.g. BigIntVector literal
+     * into an IntVector column).
+     */
+    public static void writeValue(FieldVector dst, int dstRow,
+                                  ValueVector src, int srcRow) {
+        if (src.isNull(srcRow)) {
+            setNull(dst, dstRow);
+            return;
+        }
+        if (dst instanceof IntVector iv) {
+            iv.setSafe(dstRow, (int) readLong(src, srcRow));
+        } else if (dst instanceof BigIntVector bv) {
+            bv.setSafe(dstRow, readLong(src, srcRow));
+        } else if (dst instanceof Float8Vector fv) {
+            fv.setSafe(dstRow, readDouble(src, srcRow));
+        } else if (dst instanceof VarCharVector vv) {
+            Object v = src.getObject(srcRow);
+            byte[] bytes = v instanceof Text t ? t.copyBytes()
+                    : v.toString().getBytes(StandardCharsets.UTF_8);
+            vv.setSafe(dstRow, bytes);
+        } else if (dst instanceof BitVector bv) {
+            bv.setSafe(dstRow, (int) readLong(src, srcRow));
+        } else {
+            // same-type vectors (Date, Timestamp, etc.): direct copy
+            dst.copyFromSafe(srcRow, dstRow, src);
+        }
+    }
+
+    private static void setNull(FieldVector dst, int row) {
+        if (dst instanceof IntVector iv) iv.setNull(row);
+        else if (dst instanceof BigIntVector bv) bv.setNull(row);
+        else if (dst instanceof Float8Vector fv) fv.setNull(row);
+        else if (dst instanceof VarCharVector vv) vv.setNull(row);
+        else if (dst instanceof BitVector bv) bv.setNull(row);
+        else if (dst instanceof DateDayVector dv) dv.setNull(row);
+        else if (dst instanceof TimeStampMilliVector tv) tv.setNull(row);
+        else throw new UnsupportedOperationException(
+                "unsupported vector for null: " + dst.getClass());
+    }
+
+    private static long readLong(ValueVector v, int i) {
+        if (v instanceof IntVector iv) return iv.get(i);
+        if (v instanceof BigIntVector bv) return bv.get(i);
+        if (v instanceof Float8Vector fv) return (long) fv.get(i);
+        if (v instanceof BitVector bv) return bv.get(i);
+        throw new IllegalArgumentException(
+                "not a numeric vector: " + v.getClass());
+    }
+
+    private static double readDouble(ValueVector v, int i) {
+        if (v instanceof IntVector iv) return iv.get(i);
+        if (v instanceof BigIntVector bv) return bv.get(i);
+        if (v instanceof Float8Vector fv) return fv.get(i);
+        throw new IllegalArgumentException(
+                "not a numeric vector: " + v.getClass());
     }
 }
