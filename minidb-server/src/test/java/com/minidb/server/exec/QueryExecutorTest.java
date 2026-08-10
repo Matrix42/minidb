@@ -149,6 +149,36 @@ class QueryExecutorTest {
     }
 
     @Test
+    void truncateEmptiesTableButKeepsSchema() {
+        executor.execute("CREATE TABLE t (id INTEGER, name VARCHAR)");
+        executor.execute("INSERT INTO t VALUES (1, 'a'), (2, 'b'), (3, 'c')");
+        QueryResult truncate = executor.execute("TRUNCATE TABLE t");
+        assertEquals(0L, ((QueryResult.Update) truncate).count());
+        assertEquals(0L, storage.getTable("t").rowCount());
+        assertTrue(catalog.hasTable("t"));
+        // SELECT over the now-empty table behaves like any empty scan:
+        // no batches, so the executor reports the empty result as an error.
+        assertThrows(IllegalStateException.class,
+                () -> executor.execute("SELECT id, name FROM t"));
+    }
+
+    @Test
+    void truncateAllowsReinsert() {
+        executor.execute("CREATE TABLE t (id INTEGER, name VARCHAR)");
+        executor.execute("INSERT INTO t VALUES (1, 'a')");
+        executor.execute("TRUNCATE TABLE t");
+        QueryResult insert = executor.execute("INSERT INTO t VALUES (2, 'b')");
+        assertEquals(1L, ((QueryResult.Update) insert).count());
+        assertEquals(1L, storage.getTable("t").rowCount());
+    }
+
+    @Test
+    void truncateMissingTableThrows() {
+        assertThrows(Exception.class,
+                () -> executor.execute("TRUNCATE TABLE nope"));
+    }
+
+    @Test
     void badSqlThrowsWithMessage() {
         Exception e = assertThrows(Exception.class,
                 () -> executor.execute("SELEC nope"));

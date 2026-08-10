@@ -19,6 +19,7 @@ import org.apache.calcite.sql.SqlNode;
 import org.apache.calcite.sql.ddl.SqlColumnDeclaration;
 import org.apache.calcite.sql.ddl.SqlCreateTable;
 import org.apache.calcite.sql.ddl.SqlDropTable;
+import org.apache.calcite.sql.ddl.SqlTruncateTable;
 
 public class QueryExecutor {
 
@@ -44,6 +45,9 @@ public class QueryExecutor {
         }
         if (parsed instanceof SqlDropTable drop) {
             return handleDrop(drop);
+        }
+        if (parsed instanceof SqlTruncateTable truncate) {
+            return handleTruncate(truncate);
         }
         RelNode plan = planner.plan(sql);
         ExecContext ctx = new ExecContext(storage, allocator);
@@ -82,6 +86,12 @@ public class QueryExecutor {
             throw new IllegalArgumentException("table not found: " + name);
         }
         storage.dropTable(name);
+        return new QueryResult.Update(0);
+    }
+
+    private QueryResult handleTruncate(SqlTruncateTable truncate) {
+        String name = truncate.name.getSimple();
+        storage.truncateTable(name);
         return new QueryResult.Update(0);
     }
 

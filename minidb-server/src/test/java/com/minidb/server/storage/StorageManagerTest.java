@@ -76,6 +76,38 @@ class StorageManagerTest {
     }
 
     @Test
+    void truncateSurvivesReload(@TempDir Path dir) {
+        MiniDbCatalog catalog = new MiniDbCatalog();
+        try (BufferAllocator allocator = new RootAllocator()) {
+            StorageManager storage = new StorageManager(catalog, allocator, dir);
+            ArrowTable table = storage.createTable(schema());
+            VectorSchemaRoot batch = table.newBatchRoot();
+            batch.allocateNew();
+            ((IntVector) batch.getVector("id")).setSafe(0, 7);
+            ((VarCharVector) batch.getVector("name")).setSafe(0, "hello".getBytes());
+            batch.setRowCount(1);
+            table.appendBatch(batch);
+            storage.truncateTable("t");
+            storage.markDirty("t");
+            storage.close();
+        }
+
+        MiniDbCatalog catalog2 = new MiniDbCatalog();
+        try (BufferAllocator allocator = new RootAllocator()) {
+            StorageManager storage2 = new StorageManager(catalog2, allocator, dir);
+            storage2.loadAll();
+            ArrowTable reloaded = storage2.getTable("t");
+            assertEquals(0, reloaded.rowCount());
+            // schema intact: a fresh batch still carries both columns
+            VectorSchemaRoot fresh = reloaded.newBatchRoot();
+            fresh.allocateNew();
+            assertEquals(2, fresh.getFieldVectors().size());
+            fresh.close();
+            storage2.close();
+        }
+    }
+
+    @Test
     void loadAllSkipsEmptyDir(@TempDir Path dir) {
         MiniDbCatalog catalog = new MiniDbCatalog();
         try (BufferAllocator allocator = new RootAllocator()) {

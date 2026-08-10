@@ -71,6 +71,18 @@ public class ArrowTable implements AutoCloseable {
         return count;
     }
 
+    /**
+     * Drop all rows while keeping the schema and table identity. The previous
+     * batches are closed; the table is left with no batches.
+     */
+    public void clear() {
+        List<VectorSchemaRoot> old = List.copyOf(batches);
+        batches.clear();
+        for (VectorSchemaRoot batch : old) {
+            batch.close();
+        }
+    }
+
     @Override
     public void close() {
         for (VectorSchemaRoot batch : batches) {

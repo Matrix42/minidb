@@ -121,6 +121,15 @@ public class StorageManager implements AutoCloseable {
         }
     }
 
+    public void truncateTable(String name) {
+        ArrowTable table = tables.get(key(name));
+        if (table == null) {
+            throw new IllegalArgumentException("table not found: " + name);
+        }
+        table.clear();
+        markDirty(name);
+    }
+
     public void markDirty(String tableName) {
         dirty.add(key(tableName));
     }
