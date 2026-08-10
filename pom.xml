@@ -22,6 +22,7 @@
     <arrow.version>19.0.0</arrow.version>
     <calcite.version>1.42.0</calcite.version>
     <junit.version>5.14.4</junit.version>
+    <log4j.version>2.24.3</log4j.version>
   </properties>
 
   <dependencyManagement>
@@ -68,6 +69,12 @@
         <artifactId>junit-jupiter</artifactId>
         <version>${junit.version}</version>
         <scope>test</scope>
+      </dependency>
+      <dependency>
+        <groupId>org.apache.logging.log4j</groupId>
+        <artifactId>log4j-slf4j2-impl</artifactId>
+        <version>${log4j.version}</version>
+        <scope>runtime</scope>
       </dependency>
       <dependency>
         <groupId>com.minidb</groupId>
