@@ -26,8 +26,12 @@ import org.apache.arrow.vector.ipc.ArrowFileWriter;
 import org.apache.arrow.vector.ipc.message.ArrowRecordBatch;
 import org.apache.arrow.vector.types.pojo.ArrowType;
 import org.apache.arrow.vector.types.pojo.Field;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 
 public class StorageManager implements AutoCloseable {
+
+    private static final Logger LOG = LoggerFactory.getLogger(StorageManager.class);
 
     private final MiniDbCatalog catalog;
     private final BufferAllocator allocator;
@@ -43,16 +47,20 @@ public class StorageManager implements AutoCloseable {
 
     public void loadAll() {
         if (!Files.exists(dataDir)) {
+            LOG.info("loaded 0 table(s) (data dir absent)");
             return;
         }
+        int count = 0;
         try (DirectoryStream<Path> stream =
                      Files.newDirectoryStream(dataDir, "*.arrow")) {
             for (Path file : stream) {
                 loadFile(file);
+                count++;
             }
         } catch (IOException e) {
             throw new UncheckedIOException(e);
         }
+        LOG.info("loaded {} table(s)", count);
     }
 
     private void loadFile(Path file) throws IOException {
@@ -150,6 +158,7 @@ public class StorageManager implements AutoCloseable {
                     sink.close();
                 }
             }
+            LOG.info("flushed table {}", tableName);
         } catch (IOException e) {
             throw new UncheckedIOException(e);
         }
