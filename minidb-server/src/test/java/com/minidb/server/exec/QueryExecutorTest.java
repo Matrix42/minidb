@@ -2,9 +2,11 @@ package com.minidb.server.exec;
 
 import com.minidb.server.catalog.MiniDbCatalog;
 import com.minidb.server.storage.StorageManager;
+import com.minidb.server.stats.StatsManager;
 import java.nio.file.Path;
 import org.apache.arrow.memory.BufferAllocator;
 import org.apache.arrow.memory.RootAllocator;
+import org.apache.arrow.vector.BigIntVector;
 import org.apache.arrow.vector.IntVector;
 import org.apache.arrow.vector.VarCharVector;
 import org.apache.arrow.vector.VectorSchemaRoot;
@@ -14,6 +16,7 @@ import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertNotNull;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
@@ -24,6 +27,7 @@ class QueryExecutorTest {
     BufferAllocator allocator;
     MiniDbCatalog catalog;
     StorageManager storage;
+    StatsManager stats;
     QueryExecutor executor;
 
     @BeforeEach
@@ -31,7 +35,8 @@ class QueryExecutorTest {
         allocator = new RootAllocator();
         catalog = new MiniDbCatalog();
         storage = new StorageManager(catalog, allocator, dataDir);
-        executor = new QueryExecutor(catalog, storage, allocator);
+        stats = new StatsManager(storage, allocator, dataDir);
+        executor = new QueryExecutor(catalog, storage, allocator, stats);
     }
 
     @AfterEach
@@ -213,5 +218,64 @@ class QueryExecutorTest {
         Exception e = assertThrows(Exception.class,
                 () -> executor.execute("SELEC nope"));
         assertTrue(e.getMessage() != null);
+    }
+
+    @Test
+    void analyzeCommandCollectsStatsForTable() {
+        executor.execute("CREATE TABLE t (id INTEGER)");
+        executor.execute("INSERT INTO t VALUES (1), (2), (3)");
+        executor.execute("ANALYZE t");
+        // plain EXPLAIN on a filter should now be "estimated", not "no stats"
+        QueryResult r = executor.execute("EXPLAIN SELECT id FROM t WHERE id > 1");
+        VectorSchemaRoot root = ((QueryResult.Rows) r).data();
+        VarCharVector op = (VarCharVector) root.getVector("operation");
+        VarCharVector remarks = (VarCharVector) root.getVector("remarks");
+        boolean foundEstimated = false;
+        for (int i = 0; i < root.getRowCount(); i++) {
+            if (new String(op.get(i)).contains("Filter") && !remarks.isNull(i)
+                    && new String(remarks.get(i)).contains("estimated")) {
+                foundEstimated = true;
+            }
+        }
+        assertTrue(foundEstimated);
+        root.close();
+    }
+
+    @Test
+    void analyzeAllCommandCollectsAllTables() {
+        executor.execute("CREATE TABLE a (id INTEGER)");
+        executor.execute("CREATE TABLE b (id INTEGER)");
+        executor.execute("INSERT INTO a VALUES (1)");
+        executor.execute("INSERT INTO b VALUES (1)");
+        executor.execute("ANALYZE");
+        assertNotNull(stats.tableStats("a"));
+        assertNotNull(stats.tableStats("b"));
+    }
+
+    @Test
+    void explainAnalyzeEndToEndMeasuresRows() {
+        executor.execute("CREATE TABLE t (id INTEGER)");
+        executor.execute("INSERT INTO t VALUES (1), (2), (3), (4)");
+        QueryResult r = executor.execute("EXPLAIN ANALYZE SELECT id FROM t WHERE id > 2");
+        VectorSchemaRoot root = ((QueryResult.Rows) r).data();
+        VarCharVector op = (VarCharVector) root.getVector("operation");
+        BigIntVector rows = (BigIntVector) root.getVector("rows");
+        long filterRows = -1;
+        for (int i = 0; i < root.getRowCount(); i++) {
+            if (new String(op.get(i)).contains("Filter")) {
+                filterRows = rows.get(i);
+            }
+        }
+        assertEquals(2L, filterRows); // id>2 -> 3,4
+        root.close();
+    }
+
+    @Test
+    void explainRejectsDmlEndToEnd() {
+        executor.execute("CREATE TABLE t (id INTEGER)");
+        assertThrows(IllegalArgumentException.class,
+                () -> executor.execute("EXPLAIN INSERT INTO t VALUES (1)"));
+        assertThrows(IllegalArgumentException.class,
+                () -> executor.execute("EXPLAIN ANALYZE DELETE FROM t"));
     }
 }

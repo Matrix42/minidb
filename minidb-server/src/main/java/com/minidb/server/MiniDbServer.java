@@ -6,6 +6,7 @@ import com.minidb.server.catalog.MiniDbCatalog;
 import com.minidb.server.exec.QueryExecutor;
 import com.minidb.server.netty.SessionHandler;
 import com.minidb.server.storage.StorageManager;
+import com.minidb.server.stats.StatsManager;
 import io.netty.bootstrap.ServerBootstrap;
 import io.netty.channel.Channel;
 import io.netty.channel.ChannelInitializer;
@@ -35,7 +36,8 @@ public class MiniDbServer implements AutoCloseable {
         allocator = new RootAllocator();
         storage = new StorageManager(catalog, allocator, dataDir);
         storage.loadAll();
-        QueryExecutor executor = new QueryExecutor(catalog, storage, allocator);
+        StatsManager stats = new StatsManager(storage, allocator, dataDir);
+        QueryExecutor executor = new QueryExecutor(catalog, storage, allocator, stats);
 
         boss = new NioEventLoopGroup(1);
         workers = new NioEventLoopGroup();

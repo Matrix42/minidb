@@ -10,8 +10,10 @@ import com.minidb.server.plan.MiniDbModify;
 import com.minidb.server.plan.MiniDbRel;
 import com.minidb.server.plan.Planner;
 import com.minidb.server.storage.StorageManager;
+import com.minidb.server.stats.StatsManager;
 import java.util.ArrayList;
 import java.util.List;
+import java.util.Locale;
 import org.apache.arrow.memory.BufferAllocator;
 import org.apache.arrow.vector.VectorSchemaRoot;
 import org.apache.arrow.vector.types.pojo.Field;
@@ -30,17 +32,38 @@ public class QueryExecutor {
     private final BufferAllocator allocator;
     private final Planner planner;
     private final CalciteContext calcite;
+    private final StatsManager stats;
 
     public QueryExecutor(MiniDbCatalog catalog, StorageManager storage,
-                         BufferAllocator allocator) {
+                         BufferAllocator allocator, StatsManager stats) {
         this.catalog = catalog;
         this.storage = storage;
         this.allocator = allocator;
+        this.stats = stats;
         this.planner = new Planner(catalog);
         this.calcite = new CalciteContext(catalog);
     }
 
     public QueryResult execute(String sql) {
+        String trimmed = sql.strip();
+        String upper = trimmed.toUpperCase(Locale.ROOT);
+        if (upper.equals("ANALYZE")) {
+            stats.analyzeAll();
+            return new QueryResult.Update(0);
+        }
+        if (upper.startsWith("ANALYZE ")) {
+            String table = trimmed.substring("ANALYZE ".length()).strip();
+            stats.analyze(table);
+            return new QueryResult.Update(0);
+        }
+        if (upper.startsWith("EXPLAIN ANALYZE ")) {
+            String inner = trimmed.substring("EXPLAIN ANALYZE ".length());
+            return new ExplainExecutor(planner, stats, storage, allocator).analyze(inner);
+        }
+        if (upper.startsWith("EXPLAIN ")) {
+            String inner = trimmed.substring("EXPLAIN ".length());
+            return new ExplainExecutor(planner, stats, storage, allocator).explain(inner);
+        }
         SqlNode parsed = calcite.parse(sql);
         if (parsed instanceof SqlCreateTable create) {
             return handleCreate(create);
