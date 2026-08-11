@@ -60,6 +60,17 @@ public class MiniDbClient implements AutoCloseable {
         this.timeoutSeconds = timeoutSeconds;
     }
 
+    /**
+     * Reports whether the underlying channel is still connected. Goes false when
+     * the channel goes inactive (server closed, network dropped, etc.) — see
+     * {@link ResponseCollector#channelInactive}. MiniDbConnection delegates
+     * isClosed()/isValid() here so a pool learns the connection is dead without
+     * having to try a query.
+     */
+    public boolean isConnected() {
+        return connected;
+    }
+
     public void connect(String host, int port) throws SQLException {
         CompletableFuture<Void> handshake = new CompletableFuture<>();
         try {

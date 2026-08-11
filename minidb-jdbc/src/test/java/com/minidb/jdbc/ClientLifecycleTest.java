@@ -15,6 +15,7 @@ import java.util.concurrent.atomic.AtomicInteger;
 import org.junit.jupiter.api.Test;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
@@ -42,6 +43,33 @@ class ClientLifecycleTest {
                 "should report connection closed, not timeout: " + ex.getMessage());
 
         c.close(); // client close must be safe even on a dead connection
+    }
+
+    @Test
+    void deadConnectionReportsClosed() throws Exception {
+        MiniDbServer server = new MiniDbServer();
+        server.start(0, Files.createTempDirectory("minidb-dead"));
+        String url = "jdbc:minidb://127.0.0.1:" + server.port();
+        Connection c = DriverManager.getConnection(url);
+
+        // Sanity: while alive, the connection is open and valid.
+        assertFalse(c.isClosed(), "should be open before disconnect");
+        assertTrue(c.isValid(1), "should be valid before disconnect");
+
+        server.close(); // kill the server; the socket goes away
+
+        // Give the client's channelInactive a moment to fire so connected=false.
+        long deadline = System.nanoTime() + 2_000_000_000L;
+        while (c.isValid(1) && System.nanoTime() < deadline) {
+            Thread.sleep(10);
+        }
+
+        // After the network is gone, the JDBC Connection must report itself
+        // as closed/invalid so a pool does not hand it back out.
+        assertTrue(c.isClosed(), "should report closed after disconnect");
+        assertFalse(c.isValid(1), "should report invalid after disconnect");
+
+        c.close();
     }
 
     @Test

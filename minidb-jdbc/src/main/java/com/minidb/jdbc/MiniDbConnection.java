@@ -57,7 +57,10 @@ public class MiniDbConnection implements Connection {
 
     @Override
     public boolean isClosed() {
-        return closed;
+        // closed reflects either an explicit close() OR the underlying channel
+        // going inactive (server closed, network dropped). Without this, a pool
+        // would keep handing out dead connections until a query actually failed.
+        return closed || !client.isConnected();
     }
 
     @Override
@@ -85,7 +88,7 @@ public class MiniDbConnection implements Connection {
 
     @Override
     public boolean isValid(int timeout) {
-        return !closed;
+        return !isClosed();
     }
 
     private void checkClosed() throws SQLException {
