@@ -1,6 +1,5 @@
 package com.minidb.server.exec;
 
-import com.minidb.server.plan.MiniDbConvention;
 import com.minidb.server.plan.MiniDbFilter;
 import com.minidb.server.plan.MiniDbProject;
 import com.minidb.server.plan.MiniDbRel;
@@ -8,7 +7,6 @@ import com.minidb.server.plan.MiniDbScan;
 import com.minidb.server.plan.MiniDbSort;
 import com.minidb.server.plan.MiniDbValues;
 import java.util.ArrayList;
-import java.util.IdentityHashMap;
 import java.util.List;
 import java.util.Map;
 import org.apache.arrow.vector.VectorSchemaRoot;
@@ -16,7 +14,6 @@ import org.apache.calcite.plan.RelTraitSet;
 import org.apache.calcite.rel.AbstractRelNode;
 import org.apache.calcite.rel.RelNode;
 import org.apache.calcite.rel.RelWriter;
-import org.apache.calcite.rel.type.RelDataType;
 
 public final class Instrumenter {
 
@@ -38,7 +35,7 @@ public final class Instrumenter {
         RelNode copy = copyWithInputs(node, instrumentedInputs);
         NodeStats ns = new NodeStats();
         sink.put(node, ns); // key by ORIGINAL node, so ExplainExecutor can look up by plan id
-        return new InstrumentedRel(copy, node, ns, sink);
+        return new InstrumentedRel(copy, node, ns);
     }
 
     private static RelNode copyWithInputs(RelNode node, List<RelNode> inputs) {
@@ -75,22 +72,19 @@ public final class Instrumenter {
         private final RelNode wrapped;
         private final RelNode original;
         private final NodeStats stats;
-        private final Map<RelNode, NodeStats> sink;
 
-        InstrumentedRel(RelNode wrapped, RelNode original, NodeStats stats,
-                        Map<RelNode, NodeStats> sink) {
+        InstrumentedRel(RelNode wrapped, RelNode original, NodeStats stats) {
             super(original.getCluster(), original.getTraitSet());
             this.wrapped = wrapped;
             this.original = original;
             this.stats = stats;
-            this.sink = sink;
             this.rowType = original.getRowType();
         }
 
         @Override
         public BatchIterator execute(ExecContext ctx) {
-            BatchIterator inner = ((MiniDbRel) wrapped).execute(ctx);
             long start = System.nanoTime();
+            BatchIterator inner = ((MiniDbRel) wrapped).execute(ctx);
             BatchIterator measured = new BatchIterator() {
                 @Override
                 public boolean hasNext() {
