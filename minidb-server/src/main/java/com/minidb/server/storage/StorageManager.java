@@ -45,6 +45,10 @@ public class StorageManager implements AutoCloseable {
         this.dataDir = dataDir;
     }
 
+    public MiniDbCatalog catalog() {
+        return catalog;
+    }
+
     public void loadAll() {
         if (!Files.exists(dataDir)) {
             LOG.info("loaded 0 table(s) (data dir absent)");
