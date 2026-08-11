@@ -3,6 +3,7 @@ package com.minidb.server.exec;
 import com.minidb.server.plan.MiniDbFilter;
 import com.minidb.server.plan.MiniDbModify;
 import com.minidb.server.plan.MiniDbProject;
+import com.minidb.server.plan.MiniDbRel;
 import com.minidb.server.plan.MiniDbScan;
 import com.minidb.server.plan.MiniDbSort;
 import com.minidb.server.plan.MiniDbValues;
@@ -14,8 +15,10 @@ import com.minidb.server.storage.ArrowTable;
 import com.minidb.server.storage.StorageManager;
 import java.math.BigDecimal;
 import java.util.ArrayList;
+import java.util.IdentityHashMap;
 import java.util.List;
 import java.util.Locale;
+import java.util.Map;
 import org.apache.arrow.memory.BufferAllocator;
 import org.apache.arrow.vector.BigIntVector;
 import org.apache.arrow.vector.FieldVector;
@@ -56,7 +59,47 @@ public class ExplainExecutor {
     }
 
     public QueryResult.Rows analyze(String innerSql) {
-        throw new UnsupportedOperationException("analyze not implemented yet");
+        RelNode plan = planner.plan(innerSql);
+        if (plan instanceof MiniDbModify) {
+            throw new IllegalArgumentException("EXPLAIN ANALYZE does not support DML");
+        }
+        Map<RelNode, NodeStats> sink = new IdentityHashMap<>();
+        RelNode instrumented = Instrumenter.instrument(plan, sink);
+        ExecContext ctx = new ExecContext(storage, allocator);
+        List<Row> rows = new ArrayList<>();
+        try (BatchIterator it = ((MiniDbRel) instrumented).execute(ctx)) {
+            while (it.hasNext()) {
+                it.next();
+                // ANALYZE discards data, only measures; batch cleanup is handled
+                // by the iterator close() cascade through the operator chain.
+            }
+        }
+        analyzeRows(plan, null, rows, sink);
+        return new QueryResult.Rows(buildRoot(rows));
+    }
+
+    private void analyzeRows(RelNode node, Integer parentId, List<Row> out,
+                             Map<RelNode, NodeStats> sink) {
+        // Trivial Project nodes (added by Calcite for column selection) are
+        // collapsed into their parent to keep the ANALYZE tree consistent
+        // with the EXPLAIN tree (see planRows).
+        if (node instanceof MiniDbProject) {
+            List<RelNode> inputs = node.getInputs();
+            if (!inputs.isEmpty()) {
+                analyzeRows(inputs.get(0), parentId, out, sink);
+                return;
+            }
+        }
+        int id = out.size() + 1;
+        String op = operationName(node);
+        NodeStats ns = sink.get(node);
+        Long rows = ns == null ? null : ns.rows;
+        Integer batches = ns == null ? null : ns.batches;
+        Double elapsed = ns == null ? null : ns.elapsedMs;
+        out.add(new Row(id, parentId, op, rows, batches, elapsed, null));
+        for (RelNode input : node.getInputs()) {
+            analyzeRows(input, id, out, sink);
+        }
     }
 
     private int planRows(RelNode node, Integer parentId, List<Row> out) {

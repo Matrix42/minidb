@@ -8,6 +8,7 @@ import java.nio.file.Path;
 import org.apache.arrow.memory.BufferAllocator;
 import org.apache.arrow.memory.RootAllocator;
 import org.apache.arrow.vector.BigIntVector;
+import org.apache.arrow.vector.Float8Vector;
 import org.apache.arrow.vector.IntVector;
 import org.apache.arrow.vector.VarCharVector;
 import org.apache.arrow.vector.VectorSchemaRoot;
@@ -17,6 +18,7 @@ import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
@@ -154,5 +156,35 @@ class ExplainExecutorTest {
     void explainRejectsDml() {
         assertThrows(IllegalArgumentException.class,
                 () -> explain.explain("INSERT INTO t VALUES (1, 'a')"));
+    }
+
+    @Test
+    void explainAnalyzeRunsAndMeasuresAllOperators() {
+        QueryResult r = explain.analyze("SELECT id FROM t WHERE id > 1 ORDER BY id");
+        VectorSchemaRoot root = ((QueryResult.Rows) r).data();
+        assertEquals(3, root.getRowCount()); // Sort, Filter, Scan
+        VarCharVector op = (VarCharVector) root.getVector("operation");
+        BigIntVector rowVec = (BigIntVector) root.getVector("rows");
+        IntVector batches = (IntVector) root.getVector("batches");
+        Float8Vector elapsed = (Float8Vector) root.getVector("elapsed_ms");
+        for (int i = 0; i < root.getRowCount(); i++) {
+            assertFalse(rowVec.isNull(i), "rows null at " + i);
+            assertFalse(batches.isNull(i), "batches null at " + i);
+            assertFalse(elapsed.isNull(i), "elapsed_ms null at " + i);
+            assertTrue(elapsed.get(i) >= 0.0);
+        }
+        // Filter should report the real matched row count (id>1 -> rows 2,3 = 2)
+        for (int i = 0; i < root.getRowCount(); i++) {
+            if (new String(op.get(i)).contains("Filter")) {
+                assertEquals(2L, rowVec.get(i));
+            }
+        }
+        root.close();
+    }
+
+    @Test
+    void explainAnalyzeRejectsDml() {
+        assertThrows(IllegalArgumentException.class,
+                () -> explain.analyze("DELETE FROM t WHERE id = 1"));
     }
 }
