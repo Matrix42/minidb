@@ -6,8 +6,15 @@ import java.sql.Connection;
 import java.sql.DriverManager;
 import java.sql.SQLException;
 import java.sql.Statement;
+import java.util.ArrayList;
+import java.util.Collections;
+import java.util.List;
+import java.util.concurrent.CountDownLatch;
+import java.util.concurrent.TimeUnit;
+import java.util.concurrent.atomic.AtomicInteger;
 import org.junit.jupiter.api.Test;
 
+import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
@@ -36,4 +43,66 @@ class ClientLifecycleTest {
 
         c.close(); // client close must be safe even on a dead connection
     }
+
+    @Test
+    void concurrentStatementsDoNotCrossTalk() throws Exception {
+        MiniDbServer server = new MiniDbServer();
+        server.start(0, Files.createTempDirectory("minidb-xtalk"));
+        String url = "jdbc:minidb://127.0.0.1:" + server.port();
+        Connection c = DriverManager.getConnection(url);
+        try (Statement s = c.createStatement()) {
+            s.execute("CREATE TABLE a (id INTEGER)");
+            s.executeUpdate("INSERT INTO a VALUES (1), (2), (3)");
+            s.execute("CREATE TABLE b (id INTEGER)");
+            s.executeUpdate("INSERT INTO b VALUES (10), (20)");
+        }
+
+        int threads = 8;
+        CountDownLatch start = new CountDownLatch(1);
+        CountDownLatch done = new CountDownLatch(threads);
+        AtomicInteger errors = new AtomicInteger();
+        List<Integer> aSums = Collections.synchronizedList(new ArrayList<>());
+        List<Integer> bSums = Collections.synchronizedList(new ArrayList<>());
+
+        for (int i = 0; i < threads; i++) {
+            int which = i % 2;
+            Thread t = new Thread(() -> {
+                try (Statement s = c.createStatement();
+                     java.sql.ResultSet rs = s.executeQuery(
+                             which == 0
+                                     ? "SELECT id FROM a ORDER BY id"
+                                     : "SELECT id FROM b ORDER BY id")) {
+                    start.await();
+                    int sum = 0;
+                    while (rs.next()) {
+                        sum += rs.getInt(1);
+                    }
+                    (which == 0 ? aSums : bSums).add(sum);
+                } catch (Exception e) {
+                    errors.incrementAndGet();
+                } finally {
+                    done.countDown();
+                }
+            });
+            t.start();
+        }
+
+        start.countDown();
+        assertTrue(done.await(60, TimeUnit.SECONDS), "threads did not finish");
+        assertEquals(0, errors.get(), "some threads threw");
+
+        // Each a-thread must see rows summing to 1+2+3=6; each b-thread 10+20=30.
+        assertEquals(threads / 2, aSums.size(), "a-thread count");
+        assertEquals(threads / 2, bSums.size(), "b-thread count");
+        for (Integer v : aSums) {
+            assertEquals(6, v, "a-thread got wrong rows (cross-talk?)");
+        }
+        for (Integer v : bSums) {
+            assertEquals(30, v, "b-thread got wrong rows (cross-talk?)");
+        }
+
+        c.close();
+        server.close();
+    }
 }
+
