@@ -175,7 +175,9 @@ public class MiniDbClient implements AutoCloseable {
                             ch.pipeline().addLast(new MessageDecoder());
                             ch.pipeline().addLast(new MessageEncoder());
                             ch.pipeline().addLast(
-                                    new ResponseCollector(handshake, pending, this::markDisconnected));
+                                    new ResponseCollector(handshake, pending,
+                                            MiniDbClient.this::markDisconnected,
+                                            MiniDbClient.this::readArrow));
                         }
                     });
             channel = bootstrap.connect(host, port).sync().channel();
@@ -279,16 +281,27 @@ public class MiniDbClient implements AutoCloseable {
      * blocking until the timeout.
      */
     private static class ResponseCollector extends SimpleChannelInboundHandler<Message> {
+        // readArrow declares `throws SQLException` (checked), so it cannot target
+        // java.util.function.Function (whose apply declares no checked exceptions).
+        // Use a custom functional interface that propagates SQLException.
+        @FunctionalInterface
+        interface ArrowDecoder {
+            VectorSchemaRoot decode(byte[] data) throws SQLException;
+        }
+
         private final CompletableFuture<Void> handshake;
         private final Map<Long, CompletableFuture<ClientResult>> pending;
         private final Runnable onDisconnect;
+        private final ArrowDecoder arrowDecoder;
 
         ResponseCollector(CompletableFuture<Void> handshake,
                            Map<Long, CompletableFuture<ClientResult>> pending,
-                           Runnable onDisconnect) {
+                           Runnable onDisconnect,
+                           ArrowDecoder arrowDecoder) {
             this.handshake = handshake;
             this.pending = pending;
             this.onDisconnect = onDisconnect;
+            this.arrowDecoder = arrowDecoder;
         }
 
         @Override
@@ -322,20 +335,12 @@ public class MiniDbClient implements AutoCloseable {
                     return;
                 }
                 try {
-                    f.complete(new ClientResult.Rows(decodeArrow(ctx, b.data())));
+                    f.complete(new ClientResult.Rows(arrowDecoder.decode(b.data())));
                 } catch (SQLException e) {
                     f.completeExceptionally(e);
                 }
                 return;
             }
-        }
-
-        private VectorSchemaRoot decodeArrow(ChannelHandlerContext ctx, byte[] data)
-                throws SQLException {
-            // Allocator is owned by the enclosing MiniDbClient; access it via
-            // the channel's attribute or pass it in. Simplest: re-read here
-            // using a reader that needs the allocator. We hand it in via ctor.
-            throw new UnsupportedOperationException("decodeArrow path");
         }
 
         @Override
@@ -366,36 +371,6 @@ public class MiniDbClient implements AutoCloseable {
     }
 }
 ```
-
-The `decodeArrow` placeholder above is a deliberate stub — the inner `ResponseCollector` class needs the allocator (and the existing `readArrow` logic) to decode `ArrowBatch`. Fix it now before running tests: pass the enclosing `MiniDbClient`'s allocator and `readArrow` into `ResponseCollector`, and delete the stub method.
-
-Concretely, change the `ResponseCollector` constructor and the `ArrowBatch` branch:
-
-```java
-private final Function<byte[], VectorSchemaRoot> arrowDecoder;
-
-ResponseCollector(CompletableFuture<Void> handshake,
-                  Map<Long, CompletableFuture<ClientResult>> pending,
-                  Runnable onDisconnect,
-                  java.util.function.Function<byte[], VectorSchemaRoot> arrowDecoder) {
-    this.handshake = handshake;
-    this.pending = pending;
-    this.onDisconnect = onDisconnect;
-    this.arrowDecoder = arrowDecoder;
-}
-```
-
-In `connect()`'s `initChannel`, pass `this::readArrow` as the decoder:
-```java
-ch.pipeline().addLast(new ResponseCollector(handshake, pending, this::markDisconnected, this::readArrow));
-```
-
-And in the `ArrowBatch` branch replace the `decodeArrow` call with:
-```java
-f.complete(new ClientResult.Rows(arrowDecoder.apply(b.data())));
-```
-
-Delete the `decodeArrow` stub method entirely. Add `import java.util.function.Function;` if using `Function`; otherwise use the method-reference type implicitly.
 
 - [ ] **Step 4: Run the disconnect test to verify it passes**
 
@@ -526,12 +501,12 @@ git commit -m "test: concurrent statements do not cross-talk via shared connecti
 - `ClientResult` sealed interface unchanged → Task 1 Step 3 preserves it. ✓
 - `isValid` tying to live channel, auto-reconnect, multi-channel/pool — explicitly out of scope per spec. ✓ (no task, correct)
 
-**2. Placeholder scan:** The plan intentionally calls out a stub `decodeArrow` inside the Step 3 code block and then immediately instructs fixing it inline before running tests (passing `this::readArrow`). This is not a leftover placeholder — it is a sequenced edit within the same step, because inlining the full `readArrow` twice would duplicate ~15 lines and obscure the structural changes. The instruction to delete the stub and wire `arrowDecoder` is explicit and immediate. No "TODO"/"implement later"/"handle edge cases" elsewhere.
+**2. Placeholder scan:** Step 3's code block is a complete, end-to-end transcription: `ResponseCollector` declares an `arrowDecoder` field (a custom `@FunctionalInterface ArrowDecoder` whose `decode(byte[]) throws SQLException`, because `readArrow` declares a checked exception and so cannot target `java.util.function.Function`). It is wired to `MiniDbClient.this::readArrow` at the `connect()` call site (the `this::` inside the anonymous `ChannelInitializer` must resolve to the enclosing `MiniDbClient`, hence the qualified reference). The `ArrowBatch` branch calls `arrowDecoder.decode(b.data())` and fails the future on `SQLException`. No stubs, no "implement later", no "handle edge cases", no out-of-band fix instructions.
 
 **3. Type consistency:**
 - `pending` is `Map<Long, CompletableFuture<ClientResult>>` throughout (field, router, finally). ✓
 - `nextRequestId` is `AtomicLong`, used with `.getAndIncrement()`. ✓ (was plain `long` with `++`; spec said `AtomicLong`.)
-- `ResponseCollector` constructor: `(CompletableFuture<Void> handshake, Map<Long, CompletableFuture<ClientResult>> pending, Runnable onDisconnect, Function<byte[], VectorSchemaRoot> arrowDecoder)` — matches the `connect()` `new ResponseCollector(handshake, pending, this::markDisconnected, this::readArrow)` call site. ✓
+- `ResponseCollector` constructor: `(CompletableFuture<Void> handshake, Map<Long, CompletableFuture<ClientResult>> pending, Runnable onDisconnect, ArrowDecoder arrowDecoder)` — matches the `connect()` `new ResponseCollector(handshake, pending, MiniDbClient.this::markDisconnected, MiniDbClient.this::readArrow)` call site. ✓
 - `ClientResult.Rows`/`.Update` records unchanged. ✓
 - `markDisconnected()` returns `void`, matches `Runnable` target. ✓
 - `failAllPending(String)` and the inline fan-out in `channelInactive`/`exceptionCaught` both complete futures with `SQLException`. ✓

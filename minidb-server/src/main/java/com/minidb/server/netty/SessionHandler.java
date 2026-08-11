@@ -1,6 +1,7 @@
 package com.minidb.server.netty;
 
 import com.minidb.protocol.Message;
+import com.minidb.protocol.Protocol;
 import com.minidb.server.exec.QueryExecutor;
 import com.minidb.server.exec.QueryResult;
 import io.netty.channel.ChannelHandlerContext;
@@ -25,7 +26,7 @@ public class SessionHandler extends SimpleChannelInboundHandler<Message> {
     @Override
     protected void channelRead0(ChannelHandlerContext ctx, Message msg) {
         if (msg instanceof Message.Handshake h) {
-            ctx.writeAndFlush(new Message.HandshakeAck(h.version()));
+            ctx.writeAndFlush(new Message.HandshakeAck(Protocol.VERSION));
         } else if (msg instanceof Message.ExecuteRequest req) {
             handleExecute(ctx, req);
         } else if (msg instanceof Message.CloseRequest) {
