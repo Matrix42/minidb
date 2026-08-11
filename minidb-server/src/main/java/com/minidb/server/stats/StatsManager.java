@@ -21,7 +21,7 @@ import org.apache.arrow.vector.FieldVector;
 import org.apache.arrow.vector.ValueVector;
 import org.apache.arrow.vector.VectorSchemaRoot;
 
-public class StatsManager {
+public class StatsManager implements AutoCloseable {
 
     private final StorageManager storage;
     private final BufferAllocator allocator;
@@ -98,6 +98,10 @@ public class StatsManager {
         } catch (IOException e) {
             throw new UncheckedIOException(e);
         }
+    }
+
+    public void close() {
+        // no-op — state is persisted on each analyze
     }
 
     private void persist(String table, TableStats ts) {
