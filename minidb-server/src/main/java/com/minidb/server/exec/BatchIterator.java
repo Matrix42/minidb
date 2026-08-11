@@ -9,4 +9,8 @@ public interface BatchIterator extends AutoCloseable {
 
     @Override
     void close();
+
+    static BatchIterator empty() {
+        return new EmptyBatchIterator();
+    }
 }

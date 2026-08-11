@@ -14,7 +14,9 @@ import java.util.ArrayList;
 import java.util.List;
 import org.apache.arrow.memory.BufferAllocator;
 import org.apache.arrow.vector.VectorSchemaRoot;
+import org.apache.arrow.vector.types.pojo.Field;
 import org.apache.calcite.rel.RelNode;
+import org.apache.calcite.rel.type.RelDataTypeField;
 import org.apache.calcite.sql.SqlNode;
 import org.apache.calcite.sql.ddl.SqlColumnDeclaration;
 import org.apache.calcite.sql.ddl.SqlCreateTable;
@@ -60,7 +62,7 @@ public class QueryExecutor {
             }
         }
         try (BatchIterator it = ((MiniDbRel) plan).execute(ctx)) {
-            return new QueryResult.Rows(materialize(it));
+            return new QueryResult.Rows(materialize(it, plan));
         }
     }
 
@@ -95,7 +97,7 @@ public class QueryExecutor {
         return new QueryResult.Update(0);
     }
 
-    private VectorSchemaRoot materialize(BatchIterator it) {
+    private VectorSchemaRoot materialize(BatchIterator it, RelNode plan) {
         VectorSchemaRoot merged = null;
         int dst = 0;
         while (it.hasNext()) {
@@ -109,9 +111,24 @@ public class QueryExecutor {
             }
         }
         if (merged == null) {
-            throw new IllegalStateException("query produced no batches");
+            // No batches were produced (e.g. SELECT over an empty table, or a
+            // filter that matched nothing). Build an empty root carrying the
+            // plan's schema so the result still describes its columns.
+            return emptyRoot(plan);
         }
         merged.setRowCount(dst);
         return merged;
+    }
+
+    private VectorSchemaRoot emptyRoot(RelNode plan) {
+        List<Field> fields = new ArrayList<>();
+        for (RelDataTypeField f : plan.getRowType().getFieldList()) {
+            fields.add(ArrowTypes.field(f));
+        }
+        VectorSchemaRoot root = VectorSchemaRoot.create(
+                new org.apache.arrow.vector.types.pojo.Schema(fields), allocator);
+        root.allocateNew();
+        root.setRowCount(0);
+        return root;
     }
 }

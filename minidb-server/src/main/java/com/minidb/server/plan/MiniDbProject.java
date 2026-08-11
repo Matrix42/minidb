@@ -2,10 +2,12 @@ package com.minidb.server.plan;
 
 import com.minidb.server.exec.BatchIterator;
 import com.minidb.server.exec.ExecContext;
+
 import java.util.ArrayDeque;
 import java.util.ArrayList;
 import java.util.Deque;
 import java.util.List;
+
 import org.apache.arrow.vector.FieldVector;
 import org.apache.arrow.vector.ValueVector;
 import org.apache.arrow.vector.VectorSchemaRoot;
@@ -70,14 +72,12 @@ public class MiniDbProject extends Project implements MiniDbRel {
         List<? extends RexNode> projects = getProjects();
         RelDataType rowType = getRowType();
         List<FieldVector> outVectors = new ArrayList<>();
-        List<Field> fields = new ArrayList<>();
         try {
             for (int p = 0; p < projects.size(); p++) {
                 ValueVector evaluated = ctx.interpreter().eval(projects.get(p), batch);
                 RelDataTypeField field = rowType.getFieldList().get(p);
                 FieldVector renamed = rename(evaluated, field.getName(), ctx);
                 outVectors.add(renamed);
-                fields.add(renamed.getField());
             }
         } catch (RuntimeException e) {
             for (FieldVector v : outVectors) {
@@ -96,7 +96,7 @@ public class MiniDbProject extends Project implements MiniDbRel {
         dst.setInitialCapacity(src.getValueCount());
         dst.allocateNew();
         for (int i = 0; i < src.getValueCount(); i++) {
-            dst.copyFromSafe(i, i, (FieldVector) src);
+            dst.copyFromSafe(i, i, src);
         }
         dst.setValueCount(src.getValueCount());
         src.close();

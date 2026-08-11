@@ -99,4 +99,18 @@ class ArrowResultDecoderTest {
                     () -> s.executeQuery("SELECT * FROM does_not_exist"));
         }
     }
+
+    @Test
+    void selectOverEmptyTableReturnsZeroRows() throws Exception {
+        try (Connection c = DriverManager.getConnection(url);
+             Statement s = c.createStatement()) {
+            s.execute("CREATE TABLE e (id INTEGER, name VARCHAR)");
+            try (ResultSet rs = s.executeQuery("SELECT id, name FROM e")) {
+                assertFalse(rs.next());
+                assertEquals(2, rs.getMetaData().getColumnCount());
+                assertEquals("id", rs.getMetaData().getColumnName(1));
+                assertEquals("name", rs.getMetaData().getColumnName(2));
+            }
+        }
+    }
 }

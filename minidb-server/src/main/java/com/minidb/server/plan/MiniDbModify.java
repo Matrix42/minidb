@@ -14,7 +14,6 @@ import org.apache.calcite.plan.RelOptTable;
 import org.apache.calcite.plan.RelTraitSet;
 import org.apache.calcite.rel.RelNode;
 import org.apache.calcite.rel.core.TableModify;
-import org.apache.calcite.rel.logical.LogicalTableModify;
 
 public class MiniDbModify extends TableModify implements MiniDbRel {
 
@@ -52,7 +51,7 @@ public class MiniDbModify extends TableModify implements MiniDbRel {
         } else {
             rewriteTable(ctx, target, input, tableName);
         }
-        return emptyIterator();
+        return BatchIterator.empty();
     }
 
     private void appendRows(ExecContext ctx, ArrowTable target, BatchIterator input,
@@ -177,21 +176,4 @@ public class MiniDbModify extends TableModify implements MiniDbRel {
         return key;
     }
 
-    private static BatchIterator emptyIterator() {
-        return new BatchIterator() {
-            @Override
-            public boolean hasNext() {
-                return false;
-            }
-
-            @Override
-            public VectorSchemaRoot next() {
-                throw new java.util.NoSuchElementException();
-            }
-
-            @Override
-            public void close() {
-            }
-        };
-    }
 }

@@ -156,10 +156,40 @@ class QueryExecutorTest {
         assertEquals(0L, ((QueryResult.Update) truncate).count());
         assertEquals(0L, storage.getTable("t").rowCount());
         assertTrue(catalog.hasTable("t"));
-        // SELECT over the now-empty table behaves like any empty scan:
-        // no batches, so the executor reports the empty result as an error.
-        assertThrows(IllegalStateException.class,
-                () -> executor.execute("SELECT id, name FROM t"));
+
+        // SELECT over the now-empty table returns a zero-row result whose
+        // schema still describes both columns.
+        QueryResult select = executor.execute("SELECT id, name FROM t");
+        VectorSchemaRoot root = ((QueryResult.Rows) select).data();
+        assertEquals(0, root.getRowCount());
+        assertEquals(2, root.getFieldVectors().size());
+        assertEquals("id", root.getVector("id").getName());
+        assertEquals("name", root.getVector("name").getName());
+        root.close();
+    }
+
+    @Test
+    void selectOverEmptyTableReturnsZeroRows() {
+        executor.execute("CREATE TABLE t (id INTEGER, name VARCHAR)");
+        QueryResult select = executor.execute("SELECT id, name FROM t");
+        VectorSchemaRoot root = ((QueryResult.Rows) select).data();
+        assertEquals(0, root.getRowCount());
+        assertEquals(2, root.getFieldVectors().size());
+        root.close();
+    }
+
+    @Test
+    void selectOverFilterThatMatchesNothingReturnsZeroRows() {
+        executor.execute("CREATE TABLE t (id INTEGER)");
+        executor.execute("INSERT INTO t VALUES (1), (2)");
+        // Filter matches no rows: the pipeline produces no batches, but the
+        // result must still carry the projected schema with zero rows.
+        QueryResult select = executor.execute("SELECT id FROM t WHERE id > 100");
+        VectorSchemaRoot root = ((QueryResult.Rows) select).data();
+        assertEquals(0, root.getRowCount());
+        assertEquals(1, root.getFieldVectors().size());
+        assertEquals("id", root.getVector("id").getName());
+        root.close();
     }
 
     @Test

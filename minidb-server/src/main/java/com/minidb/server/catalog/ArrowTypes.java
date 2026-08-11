@@ -11,6 +11,7 @@ import org.apache.arrow.vector.types.pojo.Field;
 import org.apache.arrow.vector.types.pojo.FieldType;
 import org.apache.calcite.rel.type.RelDataType;
 import org.apache.calcite.rel.type.RelDataTypeFactory;
+import org.apache.calcite.rel.type.RelDataTypeField;
 import org.apache.calcite.sql.type.SqlTypeName;
 
 public final class ArrowTypes {
@@ -70,6 +71,43 @@ public final class ArrowTypes {
     public static Field field(ColumnMeta meta) {
         return new Field(meta.name(), FieldType.nullable(arrowTypeOf(meta.type())),
                 List.of());
+    }
+
+    /**
+     * Build an Arrow field for a Calcite {@link RelDataTypeField}, mirroring the
+     * type mapping the plan operators use. Used to derive the schema of a result
+     * set when no batches were produced (e.g. SELECT over an empty table).
+     */
+    public static Field field(RelDataTypeField dataTypeField) {
+        return new Field(dataTypeField.getName(),
+                FieldType.nullable(arrowTypeOf(dataTypeField.getType().getSqlTypeName())),
+                List.of());
+    }
+
+    private static ArrowType arrowTypeOf(SqlTypeName type) {
+        switch (type) {
+            case INTEGER:
+                return new ArrowType.Int(32, true);
+            case BIGINT:
+                return new ArrowType.Int(64, true);
+            case DOUBLE:
+            case FLOAT:
+            case REAL:
+            case DECIMAL:
+                return new ArrowType.FloatingPoint(FloatingPointPrecision.DOUBLE);
+            case VARCHAR:
+            case CHAR:
+                return ArrowType.Utf8.INSTANCE;
+            case BOOLEAN:
+                return ArrowType.Bool.INSTANCE;
+            case DATE:
+                return new ArrowType.Date(DateUnit.DAY);
+            case TIMESTAMP:
+                return new ArrowType.Timestamp(TimeUnit.MILLISECOND, null);
+            default:
+                throw new IllegalArgumentException(
+                        "unsupported sql type: " + type);
+        }
     }
 
     private static ArrowType arrowTypeOf(ColumnType type) {

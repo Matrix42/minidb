@@ -57,7 +57,7 @@ public class MiniDbSort extends Sort implements MiniDbRel {
         // close input only AFTER copying: Filter/Project own their batches
         input.close();
         if (materialized == null) {
-            throw new IllegalStateException("sort received no input batches");
+            return BatchIterator.empty();
         }
 
         int rows = materialized.getRowCount();
