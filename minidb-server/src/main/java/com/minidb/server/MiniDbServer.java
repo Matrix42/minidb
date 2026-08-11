@@ -37,6 +37,7 @@ public class MiniDbServer implements AutoCloseable {
         storage = new StorageManager(catalog, allocator, dataDir);
         storage.loadAll();
         StatsManager stats = new StatsManager(storage, allocator, dataDir);
+        stats.loadAll();
         QueryExecutor executor = new QueryExecutor(catalog, storage, allocator, stats);
 
         boss = new NioEventLoopGroup(1);
