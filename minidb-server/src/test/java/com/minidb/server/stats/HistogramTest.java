@@ -106,4 +106,18 @@ class HistogramTest {
         assertEquals(Histogram.DEFAULT_SELECTIVITY, empty.selectivity(eq(0, 1), 100), 1e-9);
         assertTrue(empty.totalRows() == 0);
     }
+
+    @Test
+    void rangeInterpolationAcrossMultiUnitBucket() {
+        // Single multi-unit bucket [0,10] holding 10 rows (one each of 0..9),
+        // totalRows=10, distinctCount=10, no MCV. col < 5 should interpolate
+        // to half the bucket -> 5 rows -> 0.5. This exercises the boundary
+        // interpolation branch (lower < literal < upper), not the "whole bucket
+        // below" path, catching the compareTo-vs-numericDelta regression.
+        List<Histogram.Bucket> buckets = List.of(
+                new Histogram.Bucket(0, 10, 10));
+        Histogram h = new Histogram(buckets, List.of(), 10, 0, 10);
+        // frac = literal - lower = 5 - 0 = 5; span = 10 - 0 = 10; 5/10 * 10 rows = 5 rows -> 0.5
+        assertEquals(0.5, h.selectivity(lt(0, 5), 10), 1e-9);
+    }
 }

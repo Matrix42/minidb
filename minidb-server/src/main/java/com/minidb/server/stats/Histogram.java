@@ -152,10 +152,12 @@ public final class Histogram implements Serializable {
                 if (compareValue(b.upper()).compareTo(compareValue(literal)) < 0) {
                     matched += b.rowCount();
                 } else if (compareValue(b.lower()).compareTo(compareValue(literal)) < 0) {
-                    // boundary bucket straddles literal: interpolate by position
+                    // boundary bucket straddles literal: interpolate by position.
+                    // frac = how far into the bucket the literal is (literal - lower),
+                    // consistent with spanSize = upper - lower.
                     long span = spanSize(b);
                     if (span > 0) {
-                        long frac = compareValue(literal).compareTo(compareValue(b.lower()));
+                        long frac = numericDelta(b.lower(), literal);
                         matched += (long) (b.rowCount() * ((double) frac / span));
                     }
                 }
@@ -164,9 +166,11 @@ public final class Histogram implements Serializable {
                 if (compareValue(b.lower()).compareTo(compareValue(literal)) > 0) {
                     matched += b.rowCount();
                 } else if (compareValue(b.upper()).compareTo(compareValue(literal)) > 0) {
+                    // frac = how far above the literal the upper is (upper - literal),
+                    // consistent with spanSize = upper - lower.
                     long span = spanSize(b);
                     if (span > 0) {
-                        long frac = compareValue(b.upper()).compareTo(compareValue(literal));
+                        long frac = numericDelta(literal, b.upper());
                         matched += (long) (b.rowCount() * ((double) frac / span));
                     }
                 }
@@ -186,6 +190,16 @@ public final class Histogram implements Serializable {
         return 1;
     }
 
+    private static long numericDelta(Comparable<?> a, Comparable<?> b) {
+        Comparable<Object> ca = compareValue(a);
+        Comparable<Object> cb = compareValue(b);
+        if (ca instanceof Number na && cb instanceof Number nb) {
+            return Math.round(nb.doubleValue() - na.doubleValue());
+        }
+        // non-numeric (VARCHAR etc.): fall back to compareTo sign, span is 1 so frac is ±1/0
+        return Integer.signum(cb.compareTo(ca));
+    }
+
     private static Integer inputRefIndex(RexNode node) {
         if (node instanceof RexInputRef ref) {
             return ref.getIndex();
@@ -197,11 +211,9 @@ public final class Histogram implements Serializable {
         if (node instanceof RexLiteral lit) {
             Object v = lit.getValue();
             if (v instanceof Comparable<?> c) {
+                // BigDecimal (and all numeric literals) flow through here;
+                // compareValue normalizes BigDecimal/Integer/Long to double.
                 return c;
-            }
-            // numbers come back as BigDecimal
-            if (v instanceof java.math.BigDecimal bd) {
-                return bd;
             }
         }
         return null;
