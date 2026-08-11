@@ -16,9 +16,13 @@ import io.netty.channel.socket.nio.NioSocketChannel;
 import java.io.ByteArrayInputStream;
 import java.io.IOException;
 import java.sql.SQLException;
-import java.util.concurrent.BlockingQueue;
-import java.util.concurrent.LinkedBlockingQueue;
+import java.util.ArrayList;
+import java.util.Map;
+import java.util.concurrent.CompletableFuture;
+import java.util.concurrent.ConcurrentHashMap;
+import java.util.concurrent.ExecutionException;
 import java.util.concurrent.TimeUnit;
+import java.util.concurrent.atomic.AtomicLong;
 import org.apache.arrow.memory.BufferAllocator;
 import org.apache.arrow.memory.RootAllocator;
 import org.apache.arrow.vector.VectorLoader;
@@ -36,15 +40,28 @@ public class MiniDbClient implements AutoCloseable {
         }
     }
 
-    private static final long TIMEOUT_SECONDS = 30;
+    private static final long DEFAULT_TIMEOUT_SECONDS = 30;
 
+    private final long timeoutSeconds;
     private final EventLoopGroup group = new NioEventLoopGroup(1);
     private final BufferAllocator allocator = new RootAllocator();
-    private final BlockingQueue<Object> responses = new LinkedBlockingQueue<>();
+    private final Map<Long, CompletableFuture<ClientResult>> pending =
+            new ConcurrentHashMap<>();
+    private final AtomicLong nextRequestId = new AtomicLong(1);
+    private volatile boolean connected = false;
+
     private Channel channel;
-    private long nextRequestId = 1;
+
+    public MiniDbClient() {
+        this(DEFAULT_TIMEOUT_SECONDS);
+    }
+
+    MiniDbClient(long timeoutSeconds) {
+        this.timeoutSeconds = timeoutSeconds;
+    }
 
     public void connect(String host, int port) throws SQLException {
+        CompletableFuture<Void> handshake = new CompletableFuture<>();
         try {
             Bootstrap bootstrap = new Bootstrap()
                     .group(group)
@@ -54,45 +71,89 @@ public class MiniDbClient implements AutoCloseable {
                         protected void initChannel(SocketChannel ch) {
                             ch.pipeline().addLast(new MessageDecoder());
                             ch.pipeline().addLast(new MessageEncoder());
-                            ch.pipeline().addLast(new ResponseCollector(responses));
+                            ch.pipeline().addLast(
+                                    new ResponseCollector(handshake, pending,
+                                            MiniDbClient.this::markDisconnected,
+                                            MiniDbClient.this::readArrow));
                         }
                     });
             channel = bootstrap.connect(host, port).sync().channel();
             channel.writeAndFlush(new Message.Handshake(Protocol.VERSION)).sync();
-            Object ack = poll();
-            if (!(ack instanceof Message.HandshakeAck)) {
-                throw new SQLException("bad handshake response: " + ack);
-            }
+            handshake.get(timeoutSeconds, TimeUnit.SECONDS);
+            connected = true;
         } catch (InterruptedException e) {
             Thread.currentThread().interrupt();
             throw new SQLException("interrupted during connect", e);
+        } catch (java.util.concurrent.TimeoutException e) {
+            channel.close();
+            throw new SQLException("handshake timeout", e);
+        } catch (ExecutionException e) {
+            channel.close();
+            throw new SQLException("handshake failed: " + e.getCause().getMessage(),
+                    e.getCause());
         }
     }
 
     public ClientResult execute(String sql) throws SQLException {
-        long requestId = nextRequestId++;
-        channel.writeAndFlush(new Message.ExecuteRequest(requestId, sql));
+        if (!connected) {
+            throw new SQLException("connection is closed");
+        }
+        long id = nextRequestId.getAndIncrement();
+        CompletableFuture<ClientResult> fut = new CompletableFuture<>();
+        pending.put(id, fut);
+        // Race guard: the channel may have died between the connected check
+        // and the put. If so, channelInactive already cleared pending and
+        // missed our entry — fail it ourselves.
+        if (!connected) {
+            pending.remove(id, fut);
+            throw new SQLException("connection is closed");
+        }
         try {
-            while (true) {
-                Object msg = poll();
-                if (msg instanceof Message.ExecuteResponse r) {
-                    if (!r.ok()) {
-                        throw new SQLException(r.error());
-                    }
-                } else if (msg instanceof Message.UpdateCount u) {
-                    return new ClientResult.Update(u.count());
-                } else if (msg instanceof Message.ArrowBatch b) {
-                    if (b.lastBatch()) {
-                        return new ClientResult.Rows(readArrow(b.data()));
-                    }
-                } else {
-                    throw new SQLException("unexpected message: " + msg);
-                }
-            }
+            channel.writeAndFlush(new Message.ExecuteRequest(id, sql)).sync();
+        } catch (Exception e) {
+            pending.remove(id, fut);
+            throw new SQLException("failed to send request", e);
+        }
+        try {
+            return fut.get(timeoutSeconds, TimeUnit.SECONDS);
         } catch (InterruptedException e) {
             Thread.currentThread().interrupt();
             throw new SQLException("interrupted during execute", e);
+        } catch (java.util.concurrent.TimeoutException e) {
+            throw new SQLException("timeout waiting for server response");
+        } catch (ExecutionException e) {
+            Throwable cause = e.getCause();
+            if (cause instanceof SQLException sqle) {
+                throw sqle;
+            }
+            throw new SQLException(cause != null ? cause.getMessage() : "query failed",
+                    cause != null ? cause : e);
+        } finally {
+            pending.remove(id, fut);
         }
+    }
+
+    private void markDisconnected() {
+        connected = false;
+    }
+
+    @Override
+    public void close() {
+        connected = false;
+        if (channel != null) {
+            channel.writeAndFlush(new Message.CloseRequest());
+            channel.close();
+        }
+        group.shutdownGracefully();
+        allocator.close();
+        failAllPending("connection is closed");
+    }
+
+    private void failAllPending(String reason) {
+        for (CompletableFuture<ClientResult> f : new ArrayList<>(pending.values())) {
+            f.completeExceptionally(new SQLException(reason));
+        }
+        pending.clear();
     }
 
     private VectorSchemaRoot readArrow(byte[] data) throws SQLException {
@@ -111,42 +172,94 @@ public class MiniDbClient implements AutoCloseable {
         }
     }
 
-    private Object poll() throws InterruptedException, SQLException {
-        Object msg = responses.poll(TIMEOUT_SECONDS, TimeUnit.SECONDS);
-        if (msg == null) {
-            throw new SQLException("timeout waiting for server response");
-        }
-        if (msg instanceof Throwable t) {
-            throw new SQLException("connection error", t);
-        }
-        return msg;
-    }
-
-    @Override
-    public void close() {
-        if (channel != null) {
-            channel.writeAndFlush(new Message.CloseRequest());
-            channel.close();
-        }
-        group.shutdownGracefully();
-        allocator.close();
-    }
-
+    /**
+     * Routes inbound messages to the per-request future, and fans connection
+     * loss out to all pending futures so execute() fails fast instead of
+     * blocking until the timeout.
+     */
     private static class ResponseCollector extends SimpleChannelInboundHandler<Message> {
-        private final BlockingQueue<Object> queue;
+        @FunctionalInterface
+        interface ArrowDecoder {
+            VectorSchemaRoot decode(byte[] data) throws SQLException;
+        }
 
-        ResponseCollector(BlockingQueue<Object> queue) {
-            this.queue = queue;
+        private final CompletableFuture<Void> handshake;
+        private final Map<Long, CompletableFuture<ClientResult>> pending;
+        private final Runnable onDisconnect;
+        private final ArrowDecoder arrowDecoder;
+
+        ResponseCollector(CompletableFuture<Void> handshake,
+                           Map<Long, CompletableFuture<ClientResult>> pending,
+                           Runnable onDisconnect,
+                           ArrowDecoder arrowDecoder) {
+            this.handshake = handshake;
+            this.pending = pending;
+            this.onDisconnect = onDisconnect;
+            this.arrowDecoder = arrowDecoder;
         }
 
         @Override
         protected void channelRead0(ChannelHandlerContext ctx, Message msg) {
-            queue.offer(msg);
+            if (msg instanceof Message.HandshakeAck) {
+                handshake.complete(null);
+                return;
+            }
+            if (msg instanceof Message.ExecuteResponse r) {
+                CompletableFuture<ClientResult> f = pending.remove(r.requestId());
+                if (f == null) {
+                    return; // late/orphan response, drop it
+                }
+                if (r.ok()) {
+                    f.complete(new ClientResult.Update(0));
+                } else {
+                    f.completeExceptionally(new SQLException(r.error()));
+                }
+                return;
+            }
+            if (msg instanceof Message.UpdateCount u) {
+                CompletableFuture<ClientResult> f = pending.remove(u.requestId());
+                if (f != null) {
+                    f.complete(new ClientResult.Update(u.count()));
+                }
+                return;
+            }
+            if (msg instanceof Message.ArrowBatch b) {
+                CompletableFuture<ClientResult> f = pending.remove(b.requestId());
+                if (f == null) {
+                    return;
+                }
+                try {
+                    f.complete(new ClientResult.Rows(arrowDecoder.decode(b.data())));
+                } catch (SQLException e) {
+                    f.completeExceptionally(e);
+                }
+                return;
+            }
+        }
+
+        @Override
+        public void channelInactive(ChannelHandlerContext ctx) {
+            onDisconnect.run();
+            for (CompletableFuture<ClientResult> f : new ArrayList<>(pending.values())) {
+                f.completeExceptionally(new SQLException("connection closed"));
+            }
+            pending.clear();
+            if (!handshake.isDone()) {
+                handshake.completeExceptionally(new SQLException("connection closed"));
+            }
         }
 
         @Override
         public void exceptionCaught(ChannelHandlerContext ctx, Throwable cause) {
-            queue.offer(cause);
+            onDisconnect.run();
+            SQLException sqle = new SQLException("connection error", cause);
+            for (CompletableFuture<ClientResult> f : new ArrayList<>(pending.values())) {
+                f.completeExceptionally(sqle);
+            }
+            pending.clear();
+            if (!handshake.isDone()) {
+                handshake.completeExceptionally(sqle);
+            }
             ctx.close();
         }
     }
