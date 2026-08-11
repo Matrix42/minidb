@@ -36,6 +36,7 @@ class QueryExecutorTest {
         catalog = new MiniDbCatalog();
         storage = new StorageManager(catalog, allocator, dataDir);
         stats = new StatsManager(storage, allocator, dataDir);
+        storage.setStatsManager(stats);
         executor = new QueryExecutor(catalog, storage, allocator, stats);
     }
 
@@ -238,6 +239,27 @@ class QueryExecutorTest {
             }
         }
         assertTrue(foundEstimated);
+        root.close();
+    }
+
+    @Test
+    void statsGoStaleAfterInsert() {
+        executor.execute("CREATE TABLE t (id INTEGER)");
+        executor.execute("INSERT INTO t VALUES (1), (2)");
+        executor.execute("ANALYZE t");
+        executor.execute("INSERT INTO t VALUES (3)");
+        QueryResult r = executor.execute("EXPLAIN SELECT id FROM t WHERE id > 1");
+        VectorSchemaRoot root = ((QueryResult.Rows) r).data();
+        VarCharVector op = (VarCharVector) root.getVector("operation");
+        VarCharVector remarks = (VarCharVector) root.getVector("remarks");
+        boolean foundStale = false;
+        for (int i = 0; i < root.getRowCount(); i++) {
+            if (new String(op.get(i)).contains("Filter") && !remarks.isNull(i)
+                    && new String(remarks.get(i)).contains("stale")) {
+                foundStale = true;
+            }
+        }
+        assertTrue(foundStale);
         root.close();
     }
 

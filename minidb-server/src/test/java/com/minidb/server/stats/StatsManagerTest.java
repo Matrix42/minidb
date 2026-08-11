@@ -36,6 +36,7 @@ class StatsManagerTest {
         catalog = new MiniDbCatalog();
         storage = new StorageManager(catalog, allocator, dataDir);
         stats = new StatsManager(storage, allocator, dataDir);
+        storage.setStatsManager(stats);
     }
 
     @AfterEach

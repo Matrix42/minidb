@@ -4,6 +4,7 @@ import com.minidb.server.catalog.ColumnMeta;
 import com.minidb.server.catalog.ColumnType;
 import com.minidb.server.catalog.MiniDbCatalog;
 import com.minidb.server.catalog.TableSchema;
+import com.minidb.server.stats.StatsManager;
 import java.io.IOException;
 import java.io.UncheckedIOException;
 import java.nio.channels.SeekableByteChannel;
@@ -38,11 +39,16 @@ public class StorageManager implements AutoCloseable {
     private final Path dataDir;
     private final Map<String, ArrowTable> tables = new ConcurrentHashMap<>();
     private final Set<String> dirty = ConcurrentHashMap.newKeySet();
+    private volatile StatsManager statsManager;
 
     public StorageManager(MiniDbCatalog catalog, BufferAllocator allocator, Path dataDir) {
         this.catalog = catalog;
         this.allocator = allocator;
         this.dataDir = dataDir;
+    }
+
+    public void setStatsManager(StatsManager statsManager) {
+        this.statsManager = statsManager;
     }
 
     public MiniDbCatalog catalog() {
@@ -115,6 +121,9 @@ public class StorageManager implements AutoCloseable {
         if (table == null) {
             throw new IllegalArgumentException("table not found: " + name);
         }
+        if (statsManager != null) {
+            statsManager.dropStats(name);
+        }
         catalog.dropTable(name);
         table.close();
         dirty.remove(key(name));
@@ -136,6 +145,9 @@ public class StorageManager implements AutoCloseable {
 
     public void markDirty(String tableName) {
         dirty.add(key(tableName));
+        if (statsManager != null) {
+            statsManager.markStale(tableName);
+        }
     }
 
     public void flushDirty() {
