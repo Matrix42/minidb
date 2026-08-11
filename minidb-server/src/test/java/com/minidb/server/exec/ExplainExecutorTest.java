@@ -188,4 +188,23 @@ class ExplainExecutorTest {
         assertThrows(IllegalArgumentException.class,
                 () -> explain.analyze("DELETE FROM t WHERE id = 1"));
     }
+
+    @Test
+    void explainCompoundCrossColumnFilterDoesNotThrow() {
+        stats.analyze("t"); // stats on both id (INTEGER) and name (VARCHAR)
+        // id > 1 (numeric range) AND name < 'm' (varchar range): picking the id
+        // histogram and evaluating name<'m' against it must NOT throw ClassCastException.
+        QueryResult r = explain.explain("SELECT id FROM t WHERE id > 1 AND name < 'm'");
+        VectorSchemaRoot root = ((QueryResult.Rows) r).data();
+        // Should return a valid plan with a Filter row, no exception.
+        VarCharVector op = (VarCharVector) root.getVector("operation");
+        boolean foundFilter = false;
+        for (int i = 0; i < root.getRowCount(); i++) {
+            if (new String(op.get(i)).contains("Filter")) {
+                foundFilter = true;
+            }
+        }
+        assertTrue(foundFilter);
+        root.close();
+    }
 }

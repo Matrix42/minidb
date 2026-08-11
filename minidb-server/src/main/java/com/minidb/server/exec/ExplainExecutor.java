@@ -275,40 +275,47 @@ public class ExplainExecutor {
             v.setInitialCapacity(n);
             v.allocateNew();
         }
-        for (int i = 0; i < n; i++) {
-            Row r = rows.get(i);
-            id.setSafe(i, r.id);
-            if (r.parentId == null) {
-                parentId.setNull(i);
-            } else {
-                parentId.setSafe(i, r.parentId);
+        try {
+            for (int i = 0; i < n; i++) {
+                Row r = rows.get(i);
+                id.setSafe(i, r.id);
+                if (r.parentId == null) {
+                    parentId.setNull(i);
+                } else {
+                    parentId.setSafe(i, r.parentId);
+                }
+                operation.setSafe(i, r.operation.getBytes());
+                if (r.rows == null) {
+                    rowVec.setNull(i);
+                } else {
+                    rowVec.setSafe(i, r.rows);
+                }
+                if (r.batches == null) {
+                    batches.setNull(i);
+                } else {
+                    batches.setSafe(i, r.batches);
+                }
+                if (r.elapsedMs == null) {
+                    elapsed.setNull(i);
+                } else {
+                    elapsed.setSafe(i, r.elapsedMs);
+                }
+                if (r.remarks == null) {
+                    remarks.setNull(i);
+                } else {
+                    remarks.setSafe(i, r.remarks.getBytes());
+                }
             }
-            operation.setSafe(i, r.operation.getBytes());
-            if (r.rows == null) {
-                rowVec.setNull(i);
-            } else {
-                rowVec.setSafe(i, r.rows);
+            for (FieldVector v : vectors) {
+                v.setValueCount(n);
             }
-            if (r.batches == null) {
-                batches.setNull(i);
-            } else {
-                batches.setSafe(i, r.batches);
+            return VectorSchemaRoot.of(vectors.toArray(new FieldVector[0]));
+        } catch (RuntimeException e) {
+            for (FieldVector v : vectors) {
+                v.close();
             }
-            if (r.elapsedMs == null) {
-                elapsed.setNull(i);
-            } else {
-                elapsed.setSafe(i, r.elapsedMs);
-            }
-            if (r.remarks == null) {
-                remarks.setNull(i);
-            } else {
-                remarks.setSafe(i, r.remarks.getBytes());
-            }
+            throw e;
         }
-        for (FieldVector v : vectors) {
-            v.setValueCount(n);
-        }
-        return VectorSchemaRoot.of(vectors.toArray(new FieldVector[0]));
     }
 
     private record Row(Integer id, Integer parentId, String operation,

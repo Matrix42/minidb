@@ -20,8 +20,12 @@ import org.apache.arrow.memory.BufferAllocator;
 import org.apache.arrow.vector.FieldVector;
 import org.apache.arrow.vector.ValueVector;
 import org.apache.arrow.vector.VectorSchemaRoot;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 
 public class StatsManager implements AutoCloseable {
+
+    private static final Logger LOG = LoggerFactory.getLogger(StatsManager.class);
 
     private final StorageManager storage;
     private final BufferAllocator allocator;
@@ -121,6 +125,7 @@ public class StatsManager implements AutoCloseable {
         try (ObjectInputStream in = new ObjectInputStream(Files.newInputStream(file))) {
             return (TableStats) in.readObject();
         } catch (IOException | ClassNotFoundException e) {
+            LOG.warn("failed to read stats file {}", file, e);
             return null;
         }
     }

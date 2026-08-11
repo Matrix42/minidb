@@ -144,6 +144,15 @@ public final class Histogram implements Serializable {
         if (totalRows == 0 || buckets.isEmpty()) {
             return DEFAULT_SELECTIVITY;
         }
+        // Guard against cross-column type mismatch: the histogram may be for a
+        // numeric column while the literal is a String (or vice versa) when a
+        // compound filter's condition is evaluated against a single histogram.
+        // EXPLAIN is read-only and must not throw ClassCastException.
+        Comparable<?> sampleBound = compareValue(buckets.get(0).upper());
+        Comparable<?> normalizedLiteral = compareValue(literal);
+        if (!typesCompatible(sampleBound, normalizedLiteral)) {
+            return DEFAULT_SELECTIVITY;
+        }
         long matched = 0;
         boolean lessFamily = kind == SqlKind.LESS_THAN || kind == SqlKind.LESS_THAN_OR_EQUAL;
         for (Bucket b : buckets) {
@@ -232,5 +241,24 @@ public final class Histogram implements Serializable {
             return (Comparable<Object>) (Comparable) Double.valueOf(l.doubleValue());
         }
         return (Comparable<Object>) c;
+    }
+
+    /**
+     * Returns true only if the two normalized values can be safely compared.
+     * Both must be {@link Number} or neither must be. For the non-numeric case
+     * (e.g. String vs String) the kinds must match so that VARCHAR vs Boolean
+     * edge cases return false rather than throwing.
+     */
+    private static boolean typesCompatible(Comparable<?> a, Comparable<?> b) {
+        boolean aNum = a instanceof Number;
+        boolean bNum = b instanceof Number;
+        if (aNum != bNum) {
+            return false;
+        }
+        if (aNum) {
+            return true;
+        }
+        // neither is Number: require same concrete kind to avoid odd edge cases
+        return a.getClass() == b.getClass();
     }
 }
