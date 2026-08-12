@@ -9,4 +9,7 @@ public sealed interface QueryResult {
 
     record Update(long count) implements QueryResult {
     }
+
+    record UseSchema(String schemaName) implements QueryResult {
+    }
 }

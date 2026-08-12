@@ -21,7 +21,9 @@ import org.apache.calcite.rel.RelNode;
 import org.apache.calcite.rel.type.RelDataTypeField;
 import org.apache.calcite.sql.SqlNode;
 import org.apache.calcite.sql.ddl.SqlColumnDeclaration;
+import org.apache.calcite.sql.ddl.SqlCreateSchema;
 import org.apache.calcite.sql.ddl.SqlCreateTable;
+import org.apache.calcite.sql.ddl.SqlDropSchema;
 import org.apache.calcite.sql.ddl.SqlDropTable;
 import org.apache.calcite.sql.ddl.SqlTruncateTable;
 
@@ -45,6 +47,10 @@ public class QueryExecutor {
     }
 
     public QueryResult execute(String sql) {
+        return execute(sql, MiniDbCatalog.DEFAULT_SCHEMA);
+    }
+
+    public QueryResult execute(String sql, String currentSchema) {
         String trimmed = sql.strip();
         String upper = trimmed.toUpperCase(Locale.ROOT);
         if (upper.equals("ANALYZE")) {
@@ -58,24 +64,40 @@ public class QueryExecutor {
         }
         if (upper.startsWith("EXPLAIN ANALYZE ")) {
             String inner = trimmed.substring("EXPLAIN ANALYZE ".length());
-            return new ExplainExecutor(planner, stats, storage, allocator).analyze(inner);
+            return new ExplainExecutor(planner, stats, storage, allocator)
+                    .analyze(inner, currentSchema);
         }
         if (upper.startsWith("EXPLAIN ")) {
             String inner = trimmed.substring("EXPLAIN ".length());
-            return new ExplainExecutor(planner, stats, storage, allocator).explain(inner);
+            return new ExplainExecutor(planner, stats, storage, allocator)
+                    .explain(inner, currentSchema);
+        }
+        if (upper.startsWith("USE SCHEMA ")) {
+            String name = trimmed.substring("USE SCHEMA ".length()).strip();
+            String resolved = name.toLowerCase(Locale.ROOT);
+            if (!catalog.schemaNames().contains(resolved)) {
+                throw new IllegalArgumentException("schema not found: " + name);
+            }
+            return new QueryResult.UseSchema(resolved);
         }
         SqlNode parsed = calcite.parse(sql);
+        if (parsed instanceof SqlCreateSchema create) {
+            return handleCreateSchema(create);
+        }
+        if (parsed instanceof SqlDropSchema drop) {
+            return handleDropSchema(drop);
+        }
         if (parsed instanceof SqlCreateTable create) {
-            return handleCreate(create);
+            return handleCreate(create, currentSchema);
         }
         if (parsed instanceof SqlDropTable drop) {
-            return handleDrop(drop);
+            return handleDrop(drop, currentSchema);
         }
         if (parsed instanceof SqlTruncateTable truncate) {
-            return handleTruncate(truncate);
+            return handleTruncate(truncate, currentSchema);
         }
-        RelNode plan = planner.plan(sql);
-        ExecContext ctx = new ExecContext(storage, allocator);
+        RelNode plan = planner.plan(sql, currentSchema);
+        ExecContext ctx = new ExecContext(storage, allocator, currentSchema);
         if (plan instanceof MiniDbModify modify) {
             try (BatchIterator it = modify.execute(ctx)) {
                 while (it.hasNext()) {
@@ -89,7 +111,30 @@ public class QueryExecutor {
         }
     }
 
-    private QueryResult handleCreate(SqlCreateTable create) {
+    private QueryResult handleCreateSchema(SqlCreateSchema create) {
+        String name = create.name.getSimple();
+        if (create.ifNotExists
+                && catalog.schemaNames().contains(name.toLowerCase(Locale.ROOT))) {
+            return new QueryResult.Update(0);
+        }
+        catalog.createSchema(name);
+        return new QueryResult.Update(0);
+    }
+
+    private QueryResult handleDropSchema(SqlDropSchema drop) {
+        String name = drop.name.getSimple();
+        if (drop.ifExists
+                && !catalog.schemaNames().contains(name.toLowerCase(Locale.ROOT))) {
+            return new QueryResult.Update(0);
+        }
+        storage.dropSchema(name);
+        return new QueryResult.Update(0);
+    }
+
+    private QueryResult handleCreate(SqlCreateTable create, String currentSchema) {
+        List<String> parts = create.name.names;
+        String schemaName = parts.size() > 1 ? parts.get(0) : currentSchema;
+        String tableName = parts.get(parts.size() - 1);
         List<ColumnMeta> columns = new ArrayList<>();
         for (SqlNode columnNode : create.columnList) {
             SqlColumnDeclaration column = (SqlColumnDeclaration) columnNode;
@@ -97,26 +142,30 @@ public class QueryExecutor {
             ColumnType type = ArrowTypes.fromSqlTypeName(typeName);
             columns.add(new ColumnMeta(column.name.getSimple(), type));
         }
-        TableSchema schema = new TableSchema(create.name.getSimple(), columns);
+        TableSchema schema = new TableSchema(schemaName, tableName, columns);
         storage.createTable(schema);
         return new QueryResult.Update(0);
     }
 
-    private QueryResult handleDrop(SqlDropTable drop) {
-        String name = drop.name.getSimple();
-        if (!catalog.hasTable(name)) {
+    private QueryResult handleDrop(SqlDropTable drop, String currentSchema) {
+        List<String> parts = drop.name.names;
+        String schemaName = parts.size() > 1 ? parts.get(0) : currentSchema;
+        String tableName = parts.get(parts.size() - 1);
+        if (!catalog.hasTable(schemaName, tableName)) {
             if (drop.ifExists) {
                 return new QueryResult.Update(0);
             }
-            throw new IllegalArgumentException("table not found: " + name);
+            throw new IllegalArgumentException("table not found: " + tableName);
         }
-        storage.dropTable(name);
+        storage.dropTable(schemaName, tableName);
         return new QueryResult.Update(0);
     }
 
-    private QueryResult handleTruncate(SqlTruncateTable truncate) {
-        String name = truncate.name.getSimple();
-        storage.truncateTable(name);
+    private QueryResult handleTruncate(SqlTruncateTable truncate, String currentSchema) {
+        List<String> parts = truncate.name.names;
+        String schemaName = parts.size() > 1 ? parts.get(0) : currentSchema;
+        String tableName = parts.get(parts.size() - 1);
+        storage.truncateTable(schemaName, tableName);
         return new QueryResult.Update(0);
     }
 

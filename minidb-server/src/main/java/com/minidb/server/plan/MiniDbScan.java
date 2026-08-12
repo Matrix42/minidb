@@ -26,8 +26,15 @@ public class MiniDbScan extends TableScan implements MiniDbRel {
     @Override
     public BatchIterator execute(ExecContext ctx) {
         List<String> qualified = table.getQualifiedName();
-        String tableName = qualified.get(qualified.size() - 1);
-        ArrowTable arrowTable = ctx.storage().getTable(tableName);
+        int n = qualified.size();
+        ArrowTable arrowTable;
+        if (n >= 3) {
+            // qualified name like [minidb, other, t] — schema is second-to-last
+            arrowTable = ctx.getTable(qualified.get(n - 2), qualified.get(n - 1));
+        } else {
+            // promoted table like [minidb, t] — resolve via current schema
+            arrowTable = ctx.getTable(qualified.get(n - 1));
+        }
         Iterator<VectorSchemaRoot> it = arrowTable.batches().iterator();
         return new BatchIterator() {
             @Override

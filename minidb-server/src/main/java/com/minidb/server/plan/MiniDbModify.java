@@ -43,19 +43,26 @@ public class MiniDbModify extends TableModify implements MiniDbRel {
     @Override
     public BatchIterator execute(ExecContext ctx) {
         List<String> qualified = table.getQualifiedName();
-        String tableName = qualified.get(qualified.size() - 1);
-        ArrowTable target = ctx.storage().getTable(tableName);
+        int n = qualified.size();
+        String tableName = qualified.get(n - 1);
+        // size>=3: [minidb, other, t] → schema is second-to-last.
+        // size==2: [minidb, t] (promoted table) → bare name resolves via ctx's
+        // current schema.
+        String schemaName = n >= 3 ? qualified.get(n - 2) : null;
+        ArrowTable target = schemaName != null
+                ? ctx.getTable(schemaName, tableName)
+                : ctx.getTable(tableName);
         BatchIterator input = ((MiniDbRel) getInput()).execute(ctx);
         if (getOperation() == Operation.INSERT) {
-            appendRows(ctx, target, input, tableName);
+            appendRows(ctx, target, input, schemaName, tableName);
         } else {
-            rewriteTable(ctx, target, input, tableName);
+            rewriteTable(ctx, target, input, schemaName, tableName);
         }
         return BatchIterator.empty();
     }
 
     private void appendRows(ExecContext ctx, ArrowTable target, BatchIterator input,
-                            String tableName) {
+                            String schemaName, String tableName) {
         affected = 0;
         while (input.hasNext()) {
             VectorSchemaRoot batch = input.next();
@@ -71,7 +78,11 @@ public class MiniDbModify extends TableModify implements MiniDbRel {
             target.appendBatch(copy);
         }
         input.close();
-        ctx.storage().markDirty(tableName);
+        if (schemaName != null) {
+            ctx.markDirty(schemaName, tableName);
+        } else {
+            ctx.markDirty(tableName);
+        }
     }
 
     /**
@@ -80,7 +91,7 @@ public class MiniDbModify extends TableModify implements MiniDbRel {
      * unmatched rows and replacing (UPDATE) or dropping (DELETE) matched ones.
      */
     private void rewriteTable(ExecContext ctx, ArrowTable target, BatchIterator input,
-                              String tableName) {
+                              String schemaName, String tableName) {
         int numTableCols = target.schema().columns().size();
         List<String> updateCols = getOperation() == Operation.UPDATE
                 ? getUpdateColumnList() : List.of();
@@ -145,7 +156,11 @@ public class MiniDbModify extends TableModify implements MiniDbRel {
             old.close();
         }
         matched.close();
-        ctx.storage().markDirty(tableName);
+        if (schemaName != null) {
+            ctx.markDirty(schemaName, tableName);
+        } else {
+            ctx.markDirty(tableName);
+        }
     }
 
     private VectorSchemaRoot materializeInput(BatchIterator input, ExecContext ctx) {

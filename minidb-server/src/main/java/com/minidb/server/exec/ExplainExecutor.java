@@ -8,6 +8,7 @@ import com.minidb.server.plan.MiniDbScan;
 import com.minidb.server.plan.MiniDbSort;
 import com.minidb.server.plan.MiniDbValues;
 import com.minidb.server.plan.Planner;
+import com.minidb.server.catalog.MiniDbCatalog;
 import com.minidb.server.stats.Histogram;
 import com.minidb.server.stats.StatsManager;
 import com.minidb.server.stats.TableStats;
@@ -49,7 +50,11 @@ public class ExplainExecutor {
     }
 
     public QueryResult.Rows explain(String innerSql) {
-        RelNode plan = planner.plan(innerSql);
+        return explain(innerSql, MiniDbCatalog.DEFAULT_SCHEMA);
+    }
+
+    public QueryResult.Rows explain(String innerSql, String currentSchema) {
+        RelNode plan = planner.plan(innerSql, currentSchema);
         if (plan instanceof MiniDbModify) {
             throw new IllegalArgumentException("EXPLAIN does not support DML");
         }
@@ -59,7 +64,11 @@ public class ExplainExecutor {
     }
 
     public QueryResult.Rows analyze(String innerSql) {
-        RelNode plan = planner.plan(innerSql);
+        return analyze(innerSql, MiniDbCatalog.DEFAULT_SCHEMA);
+    }
+
+    public QueryResult.Rows analyze(String innerSql, String currentSchema) {
+        RelNode plan = planner.plan(innerSql, currentSchema);
         if (plan instanceof MiniDbModify) {
             throw new IllegalArgumentException("EXPLAIN ANALYZE does not support DML");
         }
