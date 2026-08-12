@@ -43,7 +43,7 @@ class StorageManagerTest {
             storage.close();
         }
 
-        assertTrue(Files.exists(dir.resolve("t.arrow")));
+        assertTrue(Files.exists(dir.resolve("public").resolve("t.arrow")));
 
         MiniDbCatalog catalog2 = new MiniDbCatalog();
         try (BufferAllocator allocator = new RootAllocator()) {
@@ -68,9 +68,9 @@ class StorageManagerTest {
             storage.createTable(schema());
             storage.markDirty("t");
             storage.flushDirty();
-            assertTrue(Files.exists(dir.resolve("t.arrow")));
+            assertTrue(Files.exists(dir.resolve("public").resolve("t.arrow")));
             storage.dropTable("t");
-            assertFalse(Files.exists(dir.resolve("t.arrow")));
+            assertFalse(Files.exists(dir.resolve("public").resolve("t.arrow")));
             storage.close();
         }
     }

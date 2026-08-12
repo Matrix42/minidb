@@ -1,6 +1,7 @@
 package com.minidb.server.stats;
 
 import com.minidb.server.catalog.ColumnType;
+import com.minidb.server.catalog.MiniDbCatalog;
 import com.minidb.server.catalog.TableSchema;
 import com.minidb.server.storage.ArrowTable;
 import com.minidb.server.storage.StorageManager;
@@ -39,7 +40,8 @@ public class StatsManager implements AutoCloseable {
     }
 
     public void analyze(String table) {
-        ArrowTable arrowTable = storage.getTable(table); // throws if missing
+        ArrowTable arrowTable = storage.getTable(
+                MiniDbCatalog.DEFAULT_SCHEMA, table); // throws if missing
         TableSchema schema = arrowTable.schema();
         List<VectorSchemaRoot> batches = arrowTable.batches();
         Map<String, Histogram> columnHistograms = new HashMap<>();
@@ -55,7 +57,7 @@ public class StatsManager implements AutoCloseable {
                     HistogramBuilder.build(columnVectors, colType));
         }
         TableStats ts = new TableStats(columnHistograms, false);
-        tables.put(key(table), ts);
+        tables.put(resolveKey(table), ts);
         persist(table, ts);
     }
 
@@ -66,20 +68,22 @@ public class StatsManager implements AutoCloseable {
     }
 
     public TableStats tableStats(String table) {
-        return tables.get(key(table));
+        return tables.get(resolveKey(table));
     }
 
     public void markStale(String table) {
-        TableStats ts = tables.get(key(table));
+        String k = resolveKey(table);
+        TableStats ts = tables.get(k);
         if (ts != null) {
-            tables.put(key(table), new TableStats(ts.columnHistograms(), true));
+            tables.put(k, new TableStats(ts.columnHistograms(), true));
         }
     }
 
     public void dropStats(String table) {
-        tables.remove(key(table));
+        String k = resolveKey(table);
+        tables.remove(k);
         try {
-            Files.deleteIfExists(statsFile(table));
+            Files.deleteIfExists(statsFile(k));
         } catch (IOException e) {
             throw new UncheckedIOException(e);
         }
@@ -91,11 +95,15 @@ public class StatsManager implements AutoCloseable {
         }
         try (var stream = Files.newDirectoryStream(dataDir, "*.stats")) {
             for (Path file : stream) {
-                String tableName = stripExtension(file.getFileName().toString());
-                if (storage.catalog().hasTable(tableName)) {
+                String fileName = stripExtension(file.getFileName().toString());
+                String[] parts = fileName.split("\\.", 2);
+                String schema = parts.length == 2
+                        ? parts[0] : MiniDbCatalog.DEFAULT_SCHEMA;
+                String table = parts.length == 2 ? parts[1] : fileName;
+                if (storage.catalog().hasTable(schema, table)) {
                     TableStats ts = read(file);
                     if (ts != null) {
-                        tables.put(key(tableName), ts);
+                        tables.put(key(fileName), ts);
                     }
                 }
             }
@@ -111,7 +119,7 @@ public class StatsManager implements AutoCloseable {
     private void persist(String table, TableStats ts) {
         try {
             Files.createDirectories(dataDir);
-            Path file = statsFile(table);
+            Path file = statsFile(resolveKey(table));
             try (ObjectOutputStream out = new ObjectOutputStream(Files.newOutputStream(file))) {
                 out.writeObject(ts);
             }
@@ -130,8 +138,8 @@ public class StatsManager implements AutoCloseable {
         }
     }
 
-    private Path statsFile(String table) {
-        return dataDir.resolve(key(table) + ".stats");
+    private Path statsFile(String resolvedKey) {
+        return dataDir.resolve(resolvedKey + ".stats");
     }
 
     private static String stripExtension(String name) {
@@ -141,5 +149,12 @@ public class StatsManager implements AutoCloseable {
 
     private static String key(String name) {
         return name.toLowerCase(Locale.ROOT);
+    }
+
+    private static String resolveKey(String table) {
+        if (table.contains(".")) {
+            return key(table);
+        }
+        return key(MiniDbCatalog.DEFAULT_SCHEMA + "." + table);
     }
 }

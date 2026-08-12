@@ -1,5 +1,6 @@
 package com.minidb.server.storage;
 
+import com.minidb.server.catalog.ArrowTypes;
 import com.minidb.server.catalog.ColumnMeta;
 import com.minidb.server.catalog.ColumnType;
 import com.minidb.server.catalog.MiniDbCatalog;
@@ -61,11 +62,19 @@ public class StorageManager implements AutoCloseable {
             return;
         }
         int count = 0;
-        try (DirectoryStream<Path> stream =
-                     Files.newDirectoryStream(dataDir, "*.arrow")) {
-            for (Path file : stream) {
-                loadFile(file);
-                count++;
+        try (DirectoryStream<Path> schemaDirs = Files.newDirectoryStream(dataDir)) {
+            for (Path schemaDir : schemaDirs) {
+                if (!Files.isDirectory(schemaDir)) {
+                    continue;
+                }
+                String schemaName = schemaDir.getFileName().toString();
+                try (DirectoryStream<Path> files =
+                             Files.newDirectoryStream(schemaDir, "*.arrow")) {
+                    for (Path file : files) {
+                        loadFile(schemaName, file);
+                        count++;
+                    }
+                }
             }
         } catch (IOException e) {
             throw new UncheckedIOException(e);
@@ -73,13 +82,13 @@ public class StorageManager implements AutoCloseable {
         LOG.info("loaded {} table(s)", count);
     }
 
-    private void loadFile(Path file) throws IOException {
+    private void loadFile(String schemaName, Path file) throws IOException {
         try (SeekableByteChannel channel =
                      Files.newByteChannel(file, StandardOpenOption.READ);
              ArrowFileReader reader = new ArrowFileReader(channel, allocator)) {
             VectorSchemaRoot root = reader.getVectorSchemaRoot();
-            TableSchema schema = toTableSchema(root.getSchema(),
-                    stripExtension(file.getFileName().toString()));
+            String tableName = stripExtension(file.getFileName().toString());
+            TableSchema schema = toTableSchema(root.getSchema(), schemaName, tableName);
             ArrowTable table = new ArrowTable(schema, allocator);
             while (reader.loadNextBatch()) {
                 VectorSchemaRoot copy = table.newBatchRoot();
@@ -89,7 +98,7 @@ public class StorageManager implements AutoCloseable {
                 recordBatch.close();
                 table.appendBatch(copy);
             }
-            tables.put(key(schema.name()), table);
+            tables.put(storageKey(schema.schemaName(), schema.name()), table);
             catalog.createTable(schema);
         }
     }
@@ -99,72 +108,128 @@ public class StorageManager implements AutoCloseable {
         return dot < 0 ? fileName : fileName.substring(0, dot);
     }
 
-    public ArrowTable getTable(String name) {
-        ArrowTable table = tables.get(key(name));
+    public ArrowTable getTable(String schemaName, String tableName) {
+        ArrowTable table = tables.get(storageKey(schemaName, tableName));
         if (table == null) {
-            throw new IllegalArgumentException("table not found: " + name);
+            throw new IllegalArgumentException("table not found: " + tableName);
         }
         return table;
     }
 
+    public ArrowTable getTable(String name) {
+        return getTable(MiniDbCatalog.DEFAULT_SCHEMA, name);
+    }
+
     public ArrowTable createTable(TableSchema schema) {
         ArrowTable table = new ArrowTable(schema, allocator);
-        if (tables.putIfAbsent(key(schema.name()), table) != null) {
+        String sk = storageKey(schema.schemaName(), schema.name());
+        if (tables.putIfAbsent(sk, table) != null) {
             throw new IllegalArgumentException("table already exists: " + schema.name());
         }
         catalog.createTable(schema);
         return table;
     }
 
-    public void dropTable(String name) {
-        ArrowTable table = tables.remove(key(name));
+    public void dropTable(String schemaName, String tableName) {
+        String sk = storageKey(schemaName, tableName);
+        ArrowTable table = tables.remove(sk);
         if (table == null) {
-            throw new IllegalArgumentException("table not found: " + name);
+            throw new IllegalArgumentException("table not found: " + tableName);
         }
         if (statsManager != null) {
-            statsManager.dropStats(name);
+            statsManager.dropStats(sk);
         }
-        catalog.dropTable(name);
+        catalog.dropTable(schemaName, tableName);
         table.close();
-        dirty.remove(key(name));
+        dirty.remove(sk);
         try {
-            Files.deleteIfExists(dataDir.resolve(fileName(name)));
+            Files.deleteIfExists(dataDir.resolve(fileName(schemaName, tableName)));
         } catch (IOException e) {
             throw new UncheckedIOException(e);
         }
     }
 
-    public void truncateTable(String name) {
-        ArrowTable table = tables.get(key(name));
+    public void dropTable(String name) {
+        dropTable(MiniDbCatalog.DEFAULT_SCHEMA, name);
+    }
+
+    public void dropSchema(String schemaName) {
+        String skPrefix = key(schemaName) + ".";
+        List<String> toDrop = new ArrayList<>();
+        for (String k : tables.keySet()) {
+            if (k.startsWith(skPrefix)) {
+                toDrop.add(k);
+            }
+        }
+        catalog.dropSchema(schemaName); // throws for public / missing — do first
+        for (String k : toDrop) {
+            ArrowTable table = tables.remove(k);
+            if (table != null) {
+                table.close();
+            }
+            if (statsManager != null) {
+                statsManager.dropStats(k);
+            }
+            dirty.remove(k);
+        }
+        try {
+            Path schemaDir = dataDir.resolve(key(schemaName));
+            if (Files.exists(schemaDir)) {
+                try (DirectoryStream<Path> ds = Files.newDirectoryStream(schemaDir)) {
+                    for (Path p : ds) {
+                        Files.deleteIfExists(p);
+                    }
+                }
+                Files.deleteIfExists(schemaDir);
+            }
+        } catch (IOException e) {
+            throw new UncheckedIOException(e);
+        }
+    }
+
+    public void truncateTable(String schemaName, String tableName) {
+        ArrowTable table = tables.get(storageKey(schemaName, tableName));
         if (table == null) {
-            throw new IllegalArgumentException("table not found: " + name);
+            throw new IllegalArgumentException("table not found: " + tableName);
         }
         table.clear();
-        markDirty(name);
+        markDirty(schemaName, tableName);
+    }
+
+    public void truncateTable(String name) {
+        truncateTable(MiniDbCatalog.DEFAULT_SCHEMA, name);
+    }
+
+    public void markDirty(String schemaName, String tableName) {
+        String sk = storageKey(schemaName, tableName);
+        dirty.add(sk);
+        if (statsManager != null) {
+            statsManager.markStale(sk);
+        }
     }
 
     public void markDirty(String tableName) {
-        dirty.add(key(tableName));
-        if (statsManager != null) {
-            statsManager.markStale(tableName);
-        }
+        markDirty(MiniDbCatalog.DEFAULT_SCHEMA, tableName);
     }
 
     public void flushDirty() {
-        for (String tableName : List.copyOf(dirty)) {
-            flushTable(tableName);
-            dirty.remove(tableName);
+        for (String sk : List.copyOf(dirty)) {
+            flushTable(sk);
+            dirty.remove(sk);
         }
     }
 
-    private void flushTable(String tableName) {
-        ArrowTable table = tables.get(tableName);
+    private void flushTable(String sk) {
+        ArrowTable table = tables.get(sk);
         if (table == null) {
             return;
         }
+        String[] parts = sk.split("\\.");
+        String schemaName = parts[0];
+        String tableName = parts[1];
         try {
-            Files.createDirectories(dataDir);
-            Path file = dataDir.resolve(fileName(tableName));
+            Path file = dataDir.resolve(fileName(schemaName, tableName));
+            Files.createDirectories(file.getParent());
             try (SeekableByteChannel channel = Files.newByteChannel(file,
                     StandardOpenOption.CREATE, StandardOpenOption.WRITE,
                     StandardOpenOption.TRUNCATE_EXISTING)) {
@@ -183,7 +248,7 @@ public class StorageManager implements AutoCloseable {
                     sink.close();
                 }
             }
-            LOG.info("flushed table {}", tableName);
+            LOG.info("flushed table {}", sk);
         } catch (IOException e) {
             throw new UncheckedIOException(e);
         }
@@ -198,21 +263,31 @@ public class StorageManager implements AutoCloseable {
         tables.clear();
     }
 
+    private static String storageKey(String schemaName, String tableName) {
+        return key(schemaName) + "." + key(tableName);
+    }
+
     private static String key(String name) {
         return name.toLowerCase(Locale.ROOT);
     }
 
-    private static String fileName(String tableName) {
-        return tableName.toLowerCase(Locale.ROOT) + ".arrow";
+    private static String fileName(String schemaName, String tableName) {
+        return key(schemaName) + "/" + key(tableName) + ".arrow";
     }
 
     private static TableSchema toTableSchema(
-            org.apache.arrow.vector.types.pojo.Schema arrowSchema, String tableName) {
+            org.apache.arrow.vector.types.pojo.Schema arrowSchema,
+            String schemaName, String tableName) {
         List<ColumnMeta> columns = new ArrayList<>();
         for (Field field : arrowSchema.getFields()) {
             columns.add(new ColumnMeta(field.getName(), toColumnType(field.getType())));
         }
-        return new TableSchema(tableName, columns);
+        String resolvedSchema = schemaName;
+        Map<String, String> meta = arrowSchema.getCustomMetadata();
+        if (meta != null && meta.containsKey("schema")) {
+            resolvedSchema = meta.get("schema");
+        }
+        return new TableSchema(resolvedSchema, tableName, columns);
     }
 
     private static ColumnType toColumnType(ArrowType type) {
