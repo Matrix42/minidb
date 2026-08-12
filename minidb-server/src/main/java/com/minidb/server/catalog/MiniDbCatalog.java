@@ -9,43 +9,105 @@ import java.util.concurrent.CopyOnWriteArrayList;
 
 public class MiniDbCatalog {
 
-    private final Map<String, TableSchema> tables = new ConcurrentHashMap<>();
+    public static final String DEFAULT_SCHEMA = "public";
+
+    private final Map<String, Map<String, TableSchema>> schemas = new ConcurrentHashMap<>();
     private final List<Runnable> listeners = new CopyOnWriteArrayList<>();
 
+    public MiniDbCatalog() {
+        schemas.put(DEFAULT_SCHEMA, new ConcurrentHashMap<>());
+    }
+
+    public void createSchema(String name) {
+        String k = key(name);
+        if (schemas.putIfAbsent(k, new ConcurrentHashMap<>()) != null) {
+            throw new IllegalArgumentException("schema already exists: " + name);
+        }
+        notifyChange();
+    }
+
+    public void dropSchema(String name) {
+        String k = key(name);
+        if (k.equals(DEFAULT_SCHEMA)) {
+            throw new IllegalArgumentException("cannot drop default schema: " + name);
+        }
+        if (schemas.remove(k) == null) {
+            throw new IllegalArgumentException("schema not found: " + name);
+        }
+        notifyChange();
+    }
+
+    public List<String> schemaNames() {
+        return new ArrayList<>(schemas.keySet());
+    }
+
     public void createTable(TableSchema schema) {
-        TableSchema prev = tables.putIfAbsent(key(schema.name()), schema);
-        if (prev != null) {
+        String sk = key(schema.schemaName());
+        Map<String, TableSchema> tables = schemas.get(sk);
+        if (tables == null) {
+            throw new IllegalArgumentException("schema not found: " + schema.schemaName());
+        }
+        String tk = key(schema.name());
+        if (tables.putIfAbsent(tk, schema) != null) {
             throw new IllegalArgumentException("table already exists: " + schema.name());
         }
         notifyChange();
     }
 
-    public void dropTable(String name) {
-        TableSchema removed = tables.remove(key(name));
-        if (removed == null) {
-            throw new IllegalArgumentException("table not found: " + name);
+    public void dropTable(String schemaName, String tableName) {
+        Map<String, TableSchema> tables = schemas.get(key(schemaName));
+        if (tables == null) {
+            throw new IllegalArgumentException("schema not found: " + schemaName);
+        }
+        if (tables.remove(key(tableName)) == null) {
+            throw new IllegalArgumentException("table not found: " + tableName);
         }
         notifyChange();
     }
 
-    public TableSchema getTable(String name) {
-        TableSchema schema = tables.get(key(name));
+    public TableSchema getTable(String schemaName, String tableName) {
+        Map<String, TableSchema> tables = schemas.get(key(schemaName));
+        if (tables == null) {
+            throw new IllegalArgumentException("schema not found: " + schemaName);
+        }
+        TableSchema schema = tables.get(key(tableName));
         if (schema == null) {
-            throw new IllegalArgumentException("table not found: " + name);
+            throw new IllegalArgumentException("table not found: " + tableName);
         }
         return schema;
     }
 
-    public boolean hasTable(String name) {
-        return tables.containsKey(key(name));
+    public boolean hasTable(String schemaName, String tableName) {
+        Map<String, TableSchema> tables = schemas.get(key(schemaName));
+        return tables != null && tables.containsKey(key(tableName));
     }
 
-    public List<String> tableNames() {
+    public List<String> tableNames(String schemaName) {
+        Map<String, TableSchema> tables = schemas.get(key(schemaName));
+        if (tables == null) {
+            throw new IllegalArgumentException("schema not found: " + schemaName);
+        }
         List<String> names = new ArrayList<>();
         for (TableSchema schema : tables.values()) {
             names.add(schema.name());
         }
         return names;
+    }
+
+    public void dropTable(String name) {
+        dropTable(DEFAULT_SCHEMA, name);
+    }
+
+    public TableSchema getTable(String name) {
+        return getTable(DEFAULT_SCHEMA, name);
+    }
+
+    public boolean hasTable(String name) {
+        return hasTable(DEFAULT_SCHEMA, name);
+    }
+
+    public List<String> tableNames() {
+        return tableNames(DEFAULT_SCHEMA);
     }
 
     public void addListener(Runnable listener) {
