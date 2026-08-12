@@ -42,22 +42,23 @@ MiniDB 是一个基于 Apache Calcite(解析/规划)+ Apache Arrow(列式存储)
 
 ### SQL 执行流水线
 ```
-QueryExecutor.execute(sql)
-  → 顶部前缀识别(EXPLAIN / EXPLAIN ANALYZE / ANALYZE,在 calcite.parse 之前)
+QueryExecutor.execute(sql, currentSchema)
+  → 顶部前缀识别(EXPLAIN / EXPLAIN ANALYZE / ANALYZE / USE SCHEMA,在 calcite.parse 之前)
+  → schema DDL(SqlCreateSchema / SqlDropSchema,calcite.parse 之后)
   → CalciteContext.parse(sql) → SqlNode
-  → Planner.plan(sql) → RelNode(VolcanoPlanner + MiniDbRules 生成物理算子树)
-  → MiniDbRel.execute(ExecContext) → BatchIterator(拉模式,批式向量化)
-  → QueryResult.Rows(VectorSchemaRoot) 或 QueryResult.Update(count)
-  → SessionHandler → Message.ArrowBatch / UpdateCount → wire → 客户端
+  → Planner.plan(sql, currentSchema) → RelNode(VolcanoPlanner + MiniDbRules 生成物理算子树)
+  → MiniDbRel.execute(ExecContext[currentSchema]) → BatchIterator(拉模式,批式向量化)
+  → QueryResult.Rows / Update / UseSchema
+  → SessionHandler[per-channel currentSchema] → Message.ArrowBatch / UpdateCount → wire → 客户端
 ```
 
 ### 关键类(`minidb-server/src/main/java/com/minidb/server/`)
 
 **执行核心:**
-- `exec/QueryExecutor` — SQL 入口,前缀分发 + DDL 处理 + 规划执行。4 参构造:`(catalog, storage, allocator, stats)`。
-- `exec/ExecContext` — 执行上下文(`storage` + `allocator` + `RexInterpreter`),每查询新建。
+- `exec/QueryExecutor` — SQL 入口,前缀分发(EXPLAIN / EXPLAIN ANALYZE / ANALYZE / USE SCHEMA,在 calcite.parse 之前)+ schema DDL(`SqlCreateSchema`/`SqlDropSchema`)+ 限定名 CREATE/DROP/TRUNCATE + 规划执行。4 参构造:`(catalog, storage, allocator, stats)`。`execute(sql)` 委托 `execute(sql, "public")`;`execute(sql, currentSchema)` 主路径,currentSchema 作参数流经 Planner/CalciteContext(不落共享成员字段,避免跨连接污染)。USE SCHEMA 返回 `QueryResult.UseSchema(name)`。
+- `exec/ExecContext` — 执行上下文(`storage` + `allocator` + `RexInterpreter` + `currentSchema`),每查询新建。`getTable(schema,table)`/`markDirty(schema,table)` schema 感知;裸名 `getTable(table)`/`markDirty(table)` 用 `currentSchema` 解析(供算子的 size==2 路径)。
 - `exec/BatchIterator` — 拉模式批迭代器接口(`hasNext`/`next`/`close`,`empty()` 工厂)。
-- `exec/QueryResult` — sealed 接口:`Rows(VectorSchemaRoot)` 或 `Update(long)`。
+- `exec/QueryResult` — sealed 接口:`Rows(VectorSchemaRoot)` / `Update(long)` / `UseSchema(String schemaName)`(USE SCHEMA 切换,SessionHandler 据此更新 per-channel currentSchema)。
 - `exec/RexInterpreter` — RexNode 表达式求值(比较/算术/逻辑/CAST),供 Filter/Project 用。
 - `exec/RowCopier` — 跨 VectorSchemaRoot 按行/按值拷贝。
 
@@ -69,23 +70,25 @@ QueryExecutor.execute(sql)
 - `plan/MiniDbSort` — **eager**:`execute()` 内全量物化+排序,返回惰性迭代器。offset/fetch 字面量处理。
 - `plan/MiniDbValues` — VALUES 字面量。
 - `plan/MiniDbModify` — INSERT/UPDATE/DELETE,写路径调 `storage.markDirty(tableName)`(此处触发 stats stale 钩子)。
-- `plan/Planner` — VolcanoPlanner + `MiniDbRules.ALL`(ConverterRule 把 Logical* 转成 MiniDb*)。
+- `plan/Planner` — VolcanoPlanner + `MiniDbRules.ALL`(ConverterRule 把 Logical* 转成 MiniDb*)。`plan(sql)` 委托 `plan(sql, "public")`,透传 currentSchema 给 `CalciteContext.planInCluster`。
 - `plan/MiniDbRules` — 转换规则集。
 
 **存储(`storage/`):**
-- `storage/StorageManager` — 表目录 + Arrow IPC 持久化(`.arrow` 文件)。`loadAll`/`flushDirty`/`markDirty`/`dropTable`/`truncateTable`。持有 `volatile StatsManager` 引用(setStatsManager 注入),写路径 `markDirty` 触发 `markStale`,`dropTable` 触发 `dropStats`。有 `catalog()` 访问器。
-- `storage/ArrowTable` — 单表:`CopyOnWriteArrayList<VectorSchemaRoot>` batches。`rowCount()`(O(批数)非 O(行数))、`batches()`、`newBatchRoot()`、`appendBatch`(MAX_BATCH_ROWS=4096)、`replaceBatches`、`clear`。
+- `storage/StorageManager` — 表目录 + Arrow IPC 持久化。**schema 感知**:存储 key 为 `schema.table`(小写),文件路径 `data/<schema>/<table>.arrow`(子目录),`flushTable` 必须 `createDirectories(file.getParent())`。`loadAll` 两级目录遍历,从 Arrow schema metadata 恢复 schemaName。`getTable(schema,table)`/`dropTable(schema,table)`/`markDirty(schema,table)`/`truncateTable(schema,table)`/`dropSchema(name)`(级联删表+文件,catalog 抛 public/missing);裸名重载委托 `public`。持有 `volatile StatsManager` 引用,`markDirty` 触发 `markStale`(key 为 `schema.table`),`dropTable`/`dropSchema` 触发 `dropStats`。
+- `storage/ArrowTable` — 单表:`CopyOnWriteArrayList<VectorSchemaRoot>` batches。构造 Arrow `Schema` 时附 `{"schema" → schemaName}` metadata(跨 IPC 流到客户端 `getSchemaName()`)。`rowCount()`(O(批数)非 O(行数))、`batches()`、`newBatchRoot()`、`appendBatch`(MAX_BATCH_ROWS=4096)、`replaceBatches`、`clear`。
 
 **目录(`catalog/`):**
-- `catalog/MiniDbCatalog` — 线程安全表元数据(`ConcurrentHashMap<lowercase-name, TableSchema>`),`tableNames()`。
-- `catalog/TableSchema` — `record(name, List<ColumnMeta>)`,`columnIndex` 大小写不敏感。
+- `catalog/MiniDbCatalog` — 线程安全 schema/table 元数据:`ConcurrentHashMap<schema-lowercase, ConcurrentHashMap<table-lowercase, TableSchema>>`。构造自动建 `"public"`。`createSchema`/`dropSchema`(public 不可删,级联删表)/`schemaNames`/`tableNames(schema)`/`getTable(schema,table)`/`hasTable(schema,table)`/`dropTable(schema,table)`;裸名重载(`getTable(name)`/`hasTable(name)`/`tableNames()`/`dropTable(name)`)委托 `public`,向后兼容。
+- `catalog/TableSchema` — `record(schemaName, name, List<ColumnMeta>)`;便捷构造 `TableSchema(name, cols)` 委托 `schemaName="public"`。`columnIndex` 大小写不敏感。
 - `catalog/ColumnMeta` — `record(name, ColumnType)`。
 - `catalog/ColumnType` — 枚举:INTEGER/BIGINT/DOUBLE/VARCHAR/BOOLEAN/DATE/TIMESTAMP。
 - `catalog/ArrowTypes` — SqlTypeName↔ColumnType↔ArrowType 互转,`field(...)` 工厂。
 
 **Calcite 集成(`calcite/`):**
-- `calcite/CalciteContext` — parser 配置(MYSQL lex,大小写不敏感,DDL parser factory)。`parse(sql)` → SqlNode;`planInCluster(sql, cluster)` → RelRoot。
-- `calcite/MiniDbCalciteSchema` / `MiniDbCalciteTable` — 把 catalog 暴露给 Calcite。
+- `calcite/CalciteContext` — parser 配置(MYSQL lex,大小写不敏感,DDL parser factory)。`parse(sql)` → SqlNode;`planInCluster(sql, cluster, currentSchema)` → RelRoot(旧 2 参重载委托 `public`)。catalog reader 搜索路径 `["minidb"]`;`MiniDbRootCalciteSchema` 挂在 `minidb` 下,其 `getTableMap()` 返回当前 schema 的表(支持 unqualified 名),`getSubSchemaMap()` 返回所有 schema(支持 `schema.table` 限定名)。
+- `calcite/MiniDbRootCalciteSchema` — 容器 schema,接 `(catalog, currentSchema)`,既暴露当前 schema 的表也暴露所有子 schema。
+- `calcite/MiniDbCalciteSchema` — 单 schema 实例,`getTableMap()` 返回该 schema 的表。
+- `calcite/MiniDbCalciteTable` — 把 catalog 表暴露给 Calcite。
 
 **统计(`stats/`,EXPLAIN 附属子系统):**
 - `stats/Histogram` — 不可变单列等频直方图(10 桶 + top-10 MCV + distinct/null/total)。`selectivity(RexNode, long)` 选择率模型(等值/范围/AND/OR/NOT/默认0.33)。**Serializable**。跨列类型不兼容时 rangeSelectivity 走 `DEFAULT_SELECTIVITY` 兜底(不抛 ClassCastException)。
@@ -94,13 +97,13 @@ QueryExecutor.execute(sql)
 - `stats/TableStats` — `record(Map<String,Histogram> columnHistograms, boolean stale)`,Serializable。map 键为小写列名。
 
 **EXPLAIN(`exec/`):**
-- `exec/ExplainExecutor` — `explain(sql)`(估算,不执行)/`analyze(sql)`(插桩执行)。7 列结果集:`id INT, parent_id INT nullable, operation VARCHAR, rows BIGINT nullable, batches INT nullable, elapsed_ms DOUBLE nullable, remarks VARCHAR`。plain 和 ANALYZE 都折叠 Calcite 插入的 trivial Project 节点,保证两者行集一致。
+- `exec/ExplainExecutor` — `explain(sql, currentSchema)`(估算,不执行)/`analyze(sql, currentSchema)`(插桩执行),透传 currentSchema 给 `planner.plan`(旧单参重载委托 public)。7 列结果集:`id INT, parent_id INT nullable, operation VARCHAR, rows BIGINT nullable, batches INT nullable, elapsed_ms DOUBLE nullable, remarks VARCHAR`。plain 和 ANALYZE 都折叠 Calcite 插入的 trivial Project 节点,保证两者行集一致。内部 `storage.getTable(table)` 用裸名,非 public 表的统计降级(坑 18)。
 - `exec/Instrumenter` — ANALYZE 用:用各算子 `copy()` 构造插桩影子树,`InstrumentedRel extends AbstractRelNode implements MiniDbRel` 包裹每个节点,`execute()` 返回的 measured 迭代器在 `next()` 累加 rows/batches、`close()` 记 elapsed。`start` 必须在 `wrapped.execute()` 之前设置(否则 Sort 的 eager 物化时间不计)。stats 按**原始**节点 keyed 到 `IdentityHashMap`。
 - `exec/NodeStats` — 可变 `long rows; int batches; double elapsedMs;`。
 
 **网络:**
 - `MiniDbServer` — 启动:`storage.loadAll()` → `StatsManager` 构造 + `setStatsManager` + `loadAll` → `QueryExecutor` → Netty `ServerBootstrap`。
-- `netty/SessionHandler` — `handleExecute`:执行 → `QueryResult.Rows` 走 `sendRows`(Arrow IPC 编码成 `Message.ArrowBatch`)然后 `close()`;`Update` 走 `Message.UpdateCount`。异常 → `Message.ExecuteResponse.error`。**注意**:`rows.data().close()` 不在 finally 里(pre-existing,所有 Rows 路径都这样,非 EXPLAIN 特有)。
+- `netty/SessionHandler` — 持有 per-channel `currentSchema` 字段(默认 public)。`handleExecute`:调 `executor.execute(sql, currentSchema)` → `QueryResult.UseSchema` 更新自身 currentSchema 并回 `Message.UpdateCount(0)`;`Rows` 走 `sendRows`(Arrow IPC 编码成 `Message.ArrowBatch`)然后 `close()`;`Update` 走 `Message.UpdateCount`。异常 → `Message.ExecuteResponse.error`。**注意**:`rows.data().close()` 不在 finally 里(pre-existing,所有 Rows 路径都这样,非 EXPLAIN 特有)。
 
 **协议(`minidb-protocol`):**
 - `Message` — sealed records:`Handshake`/`HandshakeAck`/`ExecuteRequest(requestId, sql)`/`CloseRequest`/`ExecuteResponse`/`ArrowBatch(requestId, lastBatch, data)`/`UpdateCount(requestId, count)`。
@@ -127,6 +130,10 @@ QueryExecutor.execute(sql)
 12. **minidb-jdbc 的 `NoClassDefFoundError` 测试失败是环境问题**(Calcite 不在测试 classpath),与服务端改动无关——minidb-jdbc 不引用任何服务端类。别误判为回归。
 13. **stale 钩子集中在 `StorageManager.markDirty`**——INSERT/UPDATE/DELETE/TRUNCATE 全走 `markDirty`,所以只需在那里加一次 `markStale`。`MiniDbModify` 的 no-match 早返回路径(`rewriteTable` 行 96)正确跳过 `markDirty`(表未变)。
 14. **断开连接的快速失败**:`MiniDbClient`/`MiniDbConnection.isClosed()/isValid()` 依赖 `channelInactive` 标记 `connected=false`,连接池不用试查询就知道连接死了。
+15. **`currentSchema` 不能放共享成员字段**——`QueryExecutor` 是所有连接共享的单例,`CalciteContext`/`Planner` 是其 final 成员。若 `currentSchema` 是 `CalciteContext` 可变字段,一个客户端 `USE SCHEMA` 会污染所有并发连接。必须作参数流经 `QueryExecutor.execute(sql, currentSchema)` → `Planner.plan(sql, currentSchema)` → `CalciteContext.planInCluster(sql, cluster, currentSchema)`。`SessionHandler` 持有 per-channel `currentSchema` 字段(默认 public),`USE SCHEMA` 返回 `QueryResult.UseSchema` 让其更新。
+16. **`SqlIdentifier.getSimple()` 对复合名静默返回首段**——断言关闭时(JVM 默认)`getSimple()` 对 `public.users` 不抛而返回 `"public"`。限定名解析必须用 `node.name.names`(ImmutableList)分解:schema=`names.get(0)`,table=`names.get(names.size()-1)`。
+17. **Calcite schema 树"提升表"副作用**——`MiniDbRootCalciteSchema.getTableMap()` 把当前 schema 的表暴露在 `minidb` 容器层(让 unqualified `t` 解析),导致 `RelOptTable.getQualifiedName()` 对 unqualified 表返回 `["minidb","t"]`(2 段,丢失 schema),对 `other.t` 返回 `["minidb","other","t"]`(3 段)。`MiniDbScan`/`MiniDbModify` 据此分流:`size>=3` 用倒数第二段作 schema,`size==2` 调 `ctx.getTable(裸名)` 由 `ExecContext.currentSchema` 解析。这是算子适配 schema 的唯一改动点(2/6 算子)。
+18. **持久化子目录 + StatsManager key 语义**——文件路径 `data/<schema>/<table>.arrow`,`flushTable` 必须 `createDirectories(file.getParent())`(旧扁平格式不兼容)。`StatsManager` 零代码改动但 key 语义从 `table` 变 `schema.table`,`resolveKey(table)` 兼容裸名(默认 public)。`StatsManager.analyze` 当前只支持 public 表(`storage.getTable(DEFAULT_SCHEMA, table)`),非 public 表的 EXPLAIN ANALYZE 统计降级为无统计——分阶段交付,可接受。
 
 ## 文档与计划
 

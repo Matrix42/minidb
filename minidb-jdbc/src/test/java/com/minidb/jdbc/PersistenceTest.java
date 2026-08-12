@@ -28,7 +28,7 @@ class PersistenceTest {
         }
         server.close();
 
-        assertTrue(Files.exists(dataDir.resolve("keep.arrow")));
+        assertTrue(Files.exists(dataDir.resolve("public").resolve("keep.arrow")));
 
         MiniDbServer server2 = new MiniDbServer();
         server2.start(0, dataDir);
