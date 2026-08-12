@@ -12,7 +12,7 @@ JDBC 客户端的 `DatabaseMetaData.getSchemas()` / `getTables(...)` / `getColum
 
 1. **实现路径**: 在 `minidb-protocol` 新增专用元数据请求消息(不复用 `ExecuteRequest`+伪SQL)。
 2. **协议消息形态**: 三条独立请求消息(`SchemasRequest`/`TablesRequest`/`ColumnsRequest`),而非单一统一请求。
-3. **catalog 语义**: MiniDB 无 catalog 概念(`getCatalog()=null`,只有 schema)。`TABLE_CAT` 列恒为 `null`;入参 `catalog` 忽略。
+3. **catalog 语义**: MiniDB 无 catalog 概念(`getCatalog()=null`,只有 schema)。`getSchemas` 的 `TABLE_CATALOG` 列与 `getTables`/`getColumns` 的 `TABLE_CAT` 列恒为 `null`;入参 `catalog` 忽略。
 4. **NULLABLE**: MiniDB 列全可空(CREATE TABLE 无 NOT NULL 语法),`NULLABLE` 列恒为 `1`(`columnNullable`),`IS_NULLABLE` 恒为 `"YES"`。
 5. **列集完整性**: `getColumns` 按 JDBC 规范返回全部 24 列(无语义的列填合理默认);`getTables` 返回全部 10 列;`getSchemas` 返回 2 列。
 6. **types 参数**: MiniDB 只有基表。`TABLE_TYPE` 列恒输出 `"TABLE"`;`types` 入参 `null`/空→返回所有,含 `"TABLE"`(大小写不敏感)→返回所有,含其他→空集。
@@ -83,7 +83,9 @@ getMetaData().getColumns(catalog, schemaPattern, tableNamePattern, columnNamePat
 | 列 | Arrow 类型 | 值 |
 |---|---|---|
 | `TABLE_SCHEM` | VARCHAR | schema 名(catalog 内部存储即小写) |
-| `TABLE_CAT` | VARCHAR | `null` |
+| `TABLE_CATALOG` | VARCHAR | `null` |
+
+注意:`getSchemas` 规范列名是 `TABLE_SCHEM` + `TABLE_CATALOG`;`getTables`/`getColumns` 才是 `TABLE_CAT`。MiniDB 无 catalog 概念,两者值均恒 `null`。
 
 ### getTables(10 列,JDBC 规范)
 
