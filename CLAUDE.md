@@ -70,7 +70,7 @@ QueryExecutor.execute(sql, currentSchema)
 - `plan/MiniDbSort` — **eager**:`execute()` 内全量物化+排序,返回惰性迭代器。offset/fetch 字面量处理。
 - `plan/MiniDbValues` — VALUES 字面量。
 - `plan/MiniDbModify` — INSERT/UPDATE/DELETE,写路径调 `storage.markDirty(tableName)`(此处触发 stats stale 钩子)。
-- `plan/MiniDbAggregate` — 聚合,`Aggregate` 子类。**eager**:`execute()` 拉取输入全量,流式分组聚合,输出单批。分组 key 为 `List<Object>` 规范化值(含 null),`LinkedHashMap` 保首见顺序;每 `AggregateCall` 一个 `Accumulator`(COUNT=long,SUM 按参数 long/double,AVG=sum+count,MIN/MAX=Comparable)。NULL 语义:聚合忽略 NULL;`COUNT(*)` 计所有行;空输入无 GROUP BY → 1 行(COUNT=0 其余 NULL);有 GROUP BY 空表 → 0 行。输出列类型按 `getRowType()`(Calcite 推导)。
+- `plan/MiniDbAggregate` — 聚合,`Aggregate` 子类。**eager**:`execute()` 拉取输入全量,流式分组聚合,输出单批。分组 key 为 `List<Object>` 规范化值(含 null),`LinkedHashMap` 保首见顺序;每 `AggregateCall` 一个 `Accumulator`(COUNT=long,SUM 按参数 long/double,AVG=sum+count,MIN/MAX=Comparable;`DISTINCT` 聚合用 `DistinctAcc` 维护 `LinkedHashSet` 去重后按类型聚合)。NULL 语义:聚合忽略 NULL;`COUNT(*)` 计所有行;空输入无 GROUP BY → 1 行(COUNT=0 其余 NULL);有 GROUP BY 空表 → 0 行。输出列类型按 `getRowType()`(Calcite 推导)。`SELECT DISTINCT` 由 Calcite 规划为无 aggCalls 的分组聚合,天然支持。
 - `plan/Planner` — VolcanoPlanner + `MiniDbRules.ALL`(ConverterRule 把 Logical* 转成 MiniDb*)。`plan(sql)` 委托 `plan(sql, "public")`,透传 currentSchema 给 `CalciteContext.planInCluster`。
 - `plan/MiniDbRules` — 转换规则集聚合类,`rule` 包(见下)。
 - `rule/` 包(`com.minidb.server.rule`,plan 同级)——每个规则一个类:`MiniDbScanRule`/`MiniDbFilterRule`/`MiniDbProjectRule`/`MiniDbSortRule`/`MiniDbValuesRule`/`MiniDbModifyRule`/`MiniDbAggregateRule`,均 `extends ConverterRule`,构造器链:`this(Config.INSTANCE.withConversion(...).withRuleFactory(XxxRule::new))` + 私有 `(Config)` 构造器 `super(config)`。`MiniDbRules.ALL` 聚合引用。
@@ -142,6 +142,7 @@ QueryExecutor.execute(sql, currentSchema)
 21. **Calcite 1.42 的 `AggregateCall` 参数存储**:纯列引用参数(如 `SUM(id)`)时 `rexList` 为空、索引存 `argList`;表达式参数(如 `SUM(id*2)`)才填 `rexList`。聚合算子取参数必须两个都查(先 `rexList` 后 `argList` 索引取输入列)。只查 `rexList` 会静默丢掉参数(SUM 恒 NULL,COUNT 退化为 COUNT(*))。
 22. **Calcite 1.42 聚合类型推导**:`SUM(INTEGER)`→INTEGER(非 BIGINT)、`AVG(INTEGER)`→INTEGER(截断)、`SUM(DOUBLE)`→DOUBLE、`COUNT`→BIGINT、`MIN/MAX`→同参数。实现按 `Aggregate.getRowType()` 落地,断言/测试别假设 SUM(INT)→BIGINT。
 23. **既有 bug:含 DOUBLE 字面量的 VALUES INSERT 失败**(与 aggregate 无关):Calcite 对多行 `VALUES (1, 10.5), ...` 或含 CAST 的单行生成 `LogicalUnion`(每行一个 `Project(CAST)` over 占位 `Values`),MiniDB 无 Union 规则 → `CannotPlan`。同源:NULL 字面量(`nullLiteral` 对 INTEGER 生成 BigIntVector)与 Project 字面量(literalVector 统一 BigIntVector)复制到 IntVector 列时 `RowCopier.copyRow` 抛 `MinorType` 不一致。**可行的数据构造**:单列任意类型逐行/多行 INSERT、多列多行同型(无 CAST)INSERT、`UPDATE ... SET col = NULL`(走 `writeValue` 类型转换路径)。
+24. **DISTINCT 的实现落点**:`SELECT DISTINCT` 是 Calcite 规划的 `MiniDbAggregate(groupSet=全列, aggCalls=[])`,上轮分组实现天然支持(无需新代码);`COUNT(DISTINCT x)` 等是 `AggregateCall.isDistinct()`,需在 factoryFor 分流到 `DistinctAcc`(LinkedHashSet 去重,NULL 不参与)。注意:**只测 `COUNT(id)` 无法发现 distinct 未实现**(表行数碰巧等于去重数时会掩盖),要用含重复数据 + 期望去重后的值。
 
 ## 文档与计划
 

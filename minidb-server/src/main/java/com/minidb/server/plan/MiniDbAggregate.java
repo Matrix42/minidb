@@ -180,16 +180,25 @@ public class MiniDbAggregate extends Aggregate implements MiniDbRel {
         RelDataType outType = call.getType();
         boolean floatingOut = isFloating(outType.getSqlTypeName());
         boolean floatingArg = isFloatingArg(call, inputRowType);
+        boolean distinct = call.isDistinct();
         switch (kind) {
             case COUNT:
-                return CountAcc::new;
+                return distinct
+                        ? () -> new DistinctAcc(kind, false, false, false)
+                        : CountAcc::new;
             case SUM:
-                return () -> new SumAcc(floatingArg, floatingOut);
+                return distinct
+                        ? () -> new DistinctAcc(kind, floatingArg, floatingOut, false)
+                        : () -> new SumAcc(floatingArg, floatingOut);
             case AVG:
-                return () -> new AvgAcc(floatingOut);
+                return distinct
+                        ? () -> new DistinctAcc(kind, floatingArg, floatingOut, false)
+                        : () -> new AvgAcc(floatingOut);
             case MIN:
             case MAX:
-                return () -> new MinMaxAcc(kind == SqlKind.MIN);
+                return distinct
+                        ? () -> new DistinctAcc(kind, floatingArg, floatingOut, kind == SqlKind.MIN)
+                        : () -> new MinMaxAcc(kind == SqlKind.MIN);
             default:
                 throw new UnsupportedOperationException("aggregate not supported: " + kind);
         }
@@ -230,6 +239,95 @@ public class MiniDbAggregate extends Aggregate implements MiniDbRel {
             accs = new ArrayList<>(factories.size());
             for (AccumulatorFactory f : factories) {
                 accs.add(f.create());
+            }
+        }
+    }
+
+    private static final class DistinctAcc implements Accumulator {
+        private final SqlKind kind;
+        private final boolean floatingOut;
+        private final boolean min;
+        private final java.util.LinkedHashSet<Object> set = new java.util.LinkedHashSet<>();
+
+        DistinctAcc(SqlKind kind, boolean floating, boolean floatingOut, boolean min) {
+            this.kind = kind;
+            this.floatingOut = floatingOut;
+            this.min = min;
+        }
+
+        @Override
+        public void add(ValueVector v, int row) {
+            if (v == null || v.isNull(row)) {
+                return; // DISTINCT aggregates ignore NULLs
+            }
+            set.add(readObject(v, row));
+        }
+
+        @Override
+        public void write(FieldVector out, int row) {
+            switch (kind) {
+                case COUNT:
+                    writeLong(out, row, set.size());
+                    return;
+                case SUM: {
+                    if (set.isEmpty()) {
+                        out.setNull(row);
+                        return;
+                    }
+                    if (floatingOut) {
+                        double s = 0;
+                        for (Object o : set) {
+                            s += ((Number) o).doubleValue();
+                        }
+                        writeDouble(out, row, s);
+                    } else {
+                        long s = 0;
+                        for (Object o : set) {
+                            s += ((Number) o).longValue();
+                        }
+                        writeLong(out, row, s);
+                    }
+                    return;
+                }
+                case AVG: {
+                    if (set.isEmpty()) {
+                        out.setNull(row);
+                        return;
+                    }
+                    double s = 0;
+                    for (Object o : set) {
+                        s += ((Number) o).doubleValue();
+                    }
+                    if (floatingOut) {
+                        writeDouble(out, row, s / set.size());
+                    } else {
+                        writeLong(out, row, (long) (s / set.size()));
+                    }
+                    return;
+                }
+                case MIN:
+                case MAX: {
+                    if (set.isEmpty()) {
+                        out.setNull(row);
+                        return;
+                    }
+                    Object best = null;
+                    for (Object o : set) {
+                        if (best == null) {
+                            best = o;
+                            continue;
+                        }
+                        int cmp = compareObjects(best, o);
+                        if (min ? cmp > 0 : cmp < 0) {
+                            best = o;
+                        }
+                    }
+                    writeObject(out, row, best);
+                    return;
+                }
+                default:
+                    throw new UnsupportedOperationException(
+                            "distinct aggregate not supported: " + kind);
             }
         }
     }

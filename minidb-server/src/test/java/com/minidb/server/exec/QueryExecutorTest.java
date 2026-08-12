@@ -506,4 +506,103 @@ class QueryExecutorTest {
         }
         root.close();
     }
+
+    // ---- distinct ----
+
+    @Test
+    void countDistinctDeduplicates() {
+        executor.execute("CREATE TABLE t (dept VARCHAR, id INTEGER)");
+        executor.execute("INSERT INTO t VALUES ('a', 1), ('b', 2), ('a', 3), ('a', 1)");
+        QueryResult r = executor.execute("SELECT COUNT(DISTINCT id) AS c FROM t");
+        VectorSchemaRoot root = ((QueryResult.Rows) r).data();
+        assertEquals(1, root.getRowCount());
+        assertEquals(3L, ((BigIntVector) root.getVector("c")).get(0)); // {1,2,3}
+        root.close();
+    }
+
+    @Test
+    void sumAvgMinMaxDistinct() {
+        executor.execute("CREATE TABLE t (id INTEGER)");
+        executor.execute("INSERT INTO t VALUES (1), (2), (3), (1)");
+        QueryResult r = executor.execute(
+                "SELECT SUM(DISTINCT id) AS s, AVG(DISTINCT id) AS a, "
+              + "MIN(DISTINCT id) AS mn, MAX(DISTINCT id) AS mx FROM t");
+        VectorSchemaRoot root = ((QueryResult.Rows) r).data();
+        assertEquals(1, root.getRowCount());
+        assertEquals(6, ((IntVector) root.getVector("s")).get(0)); // 1+2+3
+        assertEquals(2, ((IntVector) root.getVector("a")).get(0));
+        assertEquals(1, ((IntVector) root.getVector("mn")).get(0));
+        assertEquals(3, ((IntVector) root.getVector("mx")).get(0));
+        root.close();
+    }
+
+    @Test
+    void groupByCountDistinct() {
+        executor.execute("CREATE TABLE t (dept VARCHAR, id INTEGER)");
+        executor.execute("INSERT INTO t VALUES ('a', 1), ('b', 2), ('a', 3), ('a', 1)");
+        QueryResult r = executor.execute(
+                "SELECT dept, COUNT(DISTINCT id) AS c FROM t GROUP BY dept ORDER BY dept");
+        VectorSchemaRoot root = ((QueryResult.Rows) r).data();
+        assertEquals(2, root.getRowCount());
+        assertEquals(2L, ((BigIntVector) root.getVector("c")).get(0)); // a: {1,3}
+        assertEquals(1L, ((BigIntVector) root.getVector("c")).get(1)); // b: {2}
+        root.close();
+    }
+
+    @Test
+    void distinctWithExpressionArgument() {
+        executor.execute("CREATE TABLE t (id INTEGER)");
+        executor.execute("INSERT INTO t VALUES (1), (2), (1)");
+        QueryResult r = executor.execute("SELECT SUM(DISTINCT id * 2) AS s FROM t");
+        VectorSchemaRoot root = ((QueryResult.Rows) r).data();
+        assertEquals(1, root.getRowCount());
+        assertEquals(6, ((IntVector) root.getVector("s")).get(0)); // {2,4}
+        root.close();
+    }
+
+    @Test
+    void distinctOverEmptyTable() {
+        executor.execute("CREATE TABLE t (id INTEGER)");
+        QueryResult r = executor.execute(
+                "SELECT COUNT(DISTINCT id) AS c, SUM(DISTINCT id) AS s FROM t");
+        VectorSchemaRoot root = ((QueryResult.Rows) r).data();
+        assertEquals(1, root.getRowCount());
+        assertEquals(0L, ((BigIntVector) root.getVector("c")).get(0));
+        assertTrue(root.getVector("s").isNull(0));
+        root.close();
+    }
+
+    @Test
+    void selectDistinctRows() {
+        executor.execute("CREATE TABLE t (dept VARCHAR, id INTEGER)");
+        executor.execute("INSERT INTO t VALUES ('a', 1), ('b', 2), ('a', 3), ('a', 1)");
+        QueryResult r = executor.execute("SELECT DISTINCT dept FROM t");
+        VectorSchemaRoot root = ((QueryResult.Rows) r).data();
+        assertEquals(2, root.getRowCount());
+        assertEquals("a", new String(
+                ((VarCharVector) root.getVector("dept")).get(0)));
+        assertEquals("b", new String(
+                ((VarCharVector) root.getVector("dept")).get(1)));
+        root.close();
+
+        QueryResult r2 = executor.execute("SELECT DISTINCT dept, id FROM t");
+        VectorSchemaRoot root2 = ((QueryResult.Rows) r2).data();
+        assertEquals(3, root2.getRowCount()); // (a,1) dup dropped
+        root2.close();
+    }
+
+    @Test
+    void selectDistinctOrdered() {
+        executor.execute("CREATE TABLE t (dept VARCHAR)");
+        executor.execute("INSERT INTO t VALUES ('b'), ('a'), ('b'), ('a')");
+        QueryResult r = executor.execute(
+                "SELECT DISTINCT dept FROM t ORDER BY dept");
+        VectorSchemaRoot root = ((QueryResult.Rows) r).data();
+        assertEquals(2, root.getRowCount());
+        assertEquals("a", new String(
+                ((VarCharVector) root.getVector("dept")).get(0)));
+        assertEquals("b", new String(
+                ((VarCharVector) root.getVector("dept")).get(1)));
+        root.close();
+    }
 }

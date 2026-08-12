@@ -8,7 +8,7 @@ SELECT 聚合查询:COUNT/SUM/AVG/MIN/MAX,多列 GROUP BY,空 GROUP BY(全局聚
 
 ## 范围
 
-- 聚合函数:`COUNT(*)`、`COUNT(col)`、`SUM`、`AVG`、`MIN`、`MAX`。不含 DISTINCT 聚合与 GROUP_CONCAT(后续可加)。
+- 聚合函数:`COUNT(*)`、`COUNT(col)`、`SUM`、`AVG`、`MIN`、`MAX`,均支持 `DISTINCT`(`COUNT(DISTINCT col)` 等,去重后聚合,NULL 不参与)。`SELECT DISTINCT`(去重行)由 Calcite 规划为无 aggCalls 的聚合,天然支持。不含 GROUP_CONCAT(后续可加)。
 - 聚合参数可为表达式(如 `SUM(price * 2)`),在输入 batch 上按现有 `RexInterpreter` 逐行求值。
 - `GROUP BY` 支持多列;空 `GROUP BY`(无分组键的全局聚合)。
 - `HAVING`:Calcite 将其规划为 Aggregate 之上的 `Filter`(条件引用聚合输出列),MiniDbFilter + RexInterpreter 已具备求值能力,无需新代码,仅测试锁定。
@@ -20,7 +20,7 @@ SELECT 聚合查询:COUNT/SUM/AVG/MIN/MAX,多列 GROUP BY,空 GROUP BY(全局聚
 
 - **eager 执行**:`execute(ctx)` 拉取输入全量,流式分组聚合,输出单批。
 - **分组**:key 为 `List<Object>`(各分组列规范化包装值,`null` 保留为 null);`LinkedHashMap` 保持组首见顺序。分组列值从输入 batch 向量读取(IntVector→Integer、BigInt→Long、Float8→Double、VarChar→String、Bit→Integer、Date→Integer、Timestamp→Long)。
-- **累加器**:每个 `AggregateCall` 一个 `Accumulator` 实例(`COUNT`=long;`SUM` 按参数类型 long 或 double 累加;`AVG`=sum+count;`MIN`/`MAX`=Comparable best)。组状态为累加器列表,由 per-call 工厂按组创建。
+- **累加器**:每个 `AggregateCall` 一个 `Accumulator` 实例(`COUNT`=long;`SUM` 按参数类型 long 或 double 累加;`AVG`=sum+count;`MIN`/`MAX`=Comparable best;`DISTINCT` 聚合用 `DistinctAcc`,维护 `LinkedHashSet<Object>` 去重后按类型聚合)。组状态为累加器列表,由 per-call 工厂按组创建。
 - **NULL 语义**:聚合忽略 NULL;`COUNT(*)` 计所有行;空输入且无 GROUP BY → 1 行(`COUNT`=0,其余 NULL);空输入且有 GROUP BY → 0 行;分组键为 NULL 的值自成一组。
 - **参数求值**:每批对 `call.rexList` 逐元素 `ctx.interpreter().eval(rex, batch)`,逐行喂给累加器,用后 `close()`。
 - **输出**:按 `getRowType()` 字段建 `VectorSchemaRoot`(group 列 + 聚合列,字段名/类型来自 Calcite 推导),每组一行,单批返回。写值按目标向量类型(`RowCopier.writeValue` 同款 switch 思路)。
@@ -53,3 +53,8 @@ SELECT 聚合查询:COUNT/SUM/AVG/MIN/MAX,多列 GROUP BY,空 GROUP BY(全局聚
 ## 不做(后续可加)
 
 DISTINCT 聚合、GROUP_CONCAT、聚合内嵌套聚合、窗口函数。
+
+## 增量:DISTINCT 支持(2026-08-12)
+
+- `DISTINCT` 聚合:factoryFor 对 `call.isDistinct()` 返回 `DistinctAcc`(LinkedHashSet 去重,write 时按 kind 遍历计算:COUNT=size、SUM/AVG 求和、MIN/MAX 遍历比较);NULL 不参与去重。
+- `SELECT DISTINCT`:Calcite 规划为 `MiniDbAggregate(groupSet=全列, aggCalls=[])`,上轮分组实现天然支持,无需新代码,仅测试锁定。
