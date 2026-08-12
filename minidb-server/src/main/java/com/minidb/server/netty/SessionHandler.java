@@ -2,6 +2,7 @@ package com.minidb.server.netty;
 
 import com.minidb.protocol.Message;
 import com.minidb.protocol.Protocol;
+import com.minidb.server.catalog.MiniDbCatalog;
 import com.minidb.server.exec.QueryExecutor;
 import com.minidb.server.exec.QueryResult;
 import io.netty.channel.ChannelHandlerContext;
@@ -18,6 +19,7 @@ public class SessionHandler extends SimpleChannelInboundHandler<Message> {
     private static final Logger LOG = LoggerFactory.getLogger(SessionHandler.class);
 
     private final QueryExecutor executor;
+    private String currentSchema = MiniDbCatalog.DEFAULT_SCHEMA;
 
     public SessionHandler(QueryExecutor executor) {
         this.executor = executor;
@@ -38,9 +40,13 @@ public class SessionHandler extends SimpleChannelInboundHandler<Message> {
         LOG.debug("executing: {}", req.sql());
         long start = System.nanoTime();
         try {
-            QueryResult result = executor.execute(req.sql());
+            QueryResult result = executor.execute(req.sql(), currentSchema);
             long elapsedMs = (System.nanoTime() - start) / 1_000_000;
-            if (result instanceof QueryResult.Update update) {
+            if (result instanceof QueryResult.UseSchema us) {
+                currentSchema = us.schemaName();
+                LOG.info("use schema: {} in {} ms", currentSchema, elapsedMs);
+                ctx.writeAndFlush(new Message.UpdateCount(req.requestId(), 0));
+            } else if (result instanceof QueryResult.Update update) {
                 LOG.info("query ok: {} rows affected in {} ms", update.count(), elapsedMs);
                 ctx.writeAndFlush(new Message.UpdateCount(req.requestId(), update.count()));
             } else if (result instanceof QueryResult.Rows rows) {
