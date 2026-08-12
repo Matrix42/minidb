@@ -3,6 +3,7 @@ package com.minidb.server;
 import com.minidb.protocol.MessageDecoder;
 import com.minidb.protocol.MessageEncoder;
 import com.minidb.server.catalog.MiniDbCatalog;
+import com.minidb.server.exec.MetadataExecutor;
 import com.minidb.server.exec.QueryExecutor;
 import com.minidb.server.netty.SessionHandler;
 import com.minidb.server.storage.StorageManager;
@@ -51,7 +52,8 @@ public class MiniDbServer implements AutoCloseable {
                     protected void initChannel(SocketChannel ch) {
                         ch.pipeline().addLast(new MessageDecoder());
                         ch.pipeline().addLast(new MessageEncoder());
-                        ch.pipeline().addLast(new SessionHandler(executor));
+                        ch.pipeline().addLast(new SessionHandler(executor,
+                                new MetadataExecutor(catalog, allocator)));
                     }
                 });
         channel = bootstrap.bind(port).sync().channel();

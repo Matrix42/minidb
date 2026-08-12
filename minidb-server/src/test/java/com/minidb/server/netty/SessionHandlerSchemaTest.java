@@ -2,6 +2,7 @@ package com.minidb.server.netty;
 
 import com.minidb.protocol.Message;
 import com.minidb.server.catalog.MiniDbCatalog;
+import com.minidb.server.exec.MetadataExecutor;
 import com.minidb.server.exec.QueryExecutor;
 import com.minidb.server.storage.StorageManager;
 import com.minidb.server.stats.StatsManager;
@@ -23,7 +24,8 @@ class SessionHandlerSchemaTest {
         StatsManager stats = new StatsManager(storage, allocator, dir);
         storage.setStatsManager(stats);
         QueryExecutor executor = new QueryExecutor(catalog, storage, allocator, stats);
-        EmbeddedChannel ch = new EmbeddedChannel(new SessionHandler(executor));
+        EmbeddedChannel ch = new EmbeddedChannel(
+                new SessionHandler(executor, new MetadataExecutor(catalog, allocator)));
         try {
             ch.writeInbound(new Message.ExecuteRequest(1, "CREATE SCHEMA other"));
             ch.writeInbound(new Message.ExecuteRequest(2,
@@ -50,7 +52,8 @@ class SessionHandlerSchemaTest {
         StatsManager stats = new StatsManager(storage, allocator, dir);
         storage.setStatsManager(stats);
         QueryExecutor executor = new QueryExecutor(catalog, storage, allocator, stats);
-        EmbeddedChannel ch = new EmbeddedChannel(new SessionHandler(executor));
+        EmbeddedChannel ch = new EmbeddedChannel(
+                new SessionHandler(executor, new MetadataExecutor(catalog, allocator)));
         try {
             ch.writeInbound(new Message.ExecuteRequest(1, "USE SCHEMA ghost"));
             Object out = ch.outboundMessages().poll();
