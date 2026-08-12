@@ -5,6 +5,7 @@ import com.minidb.server.plan.MiniDbFilter;
 import com.minidb.server.plan.MiniDbProject;
 import com.minidb.server.plan.MiniDbRel;
 import com.minidb.server.plan.MiniDbScan;
+import com.minidb.server.plan.MiniDbSetOp;
 import com.minidb.server.plan.MiniDbSort;
 import com.minidb.server.plan.MiniDbUnion;
 import com.minidb.server.plan.MiniDbValues;
@@ -63,6 +64,9 @@ public final class Instrumenter {
         }
         if (node instanceof MiniDbUnion union) {
             return union.copy(traits, inputs, union.all);
+        }
+        if (node instanceof MiniDbSetOp setOp) {
+            return setOp.copy(traits, inputs, setOp.all);
         }
         throw new UnsupportedOperationException("cannot instrument: " + node.getClass());
     }

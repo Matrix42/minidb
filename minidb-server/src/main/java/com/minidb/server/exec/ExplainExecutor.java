@@ -6,6 +6,7 @@ import com.minidb.server.plan.MiniDbModify;
 import com.minidb.server.plan.MiniDbProject;
 import com.minidb.server.plan.MiniDbRel;
 import com.minidb.server.plan.MiniDbScan;
+import com.minidb.server.plan.MiniDbSetOp;
 import com.minidb.server.plan.MiniDbSort;
 import com.minidb.server.plan.MiniDbUnion;
 import com.minidb.server.plan.MiniDbValues;
@@ -192,6 +193,19 @@ public class ExplainExecutor {
             Long distinct = firstColumnDistinct(union);
             long est = distinct == null ? Math.max(1, sum / 2)
                     : Math.min(sum, Math.max(1, distinct));
+            return new Est(est, null, "estimated");
+        }
+        if (node instanceof MiniDbSetOp setOp) {
+            long est = childRows(node);
+            for (int i = 1; i < node.getInputs().size(); i++) {
+                Long r = estimate(node.getInputs().get(i)).rows;
+                long c = r == null ? 0 : r;
+                if (setOp.isIntersect()) {
+                    est = Math.min(est, c);
+                } else {
+                    est = Math.max(0, est - c);
+                }
+            }
             return new Est(est, null, "estimated");
         }
         // default: passthrough

@@ -13,7 +13,9 @@ public final class MiniDbRules {
             new MiniDbValuesRule(),
             new MiniDbModifyRule(),
             new MiniDbAggregateRule(),
-            new MiniDbUnionRule());
+            new MiniDbUnionRule(),
+            new MiniDbIntersectRule(),
+            new MiniDbExceptRule());
 
     private MiniDbRules() {
     }

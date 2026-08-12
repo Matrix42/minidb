@@ -72,9 +72,10 @@ QueryExecutor.execute(sql, currentSchema)
 - `plan/MiniDbModify` — INSERT/UPDATE/DELETE,写路径调 `storage.markDirty(tableName)`(此处触发 stats stale 钩子)。
 - `plan/MiniDbAggregate` — 聚合,`Aggregate` 子类。**eager**:`execute()` 拉取输入全量,流式分组聚合,输出单批。分组 key 为 `List<Object>` 规范化值(含 null),`LinkedHashMap` 保首见顺序;每 `AggregateCall` 一个 `Accumulator`(COUNT=long,SUM 按参数 long/double,AVG=sum+count,MIN/MAX=Comparable;`DISTINCT` 聚合用 `DistinctAcc` 维护 `LinkedHashSet` 去重后按类型聚合)。NULL 语义:聚合忽略 NULL;`COUNT(*)` 计所有行;空输入无 GROUP BY → 1 行(COUNT=0 其余 NULL);有 GROUP BY 空表 → 0 行。输出列类型按 `getRowType()`(Calcite 推导)。`SELECT DISTINCT` 由 Calcite 规划为无 aggCalls 的分组聚合,天然支持。
 - `plan/MiniDbUnion` — UNION/UNION ALL,`Union` 子类。**eager**:先收集所有输入 batches 再 merge(必须 merge 后才 `close()` 输入迭代器,否则 Project/Filter owned batch 被释放)。`all=true` 级联;`all=false` 用 `LinkedHashSet<List<Object>>` 行级去重。输出单批,`VectorSchemaRoot.of()` 前必须 `setValueCount`(of 的 rowCount 取第一个 vector 的 valueCount)。
+- `plan/MiniDbSetOp` — INTERSECT/EXCEPT,`SetOp` 子类,kind 字段区分(`SqlKind.INTERSECT`/`MINUS`,SetOp 自带 kind+all,无 INTERSECT_ALL 枚举)。**eager**:每输入统计行级 key 计数(LinkedHashMap 保序),INTERSECT 取跨输入 min 计数、EXCEPT 取 count0-Σrest,>0 保留;`all=false` 每 key 输出 1 行、`all=true` 输出 n 行。输出顺序 = 第一输入首见顺序。
 - `plan/Planner` — VolcanoPlanner + `MiniDbRules.ALL`(ConverterRule 把 Logical* 转成 MiniDb*)。`plan(sql)` 委托 `plan(sql, "public")`,透传 currentSchema 给 `CalciteContext.planInCluster`。
 - `plan/MiniDbRules` — 转换规则集聚合类,`rule` 包(见下)。
-- `rule/` 包(`com.minidb.server.rule`,plan 同级)——每个规则一个类:`MiniDbScanRule`/`MiniDbFilterRule`/`MiniDbProjectRule`/`MiniDbSortRule`/`MiniDbValuesRule`/`MiniDbModifyRule`/`MiniDbAggregateRule`/`MiniDbUnionRule`,均 `extends ConverterRule`,构造器链:`this(Config.INSTANCE.withConversion(...).withRuleFactory(XxxRule::new))` + 私有 `(Config)` 构造器 `super(config)`。`MiniDbRules.ALL` 聚合引用。
+- `rule/` 包(`com.minidb.server.rule`,plan 同级)——每个规则一个类:`MiniDbScanRule`/`MiniDbFilterRule`/`MiniDbProjectRule`/`MiniDbSortRule`/`MiniDbValuesRule`/`MiniDbModifyRule`/`MiniDbAggregateRule`/`MiniDbUnionRule`/`MiniDbIntersectRule`/`MiniDbExceptRule`,均 `extends ConverterRule`,构造器链:`this(Config.INSTANCE.withConversion(...).withRuleFactory(XxxRule::new))` + 私有 `(Config)` 构造器 `super(config)`。`MiniDbRules.ALL` 聚合引用。
 
 **存储(`storage/`):**
 - `storage/StorageManager` — 表目录 + Arrow IPC 持久化。**schema 感知**:存储 key 为 `schema.table`(小写),文件路径 `data/<schema>/<table>.arrow`(子目录),`flushTable` 必须 `createDirectories(file.getParent())`。`loadAll` 两级目录遍历,从 Arrow schema metadata 恢复 schemaName。`getTable(schema,table)`/`dropTable(schema,table)`/`markDirty(schema,table)`/`truncateTable(schema,table)`/`dropSchema(name)`(级联删表+文件,catalog 抛 public/missing);裸名重载委托 `public`。持有 `volatile StatsManager` 引用,`markDirty` 触发 `markStale`(key 为 `schema.table`),`dropTable`/`dropSchema` 触发 `dropStats`。
@@ -148,6 +149,7 @@ QueryExecutor.execute(sql, currentSchema)
 26. **`VectorSchemaRoot.of(vectors)` 的 rowCount 取第一个 vector 的 valueCount**——必须先 `v.setValueCount(dst)` 再 `of()`,否则 root.getRowCount() 恒 0(向量有数据但 root 显示 0 行)。Aggregate/Union 都是先 setValueCount 后 of。`root.setRowCount(n)` 会同时设置 root.rowCount 和所有 vector 的 valueCount。
 27. **Calcite 的 `Union` 用公共字段 `all`**,无 `isAll()` getter——引用时用 `union.all`(LogicalUnion 同样)。
 28. **UNION 去重实现**:Calcite 1.42 不注册 UnionToDistinctRule,`UNION` 保持 `LogicalUnion(all=false)`,去重在 MiniDbUnion 内部做(`LinkedHashSet<List<Object>>` 行级,规范化值含 null)。UNION 两侧列名不同没关系(RowCopier.copyRow 按索引拷),但类型必须兼容(Calcite 已校验/CAST)。
+29. **SetOp 的 kind 语义**:Calcite `SetOp` 自带 `public final SqlKind kind` + `public final boolean all`,构造器 `(cluster, traits, inputs, kind, all)`。`INTERSECT`/`INTERSECT ALL` 的 kind 都是 `SqlKind.INTERSECT`(无 INTERSECT_ALL 枚举,靠 all 区分);`EXCEPT` 解析为 `LogicalMinus`,kind=`SqlKind.MINUS`(EXCEPT 是 MINUS 别名)。INTERSECT/EXCEPT 不去重展开,语义(去重/ALL 计数)在 MiniDbSetOp 内部完成。
 
 ## 文档与计划
 

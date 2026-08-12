@@ -734,4 +734,147 @@ class QueryExecutorTest {
         }
         root.close();
     }
+
+    // ---- intersect / except ----
+
+    private void createSetOpTables() {
+        executor.execute("CREATE TABLE a (id INTEGER)");
+        executor.execute("CREATE TABLE b (id INTEGER)");
+        executor.execute("INSERT INTO a VALUES (1), (2), (3), (3), (4)");
+        executor.execute("INSERT INTO b VALUES (2), (3), (5)");
+    }
+
+    @Test
+    void intersectDeduplicates() {
+        createSetOpTables();
+        QueryResult r = executor.execute(
+                "SELECT id FROM a INTERSECT SELECT id FROM b");
+        VectorSchemaRoot root = ((QueryResult.Rows) r).data();
+        assertEquals(2, root.getRowCount());
+        IntVector id = (IntVector) root.getVector("id");
+        assertEquals(2, id.get(0));
+        assertEquals(3, id.get(1));
+        root.close();
+    }
+
+    @Test
+    void intersectAllKeepsMinCount() {
+        executor.execute("CREATE TABLE a (id INTEGER)");
+        executor.execute("CREATE TABLE b (id INTEGER)");
+        executor.execute("INSERT INTO a VALUES (1), (2), (3), (3), (4)");
+        executor.execute("INSERT INTO b VALUES (2), (3), (3), (5)");
+        QueryResult r = executor.execute(
+                "SELECT id FROM a INTERSECT ALL SELECT id FROM b");
+        VectorSchemaRoot root = ((QueryResult.Rows) r).data();
+        assertEquals(3, root.getRowCount()); // 2, 3, 3
+        IntVector id = (IntVector) root.getVector("id");
+        assertEquals(2, id.get(0));
+        assertEquals(3, id.get(1));
+        assertEquals(3, id.get(2));
+        root.close();
+    }
+
+    @Test
+    void exceptDeduplicates() {
+        createSetOpTables();
+        QueryResult r = executor.execute(
+                "SELECT id FROM a EXCEPT SELECT id FROM b");
+        VectorSchemaRoot root = ((QueryResult.Rows) r).data();
+        assertEquals(3, root.getRowCount()); // 1, 3, 4 (3 survives once)
+        IntVector id = (IntVector) root.getVector("id");
+        assertEquals(1, id.get(0));
+        assertEquals(3, id.get(1));
+        assertEquals(4, id.get(2));
+        root.close();
+    }
+
+    @Test
+    void exceptAllSubtractsCounts() {
+        createSetOpTables();
+        QueryResult r = executor.execute(
+                "SELECT id FROM a EXCEPT ALL SELECT id FROM b");
+        VectorSchemaRoot root = ((QueryResult.Rows) r).data();
+        assertEquals(3, root.getRowCount()); // 1, 3 (a has 2, b has 1), 4
+        IntVector id = (IntVector) root.getVector("id");
+        assertEquals(1, id.get(0));
+        assertEquals(3, id.get(1));
+        assertEquals(4, id.get(2));
+        root.close();
+    }
+
+    @Test
+    void exceptAllEmptyResult() {
+        executor.execute("CREATE TABLE a (id INTEGER)");
+        executor.execute("CREATE TABLE b (id INTEGER)");
+        executor.execute("INSERT INTO a VALUES (1), (2)");
+        executor.execute("INSERT INTO b VALUES (1), (2), (3)");
+        QueryResult r = executor.execute(
+                "SELECT id FROM a EXCEPT ALL SELECT id FROM b");
+        VectorSchemaRoot root = ((QueryResult.Rows) r).data();
+        assertEquals(0, root.getRowCount());
+        root.close();
+    }
+
+    @Test
+    void intersectDisjointEmptyResult() {
+        executor.execute("CREATE TABLE a (id INTEGER)");
+        executor.execute("CREATE TABLE b (id INTEGER)");
+        executor.execute("INSERT INTO a VALUES (1)");
+        executor.execute("INSERT INTO b VALUES (2)");
+        QueryResult r = executor.execute(
+                "SELECT id FROM a INTERSECT SELECT id FROM b");
+        VectorSchemaRoot root = ((QueryResult.Rows) r).data();
+        assertEquals(0, root.getRowCount());
+        root.close();
+    }
+
+    @Test
+    void intersectWithVarchar() {
+        executor.execute("CREATE TABLE a (name VARCHAR)");
+        executor.execute("CREATE TABLE b (name VARCHAR)");
+        executor.execute("INSERT INTO a VALUES ('x'), ('y'), ('z')");
+        executor.execute("INSERT INTO b VALUES ('y'), ('z'), ('z')");
+        QueryResult r = executor.execute(
+                "SELECT name FROM a INTERSECT SELECT name FROM b");
+        VectorSchemaRoot root = ((QueryResult.Rows) r).data();
+        assertEquals(2, root.getRowCount());
+        assertEquals("y", new String(
+                ((VarCharVector) root.getVector("name")).get(0)));
+        assertEquals("z", new String(
+                ((VarCharVector) root.getVector("name")).get(1)));
+        root.close();
+    }
+
+    @Test
+    void explainShowsSetOpNode() {
+        createSetOpTables();
+        QueryResult r = executor.execute(
+                "EXPLAIN SELECT id FROM a INTERSECT SELECT id FROM b");
+        VectorSchemaRoot root = ((QueryResult.Rows) r).data();
+        VarCharVector op = (VarCharVector) root.getVector("operation");
+        boolean found = false;
+        for (int i = 0; i < root.getRowCount(); i++) {
+            if (new String(op.get(i)).contains("SetOp")) {
+                found = true;
+            }
+        }
+        assertTrue(found);
+        root.close();
+    }
+
+    @Test
+    void explainAnalyzeSetOpMeasuresRows() {
+        createSetOpTables();
+        QueryResult r = executor.execute(
+                "EXPLAIN ANALYZE SELECT id FROM a INTERSECT SELECT id FROM b");
+        VectorSchemaRoot root = ((QueryResult.Rows) r).data();
+        VarCharVector op = (VarCharVector) root.getVector("operation");
+        BigIntVector rows = (BigIntVector) root.getVector("rows");
+        for (int i = 0; i < root.getRowCount(); i++) {
+            if (new String(op.get(i)).equals("SetOp")) {
+                assertEquals(2L, rows.get(i));
+            }
+        }
+        root.close();
+    }
 }
