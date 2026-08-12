@@ -29,4 +29,15 @@ public interface Message {
 
     record UpdateCount(long requestId, long count) implements Message {
     }
+
+    record SchemasRequest(long requestId, String schemaPattern) implements Message {
+    }
+
+    record TablesRequest(long requestId, String schemaPattern,
+                         String tableNamePattern, String[] types) implements Message {
+    }
+
+    record ColumnsRequest(long requestId, String schemaPattern,
+                          String tableNamePattern, String columnNamePattern) implements Message {
+    }
 }

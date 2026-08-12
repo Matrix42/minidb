@@ -8,6 +8,9 @@ public final class MessageType {
     public static final byte EXECUTE_RESPONSE = 0x20;
     public static final byte ARROW_BATCH = 0x21;
     public static final byte UPDATE_COUNT = 0x22;
+    public static final byte SCHEMAS_REQUEST = 0x12;
+    public static final byte TABLES_REQUEST = 0x13;
+    public static final byte COLUMNS_REQUEST = 0x14;
 
     private MessageType() {
     }
