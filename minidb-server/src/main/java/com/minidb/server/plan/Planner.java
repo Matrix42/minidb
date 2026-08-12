@@ -2,6 +2,7 @@ package com.minidb.server.plan;
 
 import com.minidb.server.calcite.CalciteContext;
 import com.minidb.server.catalog.MiniDbCatalog;
+import com.minidb.server.rule.MiniDbRules;
 import org.apache.calcite.plan.ConventionTraitDef;
 import org.apache.calcite.plan.RelOptCluster;
 import org.apache.calcite.plan.volcano.VolcanoPlanner;
