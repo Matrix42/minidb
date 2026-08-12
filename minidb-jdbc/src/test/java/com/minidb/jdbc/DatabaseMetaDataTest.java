@@ -72,6 +72,8 @@ class DatabaseMetaDataTest {
 
             try (ResultSet rs = md.getTables(null, null, null, new String[]{"VIEW"})) {
                 assertFalse(rs.next());
+                // empty result set still carries full getTables schema over the wire
+                assertEquals(10, rs.getMetaData().getColumnCount());
             }
 
             try (ResultSet rs = md.getColumns(null, null, "users", null)) {
