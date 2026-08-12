@@ -53,6 +53,23 @@ class CalciteContextTest {
     }
 
     @Test
+    void doubleQuotedIdentifierParses() {
+        // SQL IDEs (DBeaver et al.) quote identifiers with double quotes per
+        // the driver's getIdentifierQuoteString(); the MYSQL lexer must accept them.
+        CalciteContext ctx = new CalciteContext(catalogWithT());
+        RelRoot root = ctx.plan("SELECT id FROM \"t\"");
+        assertNotNull(root.rel);
+    }
+
+    @Test
+    void ideGeneratedDoubleQuotedQualifiedSqlParses() {
+        // DBeaver sends multi-line qualified SQL: select *\nfrom "public"."t"
+        CalciteContext ctx = new CalciteContext(catalogWithT());
+        RelRoot root = ctx.plan("select *\nfrom \"public\".\"t\"");
+        assertNotNull(root.rel);
+    }
+
+    @Test
     void newTableVisibleAfterCatalogChange() {
         MiniDbCatalog catalog = catalogWithT();
         CalciteContext ctx = new CalciteContext(catalog);

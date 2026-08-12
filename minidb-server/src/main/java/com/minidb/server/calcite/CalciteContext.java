@@ -5,6 +5,7 @@ import java.util.List;
 import java.util.Locale;
 import java.util.Properties;
 import org.apache.calcite.avatica.util.Casing;
+import org.apache.calcite.avatica.util.Quoting;
 import org.apache.calcite.config.CalciteConnectionConfigImpl;
 import org.apache.calcite.config.Lex;
 import org.apache.calcite.jdbc.CalciteSchema;
@@ -40,6 +41,7 @@ public class CalciteContext {
         this.parserConfig = SqlParser.config()
                 .withParserFactory(SqlDdlParserImpl.FACTORY)
                 .withLex(Lex.MYSQL)
+                .withQuoting(Quoting.DOUBLE_QUOTE)
                 .withUnquotedCasing(Casing.UNCHANGED)
                 .withCaseSensitive(false);
     }

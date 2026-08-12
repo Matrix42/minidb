@@ -80,6 +80,23 @@ class QueryExecutorTest {
     }
 
     @Test
+    void ideStyleDoubleQuotedQualifiedSqlExecutes() {
+        executor.execute("CREATE TABLE t (id INTEGER, name VARCHAR)");
+        executor.execute("INSERT INTO t VALUES (1, 'a'), (2, 'b')");
+        // SQL IDEs format queries with newlines and double-quoted identifiers.
+        QueryResult select = executor.execute(
+                "select \"id\", \"name\"\n"
+              + "from \"public\".\"t\"\n"
+              + "order by \"id\"");
+        VectorSchemaRoot root = ((QueryResult.Rows) select).data();
+        assertEquals(2, root.getRowCount());
+        assertEquals(1, ((IntVector) root.getVector("id")).get(0));
+        assertEquals("b",
+                new String(((VarCharVector) root.getVector("name")).get(1)));
+        root.close();
+    }
+
+    @Test
     void insertSelectCopiesRows() {
         executor.execute("CREATE TABLE src (id INTEGER)");
         executor.execute("INSERT INTO src VALUES (1), (2)");
