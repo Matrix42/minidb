@@ -104,6 +104,7 @@ QueryExecutor.execute(sql, currentSchema)
 **网络:**
 - `MiniDbServer` — 启动:`storage.loadAll()` → `StatsManager` 构造 + `setStatsManager` + `loadAll` → `QueryExecutor` → Netty `ServerBootstrap`。
 - `netty/SessionHandler` — 持有 per-channel `currentSchema` 字段(默认 public)。`handleExecute`:调 `executor.execute(sql, currentSchema)` → `QueryResult.UseSchema` 更新自身 currentSchema 并回 `Message.UpdateCount(0)`;`Rows` 走 `sendRows`(Arrow IPC 编码成 `Message.ArrowBatch`)然后 `close()`;`Update` 走 `Message.UpdateCount`。异常 → `Message.ExecuteResponse.error`。**注意**:`rows.data().close()` 不在 finally 里(pre-existing,所有 Rows 路径都这样,非 EXPLAIN 特有)。
+- `MetadataExecutor`(外挂,`catalog+allocator`)服务 `getSchemas`/`getTables`/`getColumns` 协议请求,`SessionHandler.handleMetadata` 走 `sendRows`。
 
 **协议(`minidb-protocol`):**
 - `Message` — sealed records:`Handshake`/`HandshakeAck`/`ExecuteRequest(requestId, sql)`/`CloseRequest`/`ExecuteResponse`/`ArrowBatch(requestId, lastBatch, data)`/`UpdateCount(requestId, count)`。
@@ -134,6 +135,7 @@ QueryExecutor.execute(sql, currentSchema)
 16. **`SqlIdentifier.getSimple()` 对复合名静默返回首段**——断言关闭时(JVM 默认)`getSimple()` 对 `public.users` 不抛而返回 `"public"`。限定名解析必须用 `node.name.names`(ImmutableList)分解:schema=`names.get(0)`,table=`names.get(names.size()-1)`。
 17. **Calcite schema 树"提升表"副作用**——`MiniDbRootCalciteSchema.getTableMap()` 把当前 schema 的表暴露在 `minidb` 容器层(让 unqualified `t` 解析),导致 `RelOptTable.getQualifiedName()` 对 unqualified 表返回 `["minidb","t"]`(2 段,丢失 schema),对 `other.t` 返回 `["minidb","other","t"]`(3 段)。`MiniDbScan`/`MiniDbModify` 据此分流:`size>=3` 用倒数第二段作 schema,`size==2` 调 `ctx.getTable(裸名)` 由 `ExecContext.currentSchema` 解析。这是算子适配 schema 的唯一改动点(2/6 算子)。
 18. **持久化子目录 + StatsManager key 语义**——文件路径 `data/<schema>/<table>.arrow`,`flushTable` 必须 `createDirectories(file.getParent())`(旧扁平格式不兼容)。`StatsManager` 零代码改动但 key 语义从 `table` 变 `schema.table`,`resolveKey(table)` 兼容裸名(默认 public)。`StatsManager.analyze` 当前只支持 public 表(`storage.getTable(DEFAULT_SCHEMA, table)`),非 public 表的 EXPLAIN ANALYZE 统计降级为无统计——分阶段交付,可接受。
+19. **JDBC 元数据走专用协议消息**——`getSchemas`/`getTables`/`getColumns` 不复用 `ExecuteRequest`+伪SQL,而是 `minidb-protocol` 的 `SchemasRequest`/`TablesRequest`/`ColumnsRequest` 三条独立消息(响应复用 `ArrowBatch`)。服务端 `MetadataExecutor`(外挂,持 `catalog+allocator`,不依赖 storage/stats)从 `MiniDbCatalog` 物化 Arrow 行,`SessionHandler.handleMetadata` 走现有 `sendRows`。`TABLE_CAT` 恒 null(MiniDB 无 catalog 概念,`getCatalog()=null`);`NULLABLE` 恒 1(列全可空);`getColumns` 24 列完整 JDBC 规范,无语义列填默认(`COLUMN_SIZE=0`/`NUM_PREC_RADIX=10`仅整数/`IS_NULLABLE="YES"` 等)。LIKE 过滤(`_`/`%`)在 `MetadataExecutor.compileLike` 转正则,`null` pattern 跳过过滤。
 
 ## 文档与计划
 
