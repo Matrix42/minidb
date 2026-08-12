@@ -62,4 +62,35 @@ class CalciteContextTest {
         RelRoot root = ctx.plan("SELECT x FROM t2");
         assertNotNull(root.rel);
     }
+
+    @Test
+    void qualifiedNameResolvesAcrossSchemas() {
+        MiniDbCatalog catalog = new MiniDbCatalog();
+        catalog.createSchema("other");
+        catalog.createTable(new TableSchema("public", "t", List.of(
+                new ColumnMeta("id", ColumnType.INTEGER))));
+        catalog.createTable(new TableSchema("other", "t", List.of(
+                new ColumnMeta("id", ColumnType.INTEGER))));
+        CalciteContext ctx = new CalciteContext(catalog);
+        RelRoot r1 = ctx.plan("SELECT id FROM t");
+        assertNotNull(r1.rel);
+        RelRoot r2 = ctx.plan("SELECT id FROM other.t");
+        assertNotNull(r2.rel);
+        assertEquals(List.of("id"), r2.rel.getRowType().getFieldNames());
+    }
+
+    @Test
+    void currentSchemaSwitchesUnqualifiedResolution() {
+        MiniDbCatalog catalog = new MiniDbCatalog();
+        catalog.createSchema("other");
+        catalog.createTable(new TableSchema("public", "t", List.of(
+                new ColumnMeta("id", ColumnType.INTEGER))));
+        catalog.createTable(new TableSchema("other", "t", List.of(
+                new ColumnMeta("id", ColumnType.INTEGER),
+                new ColumnMeta("x", ColumnType.VARCHAR))));
+        CalciteContext ctx = new CalciteContext(catalog);
+        RelRoot r = ctx.plan("SELECT x FROM t", "other");
+        assertNotNull(r.rel);
+        assertEquals(List.of("x"), r.rel.getRowType().getFieldNames());
+    }
 }

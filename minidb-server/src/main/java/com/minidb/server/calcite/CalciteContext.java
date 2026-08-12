@@ -2,6 +2,7 @@ package com.minidb.server.calcite;
 
 import com.minidb.server.catalog.MiniDbCatalog;
 import java.util.List;
+import java.util.Locale;
 import java.util.Properties;
 import org.apache.calcite.avatica.util.Casing;
 import org.apache.calcite.config.CalciteConnectionConfigImpl;
@@ -43,9 +44,10 @@ public class CalciteContext {
                 .withCaseSensitive(false);
     }
 
-    private SchemaPlus createRootSchema() {
+    private SchemaPlus createRootSchema(String currentSchema) {
         SchemaPlus rootSchema = Frameworks.createRootSchema(true);
-        rootSchema.add(SCHEMA_NAME, new MiniDbCalciteSchema(catalog));
+        rootSchema.add(SCHEMA_NAME,
+                new MiniDbRootCalciteSchema(catalog, currentSchema));
         return rootSchema;
     }
 
@@ -58,18 +60,26 @@ public class CalciteContext {
     }
 
     public RelRoot plan(String sql) {
+        return plan(sql, MiniDbCatalog.DEFAULT_SCHEMA);
+    }
+
+    public RelRoot plan(String sql, String currentSchema) {
         HepPlanner planner = new HepPlanner(new HepProgramBuilder().build());
         SqlTypeFactoryImpl typeFactory =
                 new SqlTypeFactoryImpl(RelDataTypeSystem.DEFAULT);
         RelOptCluster cluster = RelOptCluster.create(planner, new RexBuilder(typeFactory));
-        return planInCluster(sql, cluster);
+        return planInCluster(sql, cluster, currentSchema);
     }
 
     public RelRoot planInCluster(String sql, RelOptCluster cluster) {
+        return planInCluster(sql, cluster, MiniDbCatalog.DEFAULT_SCHEMA);
+    }
+
+    public RelRoot planInCluster(String sql, RelOptCluster cluster, String currentSchema) {
         SqlNode parsed = parse(sql);
         SqlTypeFactoryImpl typeFactory =
                 (SqlTypeFactoryImpl) cluster.getTypeFactory();
-        CalciteCatalogReader catalogReader = buildCatalogReader(typeFactory);
+        CalciteCatalogReader catalogReader = buildCatalogReader(typeFactory, currentSchema);
         SqlValidator validator = SqlValidatorUtil.newValidator(
                 SqlStdOperatorTable.instance(), catalogReader, typeFactory,
                 SqlValidator.Config.DEFAULT.withIdentifierExpansion(true));
@@ -81,9 +91,10 @@ public class CalciteContext {
         return converter.convertQuery(validated, false, true);
     }
 
-    private CalciteCatalogReader buildCatalogReader(SqlTypeFactoryImpl typeFactory) {
+    private CalciteCatalogReader buildCatalogReader(
+            SqlTypeFactoryImpl typeFactory, String currentSchema) {
         return new CalciteCatalogReader(
-                CalciteSchema.from(createRootSchema()),
+                CalciteSchema.from(createRootSchema(currentSchema)),
                 List.of(SCHEMA_NAME),
                 typeFactory,
                 new CalciteConnectionConfigImpl(new Properties()));

@@ -20,6 +20,10 @@ public class Planner {
     }
 
     public RelNode plan(String sql) {
+        return plan(sql, MiniDbCatalog.DEFAULT_SCHEMA);
+    }
+
+    public RelNode plan(String sql, String currentSchema) {
         VolcanoPlanner planner = new VolcanoPlanner();
         planner.addRelTraitDef(ConventionTraitDef.INSTANCE);
         for (org.apache.calcite.plan.RelOptRule rule : MiniDbRules.ALL) {
@@ -29,7 +33,7 @@ public class Planner {
                 new SqlTypeFactoryImpl(RelDataTypeSystem.DEFAULT);
         RelOptCluster cluster = RelOptCluster.create(planner, new RexBuilder(typeFactory));
 
-        RelRoot root = calcite.planInCluster(sql, cluster);
+        RelRoot root = calcite.planInCluster(sql, cluster, currentSchema);
         RelNode logical = root.rel;
         RelNode converted = planner.changeTraits(logical,
                 logical.getTraitSet().replace(MiniDbConvention.INSTANCE));
