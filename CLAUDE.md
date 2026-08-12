@@ -35,7 +35,7 @@ MiniDB 是一个基于 Apache Calcite(解析/规划)+ Apache Arrow(列式存储)
 3. **小步提交**:一个逻辑改动一个 commit,便于回溯。
 4. **不要在文档/注释里写废话注释**(解释 WHAT 而非 WHY)。代码自解释优先。
 5. **测试用 JUnit 5 + `@TempDir` + `RootAllocator`**。断言关系/比例而非精确浮点值(选择率单元测试除外,用 1e-9 delta)。
-6. **现有 6 个物理算子文件(`MiniDbScan`/`Filter`/`Project`/`Sort`/`Values`/`Modify`)和 `minidb-protocol` 模块尽量不改**——它们是稳定核心,扩展应通过新模块(参考 EXPLAIN 用 `ExplainExecutor` + `Instrumenter` 外挂的方式,零侵入算子)。
+6. **现有 7 个物理算子文件(`MiniDbScan`/`Filter`/`Project`/`Sort`/`Values`/`Modify`/`Aggregate`)和 `minidb-protocol` 模块尽量不改**——它们是稳定核心,扩展应通过新模块(参考 EXPLAIN 用 `ExplainExecutor` + `Instrumenter` 外挂的方式,零侵入算子)。规则类在 `rule` 包(见下)。
 7. **用中文回复用户**(代码/标识符/路径保持原文)。
 
 ## 架构与关键类
@@ -70,8 +70,10 @@ QueryExecutor.execute(sql, currentSchema)
 - `plan/MiniDbSort` — **eager**:`execute()` 内全量物化+排序,返回惰性迭代器。offset/fetch 字面量处理。
 - `plan/MiniDbValues` — VALUES 字面量。
 - `plan/MiniDbModify` — INSERT/UPDATE/DELETE,写路径调 `storage.markDirty(tableName)`(此处触发 stats stale 钩子)。
+- `plan/MiniDbAggregate` — 聚合,`Aggregate` 子类。**eager**:`execute()` 拉取输入全量,流式分组聚合,输出单批。分组 key 为 `List<Object>` 规范化值(含 null),`LinkedHashMap` 保首见顺序;每 `AggregateCall` 一个 `Accumulator`(COUNT=long,SUM 按参数 long/double,AVG=sum+count,MIN/MAX=Comparable)。NULL 语义:聚合忽略 NULL;`COUNT(*)` 计所有行;空输入无 GROUP BY → 1 行(COUNT=0 其余 NULL);有 GROUP BY 空表 → 0 行。输出列类型按 `getRowType()`(Calcite 推导)。
 - `plan/Planner` — VolcanoPlanner + `MiniDbRules.ALL`(ConverterRule 把 Logical* 转成 MiniDb*)。`plan(sql)` 委托 `plan(sql, "public")`,透传 currentSchema 给 `CalciteContext.planInCluster`。
-- `plan/MiniDbRules` — 转换规则集。
+- `plan/MiniDbRules` — 转换规则集聚合类,`rule` 包(见下)。
+- `rule/` 包(`com.minidb.server.rule`,plan 同级)——每个规则一个类:`MiniDbScanRule`/`MiniDbFilterRule`/`MiniDbProjectRule`/`MiniDbSortRule`/`MiniDbValuesRule`/`MiniDbModifyRule`/`MiniDbAggregateRule`,均 `extends ConverterRule`,构造器链:`this(Config.INSTANCE.withConversion(...).withRuleFactory(XxxRule::new))` + 私有 `(Config)` 构造器 `super(config)`。`MiniDbRules.ALL` 聚合引用。
 
 **存储(`storage/`):**
 - `storage/StorageManager` — 表目录 + Arrow IPC 持久化。**schema 感知**:存储 key 为 `schema.table`(小写),文件路径 `data/<schema>/<table>.arrow`(子目录),`flushTable` 必须 `createDirectories(file.getParent())`。`loadAll` 两级目录遍历,从 Arrow schema metadata 恢复 schemaName。`getTable(schema,table)`/`dropTable(schema,table)`/`markDirty(schema,table)`/`truncateTable(schema,table)`/`dropSchema(name)`(级联删表+文件,catalog 抛 public/missing);裸名重载委托 `public`。持有 `volatile StatsManager` 引用,`markDirty` 触发 `markStale`(key 为 `schema.table`),`dropTable`/`dropSchema` 触发 `dropStats`。
@@ -137,6 +139,9 @@ QueryExecutor.execute(sql, currentSchema)
 18. **持久化子目录 + StatsManager key 语义**——文件路径 `data/<schema>/<table>.arrow`,`flushTable` 必须 `createDirectories(file.getParent())`(旧扁平格式不兼容)。`StatsManager` 零代码改动但 key 语义从 `table` 变 `schema.table`,`resolveKey(table)` 兼容裸名(默认 public)。`StatsManager.analyze` 当前只支持 public 表(`storage.getTable(DEFAULT_SCHEMA, table)`),非 public 表的 EXPLAIN ANALYZE 统计降级为无统计——分阶段交付,可接受。
 19. **JDBC 元数据走专用协议消息**——`getSchemas`/`getTables`/`getColumns` 不复用 `ExecuteRequest`+伪SQL,而是 `minidb-protocol` 的 `SchemasRequest`/`TablesRequest`/`ColumnsRequest` 三条独立消息(响应复用 `ArrowBatch`)。服务端 `MetadataExecutor`(外挂,持 `catalog+allocator`,不依赖 storage/stats)从 `MiniDbCatalog` 物化 Arrow 行,`SessionHandler.handleMetadata` 走现有 `sendRows`。`getSchemas` 的 `TABLE_CATALOG` 恒 null、`getTables`/`getColumns` 的 `TABLE_CAT` 恒 null(MiniDB 无 catalog 概念,`getCatalog()=null`);`NULLABLE` 恒 1(列全可空);`getColumns` 24 列完整 JDBC 规范,无语义列填默认(`COLUMN_SIZE=0`/`NUM_PREC_RADIX=10`仅整数/`IS_NULLABLE="YES"` 等)。LIKE 过滤(`_`/`%`)在 `MetadataExecutor.compileLike` 转正则,`null` pattern 跳过过滤。
 20. **标识符引号用双引号**——驱动 `getIdentifierQuoteString()` 返回 `"`,SQL IDE(DBeaver 等)据此生成 `select * from "public"."t"` 形式 SQL。Calcite parser 必须 `withQuoting(Quoting.DOUBLE_QUOTE)`(Lex.MYSQL 默认只认反引号,IDE SQL 会报 `ParseException: Encountered "\""`)。代价:**反引号标识符不再支持**(Quoting 是单值枚举,无双引号+反引号共存;现有代码/测试无反引号依赖)。
+21. **Calcite 1.42 的 `AggregateCall` 参数存储**:纯列引用参数(如 `SUM(id)`)时 `rexList` 为空、索引存 `argList`;表达式参数(如 `SUM(id*2)`)才填 `rexList`。聚合算子取参数必须两个都查(先 `rexList` 后 `argList` 索引取输入列)。只查 `rexList` 会静默丢掉参数(SUM 恒 NULL,COUNT 退化为 COUNT(*))。
+22. **Calcite 1.42 聚合类型推导**:`SUM(INTEGER)`→INTEGER(非 BIGINT)、`AVG(INTEGER)`→INTEGER(截断)、`SUM(DOUBLE)`→DOUBLE、`COUNT`→BIGINT、`MIN/MAX`→同参数。实现按 `Aggregate.getRowType()` 落地,断言/测试别假设 SUM(INT)→BIGINT。
+23. **既有 bug:含 DOUBLE 字面量的 VALUES INSERT 失败**(与 aggregate 无关):Calcite 对多行 `VALUES (1, 10.5), ...` 或含 CAST 的单行生成 `LogicalUnion`(每行一个 `Project(CAST)` over 占位 `Values`),MiniDB 无 Union 规则 → `CannotPlan`。同源:NULL 字面量(`nullLiteral` 对 INTEGER 生成 BigIntVector)与 Project 字面量(literalVector 统一 BigIntVector)复制到 IntVector 列时 `RowCopier.copyRow` 抛 `MinorType` 不一致。**可行的数据构造**:单列任意类型逐行/多行 INSERT、多列多行同型(无 CAST)INSERT、`UPDATE ... SET col = NULL`(走 `writeValue` 类型转换路径)。
 
 ## 文档与计划
 
