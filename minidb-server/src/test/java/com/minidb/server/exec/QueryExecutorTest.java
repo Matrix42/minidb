@@ -1049,4 +1049,186 @@ class QueryExecutorTest {
         }
         root.close();
     }
+
+    // ---- window functions ----
+
+    private void createWindowTable() {
+        executor.execute("CREATE TABLE t (g VARCHAR, x INTEGER)");
+        executor.execute("INSERT INTO t VALUES ('a', 1), ('a', 2), ('b', 3), ('b', 4)");
+    }
+
+    @Test
+    void sumOverPartition() {
+        createWindowTable();
+        QueryResult r = executor.execute(
+                "SELECT g, x, SUM(x) OVER (PARTITION BY g) AS s FROM t ORDER BY g, x");
+        VectorSchemaRoot root = ((QueryResult.Rows) r).data();
+        assertEquals(4, root.getRowCount());
+        IntVector s = (IntVector) root.getVector("s");
+        assertEquals(3, s.get(0));
+        assertEquals(3, s.get(1));
+        assertEquals(7, s.get(2));
+        assertEquals(7, s.get(3));
+        root.close();
+    }
+
+    @Test
+    void sumOverPartitionOrderByIsRunning() {
+        createWindowTable();
+        QueryResult r = executor.execute(
+                "SELECT g, x, SUM(x) OVER (PARTITION BY g ORDER BY x) AS s FROM t "
+              + "ORDER BY g, x");
+        VectorSchemaRoot root = ((QueryResult.Rows) r).data();
+        IntVector s = (IntVector) root.getVector("s");
+        assertEquals(1, s.get(0));
+        assertEquals(3, s.get(1));
+        assertEquals(3, s.get(2));
+        assertEquals(7, s.get(3));
+        root.close();
+    }
+
+    @Test
+    void rowNumberOverPartition() {
+        createWindowTable();
+        QueryResult r = executor.execute(
+                "SELECT g, x, ROW_NUMBER() OVER (PARTITION BY g ORDER BY x) AS rn "
+              + "FROM t ORDER BY g, x");
+        VectorSchemaRoot root = ((QueryResult.Rows) r).data();
+        BigIntVector rn = (BigIntVector) root.getVector("rn");
+        assertEquals(1L, rn.get(0));
+        assertEquals(2L, rn.get(1));
+        assertEquals(1L, rn.get(2));
+        assertEquals(2L, rn.get(3));
+        root.close();
+    }
+
+    @Test
+    void rankAndDenseRankWithPeers() {
+        executor.execute("CREATE TABLE t (g VARCHAR, x INTEGER)");
+        executor.execute("INSERT INTO t VALUES ('a', 1), ('a', 1), ('a', 2)");
+        QueryResult r = executor.execute(
+                "SELECT x, RANK() OVER (ORDER BY x) AS rk, "
+              + "DENSE_RANK() OVER (ORDER BY x) AS dr FROM t ORDER BY x");
+        VectorSchemaRoot root = ((QueryResult.Rows) r).data();
+        BigIntVector rk = (BigIntVector) root.getVector("rk");
+        BigIntVector dr = (BigIntVector) root.getVector("dr");
+        assertEquals(1L, rk.get(0)); // peer 1
+        assertEquals(1L, rk.get(1));
+        assertEquals(3L, rk.get(2)); // gap
+        assertEquals(1L, dr.get(0));
+        assertEquals(1L, dr.get(1));
+        assertEquals(2L, dr.get(2)); // no gap
+        root.close();
+    }
+
+    @Test
+    void countOverAllRows() {
+        createWindowTable();
+        QueryResult r = executor.execute(
+                "SELECT g, COUNT(*) OVER () AS c FROM t ORDER BY g, x");
+        VectorSchemaRoot root = ((QueryResult.Rows) r).data();
+        BigIntVector c = (BigIntVector) root.getVector("c");
+        for (int i = 0; i < 4; i++) {
+            assertEquals(4L, c.get(i));
+        }
+        root.close();
+    }
+
+    @Test
+    void lagAndLead() {
+        createWindowTable();
+        QueryResult r = executor.execute(
+                "SELECT g, x, LAG(x) OVER (PARTITION BY g ORDER BY x) AS lg, "
+              + "LEAD(x) OVER (PARTITION BY g ORDER BY x) AS ld "
+              + "FROM t ORDER BY g, x");
+        VectorSchemaRoot root = ((QueryResult.Rows) r).data();
+        IntVector lg = (IntVector) root.getVector("lg");
+        IntVector ld = (IntVector) root.getVector("ld");
+        assertTrue(lg.isNull(0));
+        assertEquals(1, lg.get(1));
+        assertTrue(lg.isNull(2));
+        assertEquals(3, lg.get(3));
+        assertEquals(2, ld.get(0));
+        assertTrue(ld.isNull(1));
+        assertEquals(4, ld.get(2));
+        assertTrue(ld.isNull(3));
+        root.close();
+    }
+
+    @Test
+    void lagWithOffsetAndDefault() {
+        createWindowTable();
+        QueryResult r = executor.execute(
+                "SELECT x, LAG(x, 1, 0) OVER (ORDER BY x) AS lg FROM t ORDER BY x");
+        VectorSchemaRoot root = ((QueryResult.Rows) r).data();
+        IntVector lg = (IntVector) root.getVector("lg");
+        assertEquals(0, lg.get(0));
+        assertEquals(1, lg.get(1));
+        root.close();
+    }
+
+    @Test
+    void frameRowsBetweenPrecedingAndCurrent() {
+        createWindowTable();
+        QueryResult r = executor.execute(
+                "SELECT x, SUM(x) OVER (ORDER BY x ROWS BETWEEN 1 PRECEDING "
+              + "AND CURRENT ROW) AS s FROM t ORDER BY x");
+        VectorSchemaRoot root = ((QueryResult.Rows) r).data();
+        IntVector s = (IntVector) root.getVector("s");
+        assertEquals(1, s.get(0));
+        assertEquals(3, s.get(1));
+        assertEquals(5, s.get(2));
+        assertEquals(7, s.get(3));
+        root.close();
+    }
+
+    @Test
+    void firstAndLastValue() {
+        createWindowTable();
+        QueryResult r = executor.execute(
+                "SELECT g, FIRST_VALUE(x) OVER (PARTITION BY g ORDER BY x) AS fv, "
+              + "LAST_VALUE(x) OVER (PARTITION BY g ORDER BY x) AS lv "
+              + "FROM t ORDER BY g, x");
+        VectorSchemaRoot root = ((QueryResult.Rows) r).data();
+        IntVector fv = (IntVector) root.getVector("fv");
+        IntVector lv = (IntVector) root.getVector("lv");
+        assertEquals(1, fv.get(0));
+        assertEquals(1, fv.get(1));
+        assertEquals(2, lv.get(1)); // default frame 0..current
+        root.close();
+    }
+
+    @Test
+    void windowFunctionWithFilter() {
+        createWindowTable();
+        QueryResult r = executor.execute(
+                "SELECT g, x, SUM(x) OVER (PARTITION BY g) AS s FROM t "
+              + "WHERE x > 1 ORDER BY g, x");
+        VectorSchemaRoot root = ((QueryResult.Rows) r).data();
+        assertEquals(3, root.getRowCount()); // (a,2),(b,3),(b,4)
+        IntVector s = (IntVector) root.getVector("s");
+        assertEquals(2, s.get(0)); // a 分区只剩 2
+        assertEquals(7, s.get(1)); // b 分区 3+4
+        assertEquals(7, s.get(2));
+        root.close();
+    }
+
+    @Test
+    void explainAnalyzeWindowProjectMeasuresRows() {
+        createWindowTable();
+        QueryResult r = executor.execute(
+                "EXPLAIN ANALYZE SELECT g, SUM(x) OVER (PARTITION BY g) AS s FROM t");
+        VectorSchemaRoot root = ((QueryResult.Rows) r).data();
+        VarCharVector op = (VarCharVector) root.getVector("operation");
+        BigIntVector rows = (BigIntVector) root.getVector("rows");
+        boolean found = false;
+        for (int i = 0; i < root.getRowCount(); i++) {
+            if (new String(op.get(i)).equals("Project")) {
+                assertEquals(4L, rows.get(i));
+                found = true;
+            }
+        }
+        assertTrue(found);
+        root.close();
+    }
 }

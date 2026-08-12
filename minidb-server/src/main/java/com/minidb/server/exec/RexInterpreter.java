@@ -55,6 +55,8 @@ public class RexInterpreter {
                 return not(call.getOperands().get(0), input);
             case CAST:
                 return evalCast(call, input);
+            case CASE:
+                return caseExpr(call, input);
             case EQUALS:
             case NOT_EQUALS:
             case LESS_THAN:
@@ -279,6 +281,83 @@ public class RexInterpreter {
             return out;
         } finally {
             v.close();
+        }
+    }
+
+    private ValueVector caseExpr(RexCall call, VectorSchemaRoot input) {
+        int rows = input.getRowCount();
+        List<RexNode> operands = call.getOperands();
+        List<ValueVector> conds = new java.util.ArrayList<>();
+        List<ValueVector> thens = new java.util.ArrayList<>();
+        int i = 0;
+        while (i + 1 < operands.size()) {
+            conds.add(eval(operands.get(i), input));
+            thens.add(eval(operands.get(i + 1), input));
+            i += 2;
+        }
+        ValueVector elseV = i < operands.size() ? eval(operands.get(i), input) : null;
+        FieldVector out = newVector(call.getType());
+        out.setInitialCapacity(rows);
+        out.allocateNew();
+        try {
+            for (int r = 0; r < rows; r++) {
+                boolean set = false;
+                for (int c = 0; c < conds.size(); c++) {
+                    ValueVector cond = conds.get(c);
+                    if (!cond.isNull(r) && ((BitVector) cond).get(r) == 1) {
+                        RowCopier.writeValue(out, r, thens.get(c), r);
+                        set = true;
+                        break;
+                    }
+                }
+                if (!set) {
+                    if (elseV != null) {
+                        RowCopier.writeValue(out, r, elseV, r);
+                    } else {
+                        out.setNull(r);
+                    }
+                }
+            }
+            out.setValueCount(rows);
+            return out;
+        } catch (RuntimeException e) {
+            out.close();
+            throw e;
+        } finally {
+            for (ValueVector v : conds) {
+                v.close();
+            }
+            for (ValueVector v : thens) {
+                v.close();
+            }
+            if (elseV != null) {
+                elseV.close();
+            }
+        }
+    }
+
+    private FieldVector newVector(RelDataType type) {
+        switch (type.getSqlTypeName()) {
+            case INTEGER:
+                return new IntVector("case", allocator);
+            case BIGINT:
+                return new BigIntVector("case", allocator);
+            case DOUBLE:
+            case FLOAT:
+            case REAL:
+            case DECIMAL:
+                return new Float8Vector("case", allocator);
+            case VARCHAR:
+                return new VarCharVector("case", allocator);
+            case BOOLEAN:
+                return new BitVector("case", allocator);
+            case DATE:
+                return new DateDayVector("case", allocator);
+            case TIMESTAMP:
+                return new TimeStampMilliVector("case", allocator);
+            default:
+                throw new UnsupportedOperationException(
+                        "CASE result type: " + type.getSqlTypeName());
         }
     }
 

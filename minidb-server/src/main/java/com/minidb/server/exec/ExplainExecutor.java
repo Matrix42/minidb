@@ -96,8 +96,9 @@ public class ExplainExecutor {
                              Map<RelNode, NodeStats> sink) {
         // Trivial Project nodes (added by Calcite for column selection) are
         // collapsed into their parent to keep the ANALYZE tree consistent
-        // with the EXPLAIN tree (see planRows).
-        if (node instanceof MiniDbProject) {
+        // with the EXPLAIN tree (see planRows). Window projects are NOT
+        // trivial and are kept.
+        if (isTrivialProject(node)) {
             List<RelNode> inputs = node.getInputs();
             if (!inputs.isEmpty()) {
                 analyzeRows(inputs.get(0), parentId, out, sink);
@@ -119,7 +120,7 @@ public class ExplainExecutor {
     private int planRows(RelNode node, Integer parentId, List<Row> out) {
         // Trivial Project nodes (added by Calcite for column selection) are
         // collapsed into their parent to keep the EXPLAIN tree concise.
-        if (node instanceof MiniDbProject) {
+        if (isTrivialProject(node)) {
             List<RelNode> inputs = node.getInputs();
             if (!inputs.isEmpty()) {
                 return planRows(inputs.get(0), parentId, out);
@@ -135,8 +136,21 @@ public class ExplainExecutor {
         return id;
     }
 
-    private String operationName(RelNode node) {
-        String name = node.getClass().getSimpleName();
+    private static boolean isTrivialProject(RelNode node) {
+        if (!(node instanceof MiniDbProject p)) {
+            return false;
+        }
+        List<? extends RexNode> projects = p.getProjects();
+        for (int i = 0; i < projects.size(); i++) {
+            if (!(projects.get(i) instanceof RexInputRef ref)
+                    || ref.getIndex() != i) {
+                return false;
+            }
+        }
+        return true;
+    }
+
+    private String operationName(RelNode node) {        String name = node.getClass().getSimpleName();
         if (name.startsWith("MiniDb")) {
             name = name.substring("MiniDb".length());
         }

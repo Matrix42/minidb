@@ -84,6 +84,13 @@ public final class ArrowTypes {
                 List.of());
     }
 
+    /** Build an Arrow field for a raw Calcite type (e.g. a window function result). */
+    public static Field field(RelDataType type, String name) {
+        return new Field(name,
+                FieldType.nullable(arrowTypeOf(type.getSqlTypeName())),
+                List.of());
+    }
+
     private static ArrowType arrowTypeOf(SqlTypeName type) {
         switch (type) {
             case INTEGER:
