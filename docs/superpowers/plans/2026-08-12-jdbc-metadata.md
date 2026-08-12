@@ -353,7 +353,7 @@ git commit -m "feat: encode/decode metadata request messages with null-safe stri
 
 **Interfaces:**
 - Consumes: `MiniDbCatalog.schemaNames()` → `List<String>`;`MiniDbCatalog.DEFAULT_SCHEMA="public"`。
-- Produces: `new MetadataExecutor(MiniDbCatalog catalog, BufferAllocator allocator)`;`VectorSchemaRoot schemas(String schemaPattern)`(2 列:`TABLE_SCHEM` VARCHAR、`TABLE_CAT` VARCHAR 全 null)。
+- Produces: `new MetadataExecutor(MiniDbCatalog catalog, BufferAllocator allocator)`;`VectorSchemaRoot schemas(String schemaPattern)`(2 列:`TABLE_SCHEM` VARCHAR、`TABLE_CATALOG` VARCHAR 全 null)。
 
 - [ ] **Step 1: 写 getSchemas 单测**
 
@@ -386,7 +386,7 @@ class MetadataExecutorTest {
                 assertEquals("alpha", new String(schem.get(0)));
                 assertEquals("beta", new String(schem.get(1)));
                 assertEquals("public", new String(schem.get(2)));
-                assertTrue(root.getVector("TABLE_CAT").isNull(0));
+                assertTrue(root.getVector("TABLE_CATALOG").isNull(0));
             }
         }
     }
@@ -455,7 +455,7 @@ public class MetadataExecutor {
         }
         matched.sort(String::compareTo);
         VarCharVector schem = new VarCharVector("TABLE_SCHEM", allocator);
-        VarCharVector cat = new VarCharVector("TABLE_CAT", allocator);
+        VarCharVector cat = new VarCharVector("TABLE_CATALOG", allocator);
         schem.setInitialCapacity(matched.size());
         cat.setInitialCapacity(matched.size());
         schem.allocateNew();
@@ -487,7 +487,7 @@ public class MetadataExecutor {
 }
 ```
 
-注意:`catalog.schemaNames()` 返回小写 key(catalog 用 `toLowerCase` 存),故 pattern 直接匹配小写串即可,无需大小写不敏感处理。`TABLE_CAT` 全 null:`cat.setValueCount(n)` 后未 `set` 的位即 null(VarCharVector 默认全 null)。
+注意:`catalog.schemaNames()` 返回小写 key(catalog 用 `toLowerCase` 存),故 pattern 直接匹配小写串即可,无需大小写不敏感处理。`TABLE_CATALOG` 全 null:`cat.setValueCount(n)` 后未 `set` 的位即 null(VarCharVector 默认全 null)。
 
 - [ ] **Step 4: 跑测试确认通过**
 
@@ -1271,7 +1271,7 @@ Expected: 全绿(同 Task 8 Step 3 的环境说明)。
 在 `## 踩过的坑(经验教训)` 末尾加:
 
 ```markdown
-19. **JDBC 元数据走专用协议消息**——`getSchemas`/`getTables`/`getColumns` 不复用 `ExecuteRequest`+伪SQL,而是 `minidb-protocol` 的 `SchemasRequest`/`TablesRequest`/`ColumnsRequest` 三条独立消息(响应复用 `ArrowBatch`)。服务端 `MetadataExecutor`(外挂,持 `catalog+allocator`,不依赖 storage/stats)从 `MiniDbCatalog` 物化 Arrow 行,`SessionHandler.handleMetadata` 走现有 `sendRows`。`TABLE_CAT` 恒 null(MiniDB 无 catalog 概念,`getCatalog()=null`);`NULLABLE` 恒 1(列全可空);`getColumns` 24 列完整 JDBC 规范,无语义列填默认(`COLUMN_SIZE=0`/`NUM_PREC_RADIX=10`仅整数/`IS_NULLABLE="YES"` 等)。LIKE 过滤(`_`/`%`)在 `MetadataExecutor.compileLike` 转正则,`null` pattern 跳过过滤。
+19. **JDBC 元数据走专用协议消息**——`getSchemas`/`getTables`/`getColumns` 不复用 `ExecuteRequest`+伪SQL,而是 `minidb-protocol` 的 `SchemasRequest`/`TablesRequest`/`ColumnsRequest` 三条独立消息(响应复用 `ArrowBatch`)。服务端 `MetadataExecutor`(外挂,持 `catalog+allocator`,不依赖 storage/stats)从 `MiniDbCatalog` 物化 Arrow 行,`SessionHandler.handleMetadata` 走现有 `sendRows`。`getSchemas` 的 `TABLE_CATALOG` 恒 null、`getTables`/`getColumns` 的 `TABLE_CAT` 恒 null(MiniDB 无 catalog 概念,`getCatalog()=null`);`NULLABLE` 恒 1(列全可空);`getColumns` 24 列完整 JDBC 规范,无语义列填默认(`COLUMN_SIZE=0`/`NUM_PREC_RADIX=10`仅整数/`IS_NULLABLE="YES"` 等)。LIKE 过滤(`_`/`%`)在 `MetadataExecutor.compileLike` 转正则,`null` pattern 跳过过滤。
 ```
 
 在 `### 关键类` 的 `**网络:**` 节 `SessionHandler` 描述后加一句:`MetadataExecutor`(外挂,`catalog+allocator`)服务 `getSchemas`/`getTables`/`getColumns` 协议请求,`SessionHandler.handleMetadata` 走 `sendRows`。
