@@ -51,4 +51,9 @@ class PlannerTest {
         assertTrue(plan.contains("MiniDbModify"));
         assertTrue(plan.contains("MiniDbValues"));
     }
+
+    @Test
+    void aggregatePlansToMiniDbAggregate() {
+        assertTrue(planText("SELECT COUNT(*) FROM t").contains("MiniDbAggregate"));
+    }
 }

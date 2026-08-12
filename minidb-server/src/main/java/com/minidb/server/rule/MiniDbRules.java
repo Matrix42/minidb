@@ -11,7 +11,8 @@ public final class MiniDbRules {
             new MiniDbProjectRule(),
             new MiniDbSortRule(),
             new MiniDbValuesRule(),
-            new MiniDbModifyRule());
+            new MiniDbModifyRule(),
+            new MiniDbAggregateRule());
 
     private MiniDbRules() {
     }

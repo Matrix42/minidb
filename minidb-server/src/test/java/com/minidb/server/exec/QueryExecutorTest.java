@@ -7,6 +7,7 @@ import java.nio.file.Path;
 import org.apache.arrow.memory.BufferAllocator;
 import org.apache.arrow.memory.RootAllocator;
 import org.apache.arrow.vector.BigIntVector;
+import org.apache.arrow.vector.Float8Vector;
 import org.apache.arrow.vector.IntVector;
 import org.apache.arrow.vector.VarCharVector;
 import org.apache.arrow.vector.VectorSchemaRoot;
@@ -316,5 +317,193 @@ class QueryExecutorTest {
                 () -> executor.execute("EXPLAIN INSERT INTO t VALUES (1)"));
         assertThrows(IllegalArgumentException.class,
                 () -> executor.execute("EXPLAIN ANALYZE DELETE FROM t"));
+    }
+
+    // ---- aggregate ----
+
+    @Test
+    void aggregateCountSumAvgMinMax() {
+        executor.execute("CREATE TABLE s (id INTEGER)");
+        executor.execute("INSERT INTO s VALUES (1), (2), (3)");
+        QueryResult r = executor.execute(
+                "SELECT COUNT(*) AS c, SUM(id) AS s, AVG(id) AS a, "
+              + "MIN(id) AS mn, MAX(id) AS mx FROM s");
+        VectorSchemaRoot root = ((QueryResult.Rows) r).data();
+        assertEquals(1, root.getRowCount());
+        assertEquals(3L, ((BigIntVector) root.getVector("c")).get(0));
+        // Calcite derives SUM(INTEGER)->INTEGER and AVG(INTEGER)->INTEGER
+        assertEquals(6, ((IntVector) root.getVector("s")).get(0));
+        assertEquals(2, ((IntVector) root.getVector("a")).get(0));
+        assertEquals(1, ((IntVector) root.getVector("mn")).get(0));
+        assertEquals(3, ((IntVector) root.getVector("mx")).get(0));
+        root.close();
+    }
+
+    @Test
+    void aggregateDoubleSumAvg() {
+        executor.execute("CREATE TABLE sd (price DOUBLE)");
+        executor.execute("INSERT INTO sd VALUES (10.5)");
+        executor.execute("INSERT INTO sd VALUES (20.5)");
+        executor.execute("INSERT INTO sd VALUES (30.0)");
+        QueryResult r = executor.execute(
+                "SELECT SUM(price) AS s, AVG(price) AS a FROM sd");
+        VectorSchemaRoot root = ((QueryResult.Rows) r).data();
+        assertEquals(1, root.getRowCount());
+        assertEquals(61.0, ((Float8Vector) root.getVector("s")).get(0), 1e-9);
+        assertEquals(20.333333333333332,
+                ((Float8Vector) root.getVector("a")).get(0), 1e-9);
+        root.close();
+    }
+
+    @Test
+    void countColumnSkipsNulls() {
+        executor.execute("CREATE TABLE n (id INTEGER)");
+        executor.execute("INSERT INTO n VALUES (1)");
+        executor.execute("INSERT INTO n VALUES (3)");
+        executor.execute("UPDATE n SET id = NULL WHERE id = 1");
+        QueryResult r = executor.execute(
+                "SELECT COUNT(id) AS c, COUNT(*) AS s FROM n");
+        VectorSchemaRoot root = ((QueryResult.Rows) r).data();
+        assertEquals(1, root.getRowCount());
+        assertEquals(1L, ((BigIntVector) root.getVector("c")).get(0));
+        assertEquals(2L, ((BigIntVector) root.getVector("s")).get(0));
+        root.close();
+    }
+
+    @Test
+    void groupBySingleColumn() {
+        executor.execute("CREATE TABLE t (dept VARCHAR, id INTEGER)");
+        executor.execute("INSERT INTO t VALUES ('a', 1), ('b', 2), ('a', 3)");
+        QueryResult r = executor.execute(
+                "SELECT dept, COUNT(*) AS c, SUM(id) AS s FROM t "
+              + "GROUP BY dept ORDER BY dept");
+        VectorSchemaRoot root = ((QueryResult.Rows) r).data();
+        assertEquals(2, root.getRowCount());
+        assertEquals("a", new String(
+                ((VarCharVector) root.getVector("dept")).get(0)));
+        assertEquals(2L, ((BigIntVector) root.getVector("c")).get(0));
+        assertEquals(4, ((IntVector) root.getVector("s")).get(0));
+        assertEquals("b", new String(
+                ((VarCharVector) root.getVector("dept")).get(1)));
+        assertEquals(1L, ((BigIntVector) root.getVector("c")).get(1));
+        assertEquals(2, ((IntVector) root.getVector("s")).get(1));
+        root.close();
+    }
+
+    @Test
+    void multiColumnGroupBy() {
+        executor.execute("CREATE TABLE t (a INTEGER, b INTEGER, v INTEGER)");
+        executor.execute("INSERT INTO t VALUES (1, 1, 10)");
+        executor.execute("INSERT INTO t VALUES (1, 2, 20)");
+        executor.execute("INSERT INTO t VALUES (1, 1, 30)");
+        executor.execute("INSERT INTO t VALUES (2, 1, 40)");
+        QueryResult r = executor.execute(
+                "SELECT a, b, COUNT(*) AS c FROM t GROUP BY a, b ORDER BY a, b");
+        VectorSchemaRoot root = ((QueryResult.Rows) r).data();
+        assertEquals(3, root.getRowCount());
+        assertEquals(2L, ((BigIntVector) root.getVector("c")).get(0)); // (1,1)
+        assertEquals(1L, ((BigIntVector) root.getVector("c")).get(1)); // (1,2)
+        assertEquals(1L, ((BigIntVector) root.getVector("c")).get(2)); // (2,1)
+        root.close();
+    }
+
+    @Test
+    void groupByNullIsOwnGroup() {
+        executor.execute("CREATE TABLE t (dept VARCHAR, id INTEGER)");
+        executor.execute("INSERT INTO t VALUES ('a', 1), ('b', 2), ('a', 3)");
+        executor.execute("UPDATE t SET dept = NULL WHERE id = 2");
+        QueryResult r = executor.execute(
+                "SELECT dept, COUNT(*) AS c FROM t GROUP BY dept ORDER BY dept");
+        VectorSchemaRoot root = ((QueryResult.Rows) r).data();
+        assertEquals(2, root.getRowCount());
+        assertEquals("a", new String(
+                ((VarCharVector) root.getVector("dept")).get(0)));
+        assertEquals(2L, ((BigIntVector) root.getVector("c")).get(0));
+        assertTrue(((VarCharVector) root.getVector("dept")).isNull(1));
+        assertEquals(1L, ((BigIntVector) root.getVector("c")).get(1));
+        root.close();
+    }
+
+    @Test
+    void globalAggregateOverEmptyTable() {
+        executor.execute("CREATE TABLE t (id INTEGER)");
+        QueryResult r = executor.execute(
+                "SELECT COUNT(*) AS c, SUM(id) AS s, AVG(id) AS a FROM t");
+        VectorSchemaRoot root = ((QueryResult.Rows) r).data();
+        assertEquals(1, root.getRowCount());
+        assertEquals(0L, ((BigIntVector) root.getVector("c")).get(0));
+        assertTrue(root.getVector("s").isNull(0));
+        assertTrue(root.getVector("a").isNull(0));
+        root.close();
+    }
+
+    @Test
+    void groupByOverEmptyTableReturnsZeroRows() {
+        executor.execute("CREATE TABLE t (dept VARCHAR)");
+        QueryResult r = executor.execute(
+                "SELECT dept, COUNT(*) AS c FROM t GROUP BY dept");
+        VectorSchemaRoot root = ((QueryResult.Rows) r).data();
+        assertEquals(0, root.getRowCount());
+        assertEquals(2, root.getFieldVectors().size());
+        root.close();
+    }
+
+    @Test
+    void havingFiltersAggregates() {
+        executor.execute("CREATE TABLE t (dept VARCHAR, id INTEGER)");
+        executor.execute("INSERT INTO t VALUES ('a', 1), ('b', 2), ('a', 3)");
+        QueryResult r = executor.execute(
+                "SELECT dept, COUNT(*) AS c FROM t "
+              + "GROUP BY dept HAVING COUNT(*) > 1");
+        VectorSchemaRoot root = ((QueryResult.Rows) r).data();
+        assertEquals(1, root.getRowCount());
+        assertEquals("a", new String(
+                ((VarCharVector) root.getVector("dept")).get(0)));
+        assertEquals(2L, ((BigIntVector) root.getVector("c")).get(0));
+        root.close();
+    }
+
+    @Test
+    void aggregateWithExpressionArgument() {
+        executor.execute("CREATE TABLE t (id INTEGER)");
+        executor.execute("INSERT INTO t VALUES (1), (2), (3)");
+        QueryResult r = executor.execute("SELECT SUM(id * 2) AS s FROM t");
+        VectorSchemaRoot root = ((QueryResult.Rows) r).data();
+        assertEquals(12, ((IntVector) root.getVector("s")).get(0));
+        root.close();
+    }
+
+    @Test
+    void explainShowsAggregateNode() {
+        executor.execute("CREATE TABLE t (id INTEGER)");
+        executor.execute("INSERT INTO t VALUES (1), (2), (3)");
+        QueryResult r = executor.execute("EXPLAIN SELECT COUNT(*) FROM t");
+        VectorSchemaRoot root = ((QueryResult.Rows) r).data();
+        VarCharVector op = (VarCharVector) root.getVector("operation");
+        boolean found = false;
+        for (int i = 0; i < root.getRowCount(); i++) {
+            if (new String(op.get(i)).contains("Aggregate")) {
+                found = true;
+            }
+        }
+        assertTrue(found);
+        root.close();
+    }
+
+    @Test
+    void explainAnalyzeAggregateMeasuresRows() {
+        executor.execute("CREATE TABLE t (dept VARCHAR, id INTEGER)");
+        executor.execute("INSERT INTO t VALUES ('a', 1), ('b', 2), ('a', 3)");
+        QueryResult r = executor.execute(
+                "EXPLAIN ANALYZE SELECT dept, COUNT(*) AS c FROM t GROUP BY dept");
+        VectorSchemaRoot root = ((QueryResult.Rows) r).data();
+        VarCharVector op = (VarCharVector) root.getVector("operation");
+        BigIntVector rows = (BigIntVector) root.getVector("rows");
+        for (int i = 0; i < root.getRowCount(); i++) {
+            if (new String(op.get(i)).equals("Aggregate")) {
+                assertEquals(2L, rows.get(i));
+            }
+        }
+        root.close();
     }
 }

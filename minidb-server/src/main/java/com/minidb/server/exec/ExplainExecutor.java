@@ -1,5 +1,6 @@
 package com.minidb.server.exec;
 
+import com.minidb.server.plan.MiniDbAggregate;
 import com.minidb.server.plan.MiniDbFilter;
 import com.minidb.server.plan.MiniDbModify;
 import com.minidb.server.plan.MiniDbProject;
@@ -169,8 +170,41 @@ public class ExplainExecutor {
             long est = Math.max(0, Math.round(in * s.selectivity));
             return new Est(est, null, s.remarks);
         }
+        if (node instanceof MiniDbAggregate agg) {
+            long in = childRows(node);
+            if (agg.getGroupSet().isEmpty()) {
+                return new Est(1L, 1, "estimated");
+            }
+            Long distinct = groupDistinct(agg);
+            long est = distinct == null ? in : Math.min(in, Math.max(1, distinct));
+            return new Est(est, 1, "estimated");
+        }
         // default: passthrough
         return new Est(childRows(node), null, null);
+    }
+
+    private Long groupDistinct(MiniDbAggregate agg) {
+        if (agg.getGroupSet().isEmpty()) {
+            return null;
+        }
+        int firstCol = agg.getGroupSet().nextSetBit(0);
+        String table = scanTableOf(agg);
+        if (table == null) {
+            return null;
+        }
+        TableStats ts = stats.tableStats(table);
+        if (ts == null || ts.stale()) {
+            return null;
+        }
+        ArrowTable arrowTable = storage.getTable(table);
+        List<com.minidb.server.catalog.ColumnMeta> columns =
+                arrowTable.schema().columns();
+        if (firstCol < 0 || firstCol >= columns.size()) {
+            return null;
+        }
+        String colName = columns.get(firstCol).name().toLowerCase(Locale.ROOT);
+        Histogram h = ts.columnHistograms().get(colName);
+        return h == null ? null : h.distinctCount();
     }
 
     private long childRows(RelNode node) {

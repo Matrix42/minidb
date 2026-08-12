@@ -1,5 +1,6 @@
 package com.minidb.server.exec;
 
+import com.minidb.server.plan.MiniDbAggregate;
 import com.minidb.server.plan.MiniDbFilter;
 import com.minidb.server.plan.MiniDbProject;
 import com.minidb.server.plan.MiniDbRel;
@@ -54,6 +55,10 @@ public final class Instrumenter {
         }
         if (node instanceof MiniDbValues values) {
             return values.copy(traits, values.getInputs());
+        }
+        if (node instanceof MiniDbAggregate agg) {
+            return agg.copy(traits, inputs.get(0),
+                    agg.getGroupSet(), agg.getGroupSets(), agg.getAggCallList());
         }
         throw new UnsupportedOperationException("cannot instrument: " + node.getClass());
     }
