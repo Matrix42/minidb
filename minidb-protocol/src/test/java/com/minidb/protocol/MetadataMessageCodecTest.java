@@ -34,6 +34,14 @@ class MetadataMessageCodecTest {
     }
 
     @Test
+    void schemasRequestEmptyPatternRoundTrip() {
+        Message out = roundTrip(new Message.SchemasRequest(9L, ""));
+        Message.SchemasRequest s = (Message.SchemasRequest) out;
+        assertEquals(9L, s.requestId());
+        assertEquals("", s.schemaPattern());
+    }
+
+    @Test
     void tablesRequestRoundTripWithNulls() {
         Message out = roundTrip(new Message.TablesRequest(2L, null, "t_%", null));
         Message.TablesRequest t = (Message.TablesRequest) out;
