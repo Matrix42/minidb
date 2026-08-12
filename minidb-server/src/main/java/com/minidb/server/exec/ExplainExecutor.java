@@ -1,6 +1,7 @@
 package com.minidb.server.exec;
 
 import com.minidb.server.plan.MiniDbAggregate;
+import com.minidb.server.plan.MiniDbCalc;
 import com.minidb.server.plan.MiniDbFilter;
 import com.minidb.server.plan.MiniDbModify;
 import com.minidb.server.plan.MiniDbProject;
@@ -153,6 +154,9 @@ public class ExplainExecutor {
             return new Est((long) t.rowCount(), t.batches().size(), null);
         }
         if (node instanceof MiniDbProject) {
+            return new Est(childRows(node), null, null);
+        }
+        if (node instanceof MiniDbCalc) {
             return new Est(childRows(node), null, null);
         }
         if (node instanceof MiniDbSort sort) {

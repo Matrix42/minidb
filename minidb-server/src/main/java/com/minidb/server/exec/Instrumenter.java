@@ -1,6 +1,7 @@
 package com.minidb.server.exec;
 
 import com.minidb.server.plan.MiniDbAggregate;
+import com.minidb.server.plan.MiniDbCalc;
 import com.minidb.server.plan.MiniDbFilter;
 import com.minidb.server.plan.MiniDbProject;
 import com.minidb.server.plan.MiniDbRel;
@@ -61,6 +62,9 @@ public final class Instrumenter {
         if (node instanceof MiniDbAggregate agg) {
             return agg.copy(traits, inputs.get(0),
                     agg.getGroupSet(), agg.getGroupSets(), agg.getAggCallList());
+        }
+        if (node instanceof MiniDbCalc calc) {
+            return calc.copy(traits, inputs.get(0), calc.getProgram());
         }
         if (node instanceof MiniDbUnion union) {
             return union.copy(traits, inputs, union.all);
