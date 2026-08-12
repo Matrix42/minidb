@@ -641,12 +641,13 @@ public class MiniDbDatabaseMetaData implements DatabaseMetaData {
 
     @Override
     public ResultSet getTables(String catalog, String schemaPattern, String tableNamePattern, String[] types) throws SQLException {
-        throw new SQLFeatureNotSupportedException();
+        MiniDbStatement stmt = (MiniDbStatement) connection.createStatement();
+        return new MiniDbResultSet(stmt, connection.client().tables(schemaPattern, tableNamePattern, types));
     }
 
     @Override
     public ResultSet getSchemas() throws SQLException {
-        throw new SQLFeatureNotSupportedException();
+        return getSchemas(null, null);
     }
 
     @Override
@@ -661,7 +662,8 @@ public class MiniDbDatabaseMetaData implements DatabaseMetaData {
 
     @Override
     public ResultSet getColumns(String catalog, String schemaPattern, String tableNamePattern, String columnNamePattern) throws SQLException {
-        throw new SQLFeatureNotSupportedException();
+        MiniDbStatement stmt = (MiniDbStatement) connection.createStatement();
+        return new MiniDbResultSet(stmt, connection.client().columns(schemaPattern, tableNamePattern, columnNamePattern));
     }
 
     @Override
@@ -831,7 +833,8 @@ public class MiniDbDatabaseMetaData implements DatabaseMetaData {
 
     @Override
     public ResultSet getSchemas(String catalog, String schemaPattern) throws SQLException {
-        throw new SQLFeatureNotSupportedException();
+        MiniDbStatement stmt = (MiniDbStatement) connection.createStatement();
+        return new MiniDbResultSet(stmt, connection.client().schemas(schemaPattern));
     }
 
     @Override
