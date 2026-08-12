@@ -7,6 +7,7 @@ import com.minidb.server.plan.MiniDbProject;
 import com.minidb.server.plan.MiniDbRel;
 import com.minidb.server.plan.MiniDbScan;
 import com.minidb.server.plan.MiniDbSort;
+import com.minidb.server.plan.MiniDbUnion;
 import com.minidb.server.plan.MiniDbValues;
 import com.minidb.server.plan.Planner;
 import com.minidb.server.catalog.MiniDbCatalog;
@@ -179,6 +180,20 @@ public class ExplainExecutor {
             long est = distinct == null ? in : Math.min(in, Math.max(1, distinct));
             return new Est(est, 1, "estimated");
         }
+        if (node instanceof MiniDbUnion union) {
+            long sum = 0;
+            for (RelNode in : node.getInputs()) {
+                Long r = estimate(in).rows;
+                sum += r == null ? 0 : r;
+            }
+            if (union.all) {
+                return new Est(sum, null, null);
+            }
+            Long distinct = firstColumnDistinct(union);
+            long est = distinct == null ? Math.max(1, sum / 2)
+                    : Math.min(sum, Math.max(1, distinct));
+            return new Est(est, null, "estimated");
+        }
         // default: passthrough
         return new Est(childRows(node), null, null);
     }
@@ -203,6 +218,26 @@ public class ExplainExecutor {
             return null;
         }
         String colName = columns.get(firstCol).name().toLowerCase(Locale.ROOT);
+        Histogram h = ts.columnHistograms().get(colName);
+        return h == null ? null : h.distinctCount();
+    }
+
+    private Long firstColumnDistinct(RelNode node) {
+        String table = scanTableOf(node);
+        if (table == null) {
+            return null;
+        }
+        TableStats ts = stats.tableStats(table);
+        if (ts == null || ts.stale()) {
+            return null;
+        }
+        ArrowTable arrowTable = storage.getTable(table);
+        List<com.minidb.server.catalog.ColumnMeta> columns =
+                arrowTable.schema().columns();
+        if (columns.isEmpty()) {
+            return null;
+        }
+        String colName = columns.get(0).name().toLowerCase(Locale.ROOT);
         Histogram h = ts.columnHistograms().get(colName);
         return h == null ? null : h.distinctCount();
     }

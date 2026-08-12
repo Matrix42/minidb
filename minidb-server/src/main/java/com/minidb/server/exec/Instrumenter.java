@@ -6,6 +6,7 @@ import com.minidb.server.plan.MiniDbProject;
 import com.minidb.server.plan.MiniDbRel;
 import com.minidb.server.plan.MiniDbScan;
 import com.minidb.server.plan.MiniDbSort;
+import com.minidb.server.plan.MiniDbUnion;
 import com.minidb.server.plan.MiniDbValues;
 import java.util.ArrayList;
 import java.util.List;
@@ -59,6 +60,9 @@ public final class Instrumenter {
         if (node instanceof MiniDbAggregate agg) {
             return agg.copy(traits, inputs.get(0),
                     agg.getGroupSet(), agg.getGroupSets(), agg.getAggCallList());
+        }
+        if (node instanceof MiniDbUnion union) {
+            return union.copy(traits, inputs, union.all);
         }
         throw new UnsupportedOperationException("cannot instrument: " + node.getClass());
     }

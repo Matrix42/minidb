@@ -605,4 +605,133 @@ class QueryExecutorTest {
                 ((VarCharVector) root.getVector("dept")).get(1)));
         root.close();
     }
+
+    // ---- union ----
+
+    private void createUnionTables() {
+        executor.execute("CREATE TABLE a (id INTEGER)");
+        executor.execute("CREATE TABLE b (id INTEGER)");
+        executor.execute("INSERT INTO a VALUES (1), (2), (3)");
+        executor.execute("INSERT INTO b VALUES (2), (3), (4)");
+    }
+
+    @Test
+    void unionAllKeepsDuplicates() {
+        createUnionTables();
+        QueryResult r = executor.execute(
+                "SELECT id FROM a UNION ALL SELECT id FROM b");
+        VectorSchemaRoot root = ((QueryResult.Rows) r).data();
+        assertEquals(6, root.getRowCount());
+        IntVector id = (IntVector) root.getVector("id");
+        assertEquals(1, id.get(0));
+        assertEquals(2, id.get(1));
+        assertEquals(3, id.get(2));
+        assertEquals(2, id.get(3));
+        assertEquals(3, id.get(4));
+        assertEquals(4, id.get(5));
+        root.close();
+    }
+
+    @Test
+    void unionDeduplicates() {
+        createUnionTables();
+        QueryResult r = executor.execute(
+                "SELECT id FROM a UNION SELECT id FROM b");
+        VectorSchemaRoot root = ((QueryResult.Rows) r).data();
+        assertEquals(4, root.getRowCount());
+        IntVector id = (IntVector) root.getVector("id");
+        assertEquals(1, id.get(0));
+        assertEquals(2, id.get(1));
+        assertEquals(3, id.get(2));
+        assertEquals(4, id.get(3));
+        root.close();
+    }
+
+    @Test
+    void unionAllWithEmptyInput() {
+        executor.execute("CREATE TABLE a (id INTEGER)");
+        executor.execute("CREATE TABLE b (id INTEGER)");
+        executor.execute("INSERT INTO b VALUES (1), (2)");
+        QueryResult r = executor.execute(
+                "SELECT id FROM a UNION ALL SELECT id FROM b");
+        VectorSchemaRoot root = ((QueryResult.Rows) r).data();
+        assertEquals(2, root.getRowCount());
+        root.close();
+    }
+
+    @Test
+    void unionAllOverTwoEmptyTables() {
+        executor.execute("CREATE TABLE a (id INTEGER)");
+        executor.execute("CREATE TABLE b (id INTEGER)");
+        QueryResult r = executor.execute(
+                "SELECT id FROM a UNION ALL SELECT id FROM b");
+        VectorSchemaRoot root = ((QueryResult.Rows) r).data();
+        assertEquals(0, root.getRowCount());
+        assertEquals(1, root.getFieldVectors().size());
+        root.close();
+    }
+
+    @Test
+    void unionOrdered() {
+        createUnionTables();
+        QueryResult r = executor.execute(
+                "SELECT id FROM a UNION SELECT id FROM b ORDER BY id DESC");
+        VectorSchemaRoot root = ((QueryResult.Rows) r).data();
+        assertEquals(4, root.getRowCount());
+        IntVector id = (IntVector) root.getVector("id");
+        assertEquals(4, id.get(0));
+        assertEquals(3, id.get(1));
+        assertEquals(2, id.get(2));
+        assertEquals(1, id.get(3));
+        root.close();
+    }
+
+    @Test
+    void unionAllMultiColumn() {
+        executor.execute("CREATE TABLE a (dept VARCHAR, id INTEGER)");
+        executor.execute("CREATE TABLE b (dept VARCHAR, id INTEGER)");
+        executor.execute("INSERT INTO a VALUES ('x', 1), ('y', 2)");
+        executor.execute("INSERT INTO b VALUES ('z', 3)");
+        QueryResult r = executor.execute(
+                "SELECT dept, id FROM a UNION ALL SELECT dept, id FROM b");
+        VectorSchemaRoot root = ((QueryResult.Rows) r).data();
+        assertEquals(3, root.getRowCount());
+        assertEquals("x", new String(
+                ((VarCharVector) root.getVector("dept")).get(0)));
+        assertEquals(3, ((IntVector) root.getVector("id")).get(2));
+        root.close();
+    }
+
+    @Test
+    void explainShowsUnionNode() {
+        createUnionTables();
+        QueryResult r = executor.execute(
+                "EXPLAIN SELECT id FROM a UNION ALL SELECT id FROM b");
+        VectorSchemaRoot root = ((QueryResult.Rows) r).data();
+        VarCharVector op = (VarCharVector) root.getVector("operation");
+        boolean found = false;
+        for (int i = 0; i < root.getRowCount(); i++) {
+            if (new String(op.get(i)).contains("Union")) {
+                found = true;
+            }
+        }
+        assertTrue(found);
+        root.close();
+    }
+
+    @Test
+    void explainAnalyzeUnionMeasuresRows() {
+        createUnionTables();
+        QueryResult r = executor.execute(
+                "EXPLAIN ANALYZE SELECT id FROM a UNION ALL SELECT id FROM b");
+        VectorSchemaRoot root = ((QueryResult.Rows) r).data();
+        VarCharVector op = (VarCharVector) root.getVector("operation");
+        BigIntVector rows = (BigIntVector) root.getVector("rows");
+        for (int i = 0; i < root.getRowCount(); i++) {
+            if (new String(op.get(i)).equals("Union")) {
+                assertEquals(6L, rows.get(i));
+            }
+        }
+        root.close();
+    }
 }
