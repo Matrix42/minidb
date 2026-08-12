@@ -14,6 +14,7 @@ import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertNotNull;
 
 class ArrowTableTest {
 
@@ -69,5 +70,25 @@ class ArrowTableTest {
         table.close();
         // RootAllocator.close() in tearDown throws if buffers leaked
         table = new ArrowTable(new TableSchema("t2", List.of()), allocator);
+    }
+
+    @Test
+    void arrowSchemaCarriesSchemaMetadata() {
+        ArrowTable t = new ArrowTable(new TableSchema("other", "t", List.of(
+                new ColumnMeta("id", ColumnType.INTEGER))), allocator);
+        try {
+            java.util.Map<String, String> meta = t.arrowSchema().getCustomMetadata();
+            assertNotNull(meta);
+            assertEquals("other", meta.get("schema"));
+        } finally {
+            t.close();
+        }
+    }
+
+    @Test
+    void arrowSchemaMetadataDefaultsToPublic() {
+        java.util.Map<String, String> meta = table.arrowSchema().getCustomMetadata();
+        assertNotNull(meta);
+        assertEquals("public", meta.get("schema"));
     }
 }

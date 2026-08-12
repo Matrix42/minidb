@@ -5,6 +5,7 @@ import com.minidb.server.catalog.ColumnMeta;
 import com.minidb.server.catalog.TableSchema;
 import java.util.ArrayList;
 import java.util.List;
+import java.util.Map;
 import java.util.concurrent.CopyOnWriteArrayList;
 import org.apache.arrow.memory.BufferAllocator;
 import org.apache.arrow.vector.VectorSchemaRoot;
@@ -27,7 +28,8 @@ public class ArrowTable implements AutoCloseable {
         for (ColumnMeta column : schema.columns()) {
             fields.add(ArrowTypes.field(column));
         }
-        this.arrowSchema = new Schema(fields);
+        this.arrowSchema = new Schema(fields,
+                Map.of("schema", schema.schemaName()));
     }
 
     public TableSchema schema() {
