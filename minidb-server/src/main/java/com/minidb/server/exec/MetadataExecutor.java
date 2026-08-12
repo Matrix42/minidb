@@ -41,7 +41,7 @@ public class MetadataExecutor {
         }
         matched.sort(String::compareTo);
         VarCharVector schem = new VarCharVector("TABLE_SCHEM", allocator);
-        VarCharVector cat = new VarCharVector("TABLE_CAT", allocator);
+        VarCharVector cat = new VarCharVector("TABLE_CATALOG", allocator);
         schem.setInitialCapacity(matched.size());
         cat.setInitialCapacity(matched.size());
         schem.allocateNew();
@@ -65,7 +65,9 @@ public class MetadataExecutor {
         List<String[]> rows = new ArrayList<>(); // [schema, table]
         for (String schema : schemas) {
             if (schemaLike != null && !schemaLike.matcher(schema).matches()) continue;
-            for (String table : catalog.tableNames(schema)) {
+            List<String> tableNames = new ArrayList<>(catalog.tableNames(schema));
+            tableNames.sort(String::compareTo);
+            for (String table : tableNames) {
                 if (tableLike != null && !tableLike.matcher(table).matches()) continue;
                 rows.add(new String[]{schema, table});
             }
@@ -144,7 +146,9 @@ public class MetadataExecutor {
         List<Row> rows = new ArrayList<>();
         for (String schema : schemas) {
             if (schemaLike != null && !schemaLike.matcher(schema).matches()) continue;
-            for (String table : catalog.tableNames(schema)) {
+            List<String> tableNames = new ArrayList<>(catalog.tableNames(schema));
+            tableNames.sort(String::compareTo);
+            for (String table : tableNames) {
                 if (tableLike != null && !tableLike.matcher(table).matches()) continue;
                 TableSchema ts = catalog.getTable(schema, table);
                 List<ColumnMeta> cols = ts.columns();

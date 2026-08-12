@@ -41,6 +41,7 @@ public class MiniDbServer implements AutoCloseable {
         storage.setStatsManager(stats);
         stats.loadAll();
         QueryExecutor executor = new QueryExecutor(catalog, storage, allocator, stats);
+        MetadataExecutor metadata = new MetadataExecutor(catalog, allocator);
 
         boss = new NioEventLoopGroup(1);
         workers = new NioEventLoopGroup();
@@ -52,8 +53,7 @@ public class MiniDbServer implements AutoCloseable {
                     protected void initChannel(SocketChannel ch) {
                         ch.pipeline().addLast(new MessageDecoder());
                         ch.pipeline().addLast(new MessageEncoder());
-                        ch.pipeline().addLast(new SessionHandler(executor,
-                                new MetadataExecutor(catalog, allocator)));
+                        ch.pipeline().addLast(new SessionHandler(executor, metadata));
                     }
                 });
         channel = bootstrap.bind(port).sync().channel();

@@ -7,6 +7,7 @@ import org.apache.arrow.vector.VectorSchemaRoot;
 import org.junit.jupiter.api.Test;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 class MetadataExecutorTest {
@@ -24,7 +25,7 @@ class MetadataExecutorTest {
                 assertEquals("alpha", new String(schem.get(0)));
                 assertEquals("beta", new String(schem.get(1)));
                 assertEquals("public", new String(schem.get(2)));
-                assertTrue(root.getVector("TABLE_CAT").isNull(0));
+                assertTrue(root.getVector("TABLE_CATALOG").isNull(0));
             }
         }
     }
@@ -129,5 +130,12 @@ class MetadataExecutorTest {
                 assertEquals("username", new String(col.get(0)));
             }
         }
+    }
+
+    @Test
+    void compileLikeMatchesSingleCharWildcard() {
+        assertTrue(MetadataExecutor.compileLike("t_%").matcher("t1").matches(), "t1 should match t_%");
+        assertTrue(MetadataExecutor.compileLike("t_%").matcher("t12").matches(), "t12 should match t_%");
+        assertFalse(MetadataExecutor.compileLike("t_%").matcher("t").matches(), "t should not match t_%");
     }
 }
