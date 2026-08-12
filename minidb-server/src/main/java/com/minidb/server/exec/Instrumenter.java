@@ -3,6 +3,7 @@ package com.minidb.server.exec;
 import com.minidb.server.plan.MiniDbAggregate;
 import com.minidb.server.plan.MiniDbCalc;
 import com.minidb.server.plan.MiniDbFilter;
+import com.minidb.server.plan.MiniDbJoin;
 import com.minidb.server.plan.MiniDbProject;
 import com.minidb.server.plan.MiniDbRel;
 import com.minidb.server.plan.MiniDbScan;
@@ -68,6 +69,10 @@ public final class Instrumenter {
         }
         if (node instanceof MiniDbUnion union) {
             return union.copy(traits, inputs, union.all);
+        }
+        if (node instanceof MiniDbJoin join) {
+            return join.copy(traits, join.getCondition(), inputs.get(0),
+                    inputs.get(1), join.getJoinType(), false);
         }
         if (node instanceof MiniDbSetOp setOp) {
             return setOp.copy(traits, inputs, setOp.all);

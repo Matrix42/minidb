@@ -79,6 +79,8 @@ public class RexInterpreter {
         ValueVector right = eval(operands.get(1), input);
         try {
             boolean doubleDomain = isDouble(left) || isDouble(right);
+            boolean stringDomain = left instanceof VarCharVector
+                    || right instanceof VarCharVector;
             BitVector out = new BitVector("cmp", allocator);
             out.allocateNew(rows);
             for (int i = 0; i < rows; i++) {
@@ -86,7 +88,9 @@ public class RexInterpreter {
                     out.setNull(i);
                     continue;
                 }
-                int c = doubleDomain
+                int c = stringDomain
+                        ? stringCompare(left, right, i)
+                        : doubleDomain
                         ? Double.compare(asDouble(left, i), asDouble(right, i))
                         : Long.compare(asLong(left, i), asLong(right, i));
                 boolean result;
@@ -471,5 +475,11 @@ public class RexInterpreter {
             return fv.get(i);
         }
         throw new IllegalArgumentException("not a numeric vector: " + v.getClass());
+    }
+
+    private static int stringCompare(ValueVector left, ValueVector right, int i) {
+        Object l = left.getObject(i);
+        Object r = right.getObject(i);
+        return l.toString().compareTo(r.toString());
     }
 }

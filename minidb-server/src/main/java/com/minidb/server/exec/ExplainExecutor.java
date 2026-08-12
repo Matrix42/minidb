@@ -3,6 +3,7 @@ package com.minidb.server.exec;
 import com.minidb.server.plan.MiniDbAggregate;
 import com.minidb.server.plan.MiniDbCalc;
 import com.minidb.server.plan.MiniDbFilter;
+import com.minidb.server.plan.MiniDbJoin;
 import com.minidb.server.plan.MiniDbModify;
 import com.minidb.server.plan.MiniDbProject;
 import com.minidb.server.plan.MiniDbRel;
@@ -158,6 +159,13 @@ public class ExplainExecutor {
         }
         if (node instanceof MiniDbCalc) {
             return new Est(childRows(node), null, null);
+        }
+        if (node instanceof MiniDbJoin) {
+            long l = childRows(node);
+            Long r = estimate(node.getInputs().get(1)).rows;
+            long rv = r == null ? 0 : r;
+            long est = (long) (l * rv * 0.1); // loose join selectivity
+            return new Est(Math.max(0, est), null, "estimated");
         }
         if (node instanceof MiniDbSort sort) {
             long in = childRows(node);

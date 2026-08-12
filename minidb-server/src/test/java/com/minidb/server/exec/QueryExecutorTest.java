@@ -877,4 +877,176 @@ class QueryExecutorTest {
         }
         root.close();
     }
+
+    // ---- join ----
+
+    private void createJoinTables() {
+        executor.execute("CREATE TABLE a (id INTEGER, name VARCHAR)");
+        executor.execute("CREATE TABLE b (id INTEGER, val VARCHAR)");
+        executor.execute("INSERT INTO a VALUES (1, 'a1'), (2, 'a2'), (3, 'a3')");
+        executor.execute("INSERT INTO b VALUES (2, 'b2'), (3, 'b3'), (4, 'b4')");
+    }
+
+    @Test
+    void innerJoinEqui() {
+        createJoinTables();
+        QueryResult r = executor.execute(
+                "SELECT a.id, b.val FROM a JOIN b ON a.id = b.id ORDER BY a.id");
+        VectorSchemaRoot root = ((QueryResult.Rows) r).data();
+        assertEquals(2, root.getRowCount());
+        assertEquals(2, ((IntVector) root.getVector("id")).get(0));
+        assertEquals("b2", new String(
+                ((VarCharVector) root.getVector("val")).get(0)));
+        assertEquals(3, ((IntVector) root.getVector("id")).get(1));
+        root.close();
+    }
+
+    @Test
+    void leftJoinPreservesLeftRows() {
+        createJoinTables();
+        QueryResult r = executor.execute(
+                "SELECT a.id, b.val FROM a LEFT JOIN b ON a.id = b.id "
+              + "ORDER BY a.id");
+        VectorSchemaRoot root = ((QueryResult.Rows) r).data();
+        assertEquals(3, root.getRowCount());
+        assertEquals(1, ((IntVector) root.getVector("id")).get(0));
+        assertTrue(root.getVector("val").isNull(0));
+        assertEquals("b2", new String(
+                ((VarCharVector) root.getVector("val")).get(1)));
+        assertEquals("b3", new String(
+                ((VarCharVector) root.getVector("val")).get(2)));
+        root.close();
+    }
+
+    @Test
+    void rightJoinPreservesRightRows() {
+        createJoinTables();
+        QueryResult r = executor.execute(
+                "SELECT a.id, b.id AS bid FROM a RIGHT JOIN b ON a.id = b.id "
+              + "ORDER BY bid");
+        VectorSchemaRoot root = ((QueryResult.Rows) r).data();
+        assertEquals(3, root.getRowCount());
+        assertTrue(root.getVector("id").isNull(2)); // b.id=4 unmatched
+        assertEquals(4, ((IntVector) root.getVector("bid")).get(2));
+        root.close();
+    }
+
+    @Test
+    void fullJoinPreservesBoth() {
+        createJoinTables();
+        QueryResult r = executor.execute(
+                "SELECT a.id, b.id AS bid FROM a FULL JOIN b ON a.id = b.id");
+        VectorSchemaRoot root = ((QueryResult.Rows) r).data();
+        assertEquals(4, root.getRowCount()); // 2 matched + 1 left + 1 right
+        root.close();
+    }
+
+    @Test
+    void nonEquiJoin() {
+        createJoinTables();
+        QueryResult r = executor.execute(
+                "SELECT a.id, b.id AS bid FROM a JOIN b ON a.id > b.id");
+        VectorSchemaRoot root = ((QueryResult.Rows) r).data();
+        assertEquals(1, root.getRowCount()); // (3,2)
+        assertEquals(3, ((IntVector) root.getVector("id")).get(0));
+        assertEquals(2, ((IntVector) root.getVector("bid")).get(0));
+        root.close();
+    }
+
+    @Test
+    void multiConditionJoin() {
+        executor.execute("CREATE TABLE a (id INTEGER, name VARCHAR)");
+        executor.execute("CREATE TABLE b (id INTEGER, val VARCHAR)");
+        executor.execute("INSERT INTO a VALUES (1, 'x'), (2, 'y')");
+        executor.execute("INSERT INTO b VALUES (1, 'x'), (2, 'z')");
+        QueryResult r = executor.execute(
+                "SELECT a.id FROM a JOIN b ON a.id = b.id AND a.name = b.val");
+        VectorSchemaRoot root = ((QueryResult.Rows) r).data();
+        assertEquals(1, root.getRowCount()); // (1, x) only
+        assertEquals(1, ((IntVector) root.getVector("id")).get(0));
+        root.close();
+    }
+
+    @Test
+    void joinNullKeysNeverMatch() {
+        executor.execute("CREATE TABLE a (id INTEGER)");
+        executor.execute("CREATE TABLE b (id INTEGER)");
+        executor.execute("INSERT INTO a VALUES (1), (NULL)");
+        executor.execute("INSERT INTO b VALUES (1), (NULL)");
+        QueryResult r = executor.execute(
+                "SELECT a.id AS aid, b.id AS bid FROM a JOIN b ON a.id = b.id");
+        VectorSchemaRoot root = ((QueryResult.Rows) r).data();
+        assertEquals(1, root.getRowCount());
+        assertEquals(1, ((IntVector) root.getVector("aid")).get(0));
+        assertEquals(1, ((IntVector) root.getVector("bid")).get(0));
+        root.close();
+    }
+
+    @Test
+    void threeWayJoin() {
+        createJoinTables();
+        QueryResult r = executor.execute(
+                "SELECT a.id FROM a JOIN b ON a.id = b.id "
+              + "JOIN a c ON b.id = c.id ORDER BY a.id");
+        VectorSchemaRoot root = ((QueryResult.Rows) r).data();
+        assertEquals(2, root.getRowCount());
+        assertEquals(2, ((IntVector) root.getVector("id")).get(0));
+        assertEquals(3, ((IntVector) root.getVector("id")).get(1));
+        root.close();
+    }
+
+    @Test
+    void joinWithWhereFilter() {
+        createJoinTables();
+        QueryResult r = executor.execute(
+                "SELECT a.id, b.val FROM a JOIN b ON a.id = b.id "
+              + "WHERE a.id > 2");
+        VectorSchemaRoot root = ((QueryResult.Rows) r).data();
+        assertEquals(1, root.getRowCount());
+        assertEquals(3, ((IntVector) root.getVector("id")).get(0));
+        root.close();
+    }
+
+    @Test
+    void commaJoinIsInnerJoin() {
+        createJoinTables();
+        QueryResult r = executor.execute(
+                "SELECT a.id FROM a, b WHERE a.id = b.id ORDER BY a.id");
+        VectorSchemaRoot root = ((QueryResult.Rows) r).data();
+        assertEquals(2, root.getRowCount());
+        root.close();
+    }
+
+    @Test
+    void explainShowsJoinNode() {
+        createJoinTables();
+        QueryResult r = executor.execute(
+                "EXPLAIN SELECT a.id FROM a JOIN b ON a.id = b.id");
+        VectorSchemaRoot root = ((QueryResult.Rows) r).data();
+        VarCharVector op = (VarCharVector) root.getVector("operation");
+        boolean found = false;
+        for (int i = 0; i < root.getRowCount(); i++) {
+            if (new String(op.get(i)).contains("Join")) {
+                found = true;
+            }
+        }
+        assertTrue(found);
+        root.close();
+    }
+
+    @Test
+    void explainAnalyzeJoinMeasuresRows() {
+        createJoinTables();
+        QueryResult r = executor.execute(
+                "EXPLAIN ANALYZE SELECT a.id FROM a JOIN b ON a.id = b.id");
+        VectorSchemaRoot root = ((QueryResult.Rows) r).data();
+        VarCharVector op = (VarCharVector) root.getVector("operation");
+        BigIntVector rows = (BigIntVector) root.getVector("rows");
+        for (int i = 0; i < root.getRowCount(); i++) {
+            if (new String(op.get(i)).equals("Join")) {
+                assertEquals(2L, rows.get(i));
+            }
+        }
+        root.close();
+    }
 }

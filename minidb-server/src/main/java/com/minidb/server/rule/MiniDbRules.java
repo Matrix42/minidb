@@ -16,7 +16,8 @@ public final class MiniDbRules {
             new MiniDbUnionRule(),
             new MiniDbIntersectRule(),
             new MiniDbExceptRule(),
-            new MiniDbCalcRule());
+            new MiniDbCalcRule(),
+            new MiniDbJoinRule());
 
     private MiniDbRules() {
     }
