@@ -2,7 +2,11 @@ package com.minidb.server.catalog;
 
 import java.util.List;
 
-public record TableSchema(String name, List<ColumnMeta> columns) {
+public record TableSchema(String schemaName, String name, List<ColumnMeta> columns) {
+
+    public TableSchema(String name, List<ColumnMeta> columns) {
+        this("public", name, columns);
+    }
 
     public ColumnMeta column(String name) {
         for (ColumnMeta c : columns) {

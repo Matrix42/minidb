@@ -77,4 +77,20 @@ class MiniDbCatalogTest {
         assertEquals(ColumnType.VARCHAR, schema.column("name").type());
         assertThrows(IllegalArgumentException.class, () -> schema.column("missing"));
     }
+
+    @Test
+    void schemaNameDefaultsToPublicViaConvenienceFactory() {
+        TableSchema schema = new TableSchema("t1", List.of(
+                new ColumnMeta("id", ColumnType.INTEGER)));
+        assertEquals("public", schema.schemaName());
+        assertEquals("t1", schema.name());
+    }
+
+    @Test
+    void explicitSchemaNameStored() {
+        TableSchema schema = new TableSchema("other", "t1", List.of(
+                new ColumnMeta("id", ColumnType.INTEGER)));
+        assertEquals("other", schema.schemaName());
+        assertEquals("t1", schema.name());
+    }
 }
