@@ -2,6 +2,7 @@ package com.minidb.jdbc;
 
 import java.sql.ResultSetMetaData;
 import java.sql.SQLException;
+import java.util.Map;
 import org.apache.arrow.vector.FieldVector;
 import org.apache.arrow.vector.VectorSchemaRoot;
 
@@ -86,7 +87,8 @@ public class MiniDbResultSetMetaData implements ResultSetMetaData {
 
     @Override
     public String getSchemaName(int column) {
-        return "";
+        Map<String, String> meta = root.getSchema().getCustomMetadata();
+        return meta != null ? meta.getOrDefault("schema", "") : "";
     }
 
     @Override
