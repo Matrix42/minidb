@@ -144,6 +144,68 @@ public class MiniDbClient implements AutoCloseable {
         }
     }
 
+    public VectorSchemaRoot schemas(String schemaPattern) throws SQLException {
+        return sendMetadata(new Message.SchemasRequest(allocateRequestId(), schemaPattern));
+    }
+
+    public VectorSchemaRoot tables(String schemaPattern, String tableNamePattern, String[] types)
+            throws SQLException {
+        return sendMetadata(new Message.TablesRequest(allocateRequestId(),
+                schemaPattern, tableNamePattern, types));
+    }
+
+    public VectorSchemaRoot columns(String schemaPattern, String tableNamePattern, String columnNamePattern)
+            throws SQLException {
+        return sendMetadata(new Message.ColumnsRequest(allocateRequestId(),
+                schemaPattern, tableNamePattern, columnNamePattern));
+    }
+
+    private long allocateRequestId() throws SQLException {
+        if (!connected) {
+            throw new SQLException("connection is closed");
+        }
+        return nextRequestId.getAndIncrement();
+    }
+
+    private VectorSchemaRoot sendMetadata(Message req) throws SQLException {
+        long id = req instanceof Message.SchemasRequest r ? r.requestId()
+                : req instanceof Message.TablesRequest t ? t.requestId()
+                : ((Message.ColumnsRequest) req).requestId();
+        CompletableFuture<ClientResult> fut = new CompletableFuture<>();
+        pending.put(id, fut);
+        if (!connected) {
+            pending.remove(id, fut);
+            throw new SQLException("connection is closed");
+        }
+        try {
+            channel.writeAndFlush(req).sync();
+        } catch (Exception e) {
+            pending.remove(id, fut);
+            throw new SQLException("failed to send request", e);
+        }
+        try {
+            ClientResult result = fut.get(timeoutSeconds, TimeUnit.SECONDS);
+            if (result instanceof ClientResult.Rows rows) {
+                return rows.data();
+            }
+            throw new SQLException("unexpected result type for metadata request");
+        } catch (InterruptedException e) {
+            Thread.currentThread().interrupt();
+            throw new SQLException("interrupted during execute", e);
+        } catch (java.util.concurrent.TimeoutException e) {
+            throw new SQLException("timeout waiting for server response");
+        } catch (ExecutionException e) {
+            Throwable cause = e.getCause();
+            if (cause instanceof SQLException sqle) {
+                throw sqle;
+            }
+            throw new SQLException(cause != null ? cause.getMessage() : "query failed",
+                    cause != null ? cause : e);
+        } finally {
+            pending.remove(id, fut);
+        }
+    }
+
     private void markDisconnected() {
         connected = false;
     }
