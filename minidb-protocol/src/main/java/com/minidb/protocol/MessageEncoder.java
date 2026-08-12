@@ -49,8 +49,54 @@ public class MessageEncoder extends MessageToByteEncoder<Message> {
             out.writeInt(16);
             out.writeLong(u.requestId());
             out.writeLong(u.count());
+        } else if (msg instanceof Message.SchemasRequest r) {
+            out.writeByte(MessageType.SCHEMAS_REQUEST);
+            byte[] p = bytes(r.schemaPattern());
+            out.writeInt(8 + 4 + p.length);
+            out.writeLong(r.requestId());
+            out.writeInt(r.schemaPattern() == null ? -1 : p.length);
+            if (p.length > 0) out.writeBytes(p);
+        } else if (msg instanceof Message.TablesRequest r) {
+            byte[] sp = bytes(r.schemaPattern());
+            byte[] tp = bytes(r.tableNamePattern());
+            int typesLen = r.types() == null ? -1 : r.types().length;
+            int body = 8 + 4 + sp.length + 4 + tp.length + 4;
+            byte[][] typeBytes = new byte[typesLen < 0 ? 0 : typesLen][];
+            for (int i = 0; i < (typesLen < 0 ? 0 : typesLen); i++) {
+                typeBytes[i] = bytes(r.types()[i]);
+                body += 4 + typeBytes[i].length;
+            }
+            out.writeByte(MessageType.TABLES_REQUEST);
+            out.writeInt(body);
+            out.writeLong(r.requestId());
+            out.writeInt(r.schemaPattern() == null ? -1 : sp.length);
+            if (sp.length > 0) out.writeBytes(sp);
+            out.writeInt(r.tableNamePattern() == null ? -1 : tp.length);
+            if (tp.length > 0) out.writeBytes(tp);
+            out.writeInt(typesLen);
+            for (int i = 0; i < (typesLen < 0 ? 0 : typesLen); i++) {
+                out.writeInt(typeBytes[i].length);
+                if (typeBytes[i].length > 0) out.writeBytes(typeBytes[i]);
+            }
+        } else if (msg instanceof Message.ColumnsRequest r) {
+            byte[] sp = bytes(r.schemaPattern());
+            byte[] tp = bytes(r.tableNamePattern());
+            byte[] cp = bytes(r.columnNamePattern());
+            out.writeByte(MessageType.COLUMNS_REQUEST);
+            out.writeInt(8 + 4 + sp.length + 4 + tp.length + 4 + cp.length);
+            out.writeLong(r.requestId());
+            out.writeInt(r.schemaPattern() == null ? -1 : sp.length);
+            if (sp.length > 0) out.writeBytes(sp);
+            out.writeInt(r.tableNamePattern() == null ? -1 : tp.length);
+            if (tp.length > 0) out.writeBytes(tp);
+            out.writeInt(r.columnNamePattern() == null ? -1 : cp.length);
+            if (cp.length > 0) out.writeBytes(cp);
         } else {
             throw new IllegalArgumentException("unknown message: " + msg);
         }
+    }
+
+    private static byte[] bytes(String s) {
+        return s == null ? new byte[0] : s.getBytes(java.nio.charset.StandardCharsets.UTF_8);
     }
 }

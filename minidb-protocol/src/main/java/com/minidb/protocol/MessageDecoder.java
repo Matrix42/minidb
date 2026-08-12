@@ -70,8 +70,51 @@ public class MessageDecoder extends ByteToMessageDecoder {
                 long count = in.readLong();
                 return new Message.UpdateCount(requestId, count);
             }
+            case MessageType.SCHEMAS_REQUEST -> {
+                long requestId = in.readLong();
+                int pLen = in.readInt();
+                String pattern = readNullableString(in, pLen);
+                return new Message.SchemasRequest(requestId, pattern);
+            }
+            case MessageType.TABLES_REQUEST -> {
+                long requestId = in.readLong();
+                int spLen = in.readInt();
+                String schemaPattern = readNullableString(in, spLen);
+                int tpLen = in.readInt();
+                String tablePattern = readNullableString(in, tpLen);
+                int typesLen = in.readInt();
+                String[] types;
+                if (typesLen < 0) {
+                    types = null;
+                } else {
+                    types = new String[typesLen];
+                    for (int i = 0; i < typesLen; i++) {
+                        int tLen = in.readInt();
+                        types[i] = readNullableString(in, tLen);
+                    }
+                }
+                return new Message.TablesRequest(requestId, schemaPattern, tablePattern, types);
+            }
+            case MessageType.COLUMNS_REQUEST -> {
+                long requestId = in.readLong();
+                int spLen = in.readInt();
+                String schemaPattern = readNullableString(in, spLen);
+                int tpLen = in.readInt();
+                String tablePattern = readNullableString(in, tpLen);
+                int cpLen = in.readInt();
+                String columnPattern = readNullableString(in, cpLen);
+                return new Message.ColumnsRequest(requestId, schemaPattern, tablePattern, columnPattern);
+            }
             default -> throw new IllegalStateException(
                     String.format("unknown message type: 0x%02X", type));
         }
+    }
+
+    private static String readNullableString(ByteBuf in, int len) {
+        if (len < 0) return null;
+        if (len == 0) return "";
+        byte[] b = new byte[len];
+        in.readBytes(b);
+        return new String(b, java.nio.charset.StandardCharsets.UTF_8);
     }
 }
