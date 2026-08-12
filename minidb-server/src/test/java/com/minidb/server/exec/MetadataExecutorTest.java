@@ -45,4 +45,89 @@ class MetadataExecutorTest {
             }
         }
     }
+
+    @Test
+    void tablesReturnsAllTablesAcrossSchemas() throws Exception {
+        try (RootAllocator alloc = new RootAllocator()) {
+            MiniDbCatalog cat = new MiniDbCatalog();
+            cat.createTable(new com.minidb.server.catalog.TableSchema("public", "users",
+                    java.util.List.of(new com.minidb.server.catalog.ColumnMeta("id", com.minidb.server.catalog.ColumnType.INTEGER))));
+            cat.createSchema("other");
+            cat.createTable(new com.minidb.server.catalog.TableSchema("other", "t",
+                    java.util.List.of(new com.minidb.server.catalog.ColumnMeta("a", com.minidb.server.catalog.ColumnType.BIGINT))));
+            MetadataExecutor exec = new MetadataExecutor(cat, alloc);
+            try (VectorSchemaRoot root = exec.tables(null, null, null)) {
+                assertEquals(2, root.getRowCount());
+                VarCharVector name = (VarCharVector) root.getVector("TABLE_NAME");
+                VarCharVector schem = (VarCharVector) root.getVector("TABLE_SCHEM");
+                VarCharVector type = (VarCharVector) root.getVector("TABLE_TYPE");
+                // sorted by schema then table: other/t, public/users
+                assertEquals("t", new String(name.get(0)));
+                assertEquals("other", new String(schem.get(0)));
+                assertEquals("TABLE", new String(type.get(0)));
+                assertEquals("users", new String(name.get(1)));
+                assertEquals("public", new String(schem.get(1)));
+            }
+        }
+    }
+
+    @Test
+    void tablesFilterBySchemaAndType() throws Exception {
+        try (RootAllocator alloc = new RootAllocator()) {
+            MiniDbCatalog cat = new MiniDbCatalog();
+            cat.createTable(new com.minidb.server.catalog.TableSchema("public", "u",
+                    java.util.List.of(new com.minidb.server.catalog.ColumnMeta("id", com.minidb.server.catalog.ColumnType.INTEGER))));
+            MetadataExecutor exec = new MetadataExecutor(cat, alloc);
+            try (VectorSchemaRoot root = exec.tables("public", null, new String[]{"VIEW"})) {
+                assertEquals(0, root.getRowCount()); // VIEW matches nothing
+            }
+            try (VectorSchemaRoot root = exec.tables("public", null, new String[]{"TABLE"})) {
+                assertEquals(1, root.getRowCount());
+            }
+        }
+    }
+
+    @Test
+    void columnsReturnsAllColumnsWithOrdinalAndType() throws Exception {
+        try (RootAllocator alloc = new RootAllocator()) {
+            MiniDbCatalog cat = new MiniDbCatalog();
+            cat.createTable(new com.minidb.server.catalog.TableSchema("public", "users",
+                    java.util.List.of(
+                            new com.minidb.server.catalog.ColumnMeta("id", com.minidb.server.catalog.ColumnType.INTEGER),
+                            new com.minidb.server.catalog.ColumnMeta("name", com.minidb.server.catalog.ColumnType.VARCHAR))));
+            MetadataExecutor exec = new MetadataExecutor(cat, alloc);
+            try (VectorSchemaRoot root = exec.columns(null, null, null)) {
+                assertEquals(2, root.getRowCount());
+                VarCharVector col = (VarCharVector) root.getVector("COLUMN_NAME");
+                VarCharVector typeName = (VarCharVector) root.getVector("TYPE_NAME");
+                org.apache.arrow.vector.IntVector dataType =
+                        (org.apache.arrow.vector.IntVector) root.getVector("DATA_TYPE");
+                org.apache.arrow.vector.IntVector ordinal =
+                        (org.apache.arrow.vector.IntVector) root.getVector("ORDINAL_POSITION");
+                assertEquals("id", new String(col.get(0)));
+                assertEquals("INTEGER", new String(typeName.get(0)));
+                assertEquals(java.sql.Types.INTEGER, dataType.get(0));
+                assertEquals(1, ordinal.get(0));
+                assertEquals("name", new String(col.get(1)));
+                assertEquals(2, ordinal.get(1));
+            }
+        }
+    }
+
+    @Test
+    void columnsFilterByLikeColumnName() throws Exception {
+        try (RootAllocator alloc = new RootAllocator()) {
+            MiniDbCatalog cat = new MiniDbCatalog();
+            cat.createTable(new com.minidb.server.catalog.TableSchema("public", "users",
+                    java.util.List.of(
+                            new com.minidb.server.catalog.ColumnMeta("id", com.minidb.server.catalog.ColumnType.INTEGER),
+                            new com.minidb.server.catalog.ColumnMeta("username", com.minidb.server.catalog.ColumnType.VARCHAR))));
+            MetadataExecutor exec = new MetadataExecutor(cat, alloc);
+            try (VectorSchemaRoot root = exec.columns(null, null, "%name%")) {
+                assertEquals(1, root.getRowCount());
+                VarCharVector col = (VarCharVector) root.getVector("COLUMN_NAME");
+                assertEquals("username", new String(col.get(0)));
+            }
+        }
+    }
 }
