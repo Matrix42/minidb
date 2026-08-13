@@ -35,7 +35,7 @@ MiniDB 是一个基于 Apache Calcite(解析/规划)+ Apache Arrow(列式存储)
 3. **小步提交**:一个逻辑改动一个 commit,便于回溯。
 4. **不要在文档/注释里写废话注释**(解释 WHAT 而非 WHY)。代码自解释优先。
 5. **测试用 JUnit 5 + `@TempDir` + `RootAllocator`**。断言关系/比例而非精确浮点值(选择率单元测试除外,用 1e-9 delta)。
-6. **现有 7 个物理算子文件(`MiniDbScan`/`Filter`/`Project`/`Sort`/`Values`/`Modify`/`Aggregate`)和 `minidb-protocol` 模块尽量不改**——它们是稳定核心,扩展应通过新模块(参考 EXPLAIN 用 `ExplainExecutor` + `Instrumenter` 外挂的方式,零侵入算子)。规则类在 `rule` 包(见下)。
+6. **现有 7 个物理算子文件(`MiniDbScan`/`Filter`/`Project`/`Sort`/`Values`/`Modify`/`Aggregate`)和 `minidb-protocol` 模块尽量不改**——它们是稳定核心,扩展应通过新模块(参考 EXPLAIN 用 `ExplainExecutor` + `Instrumenter` 外挂的方式,零侵入算子)。规则类在 `rule/physical` 包(逻辑优化规则在 `rule/logical`)。
 7. **用中文回复用户**(代码/标识符/路径保持原文)。
 
 ## 架构与关键类
@@ -46,7 +46,7 @@ QueryExecutor.execute(sql, currentSchema)
   → 顶部前缀识别(EXPLAIN / EXPLAIN ANALYZE / ANALYZE / USE SCHEMA,在 calcite.parse 之前)
   → schema DDL(SqlCreateSchema / SqlDropSchema,calcite.parse 之后)
   → CalciteContext.parse(sql) → SqlNode
-  → Planner.plan(sql, currentSchema) → RelNode(VolcanoPlanner + MiniDbRules 生成物理算子树)
+  → Planner.plan(sql, currentSchema) → RelNode(两阶段:LogicalOptimizer 逻辑优化 → VolcanoPlanner + MiniDbPhysicalRules 物理转换)
   → MiniDbRel.execute(ExecContext[currentSchema]) → BatchIterator(拉模式,批式向量化)
   → QueryResult.Rows / Update / UseSchema
   → SessionHandler[per-channel currentSchema] → Message.ArrowBatch / UpdateCount → wire → 客户端
@@ -62,23 +62,28 @@ QueryExecutor.execute(sql, currentSchema)
 - `exec/RexInterpreter` — RexNode 表达式求值(比较/算术/逻辑/CAST),供 Filter/Project 用。
 - `exec/RowCopier` — 跨 VectorSchemaRoot 按行/按值拷贝。
 
-**物理算子(`plan/`,均 `implements MiniDbRel`):**
-- `plan/MiniDbRel` — 接口:`BatchIterator execute(ExecContext)`。每个算子自己 `execute()` 内部调子算子 `execute()`(拉模式)。
-- `plan/MiniDbScan` — 表扫描,返回表 owned 的 batches(close 是 no-op,batches 归表所有)。
-- `plan/MiniDbFilter` — 过滤,自己分配输出 batch,`owned` 队列跟踪待关闭。
-- `plan/MiniDbProject` — 投影,RexInterpreter 求值后重命名列。
-- `plan/MiniDbSort` — **eager**:`execute()` 内全量物化+排序,返回惰性迭代器。offset/fetch 字面量处理。
-- `plan/MiniDbValues` — VALUES 字面量。
-- `plan/MiniDbModify` — INSERT/UPDATE/DELETE,写路径调 `storage.markDirty(tableName)`(此处触发 stats stale 钩子)。
-- `plan/MiniDbAggregate` — 聚合,`Aggregate` 子类。**eager**:`execute()` 拉取输入全量,流式分组聚合,输出单批。分组 key 为 `List<Object>` 规范化值(含 null),`LinkedHashMap` 保首见顺序;每 `AggregateCall` 一个 `Accumulator`(COUNT=long,SUM 按参数 long/double,AVG=sum+count,MIN/MAX=Comparable;`DISTINCT` 聚合用 `DistinctAcc` 维护 `LinkedHashSet` 去重后按类型聚合)。NULL 语义:聚合忽略 NULL;`COUNT(*)` 计所有行;空输入无 GROUP BY → 1 行(COUNT=0 其余 NULL);有 GROUP BY 空表 → 0 行。输出列类型按 `getRowType()`(Calcite 推导)。`SELECT DISTINCT` 由 Calcite 规划为无 aggCalls 的分组聚合,天然支持。
-- `plan/MiniDbUnion` — UNION/UNION ALL,`Union` 子类。**eager**:先收集所有输入 batches 再 merge(必须 merge 后才 `close()` 输入迭代器,否则 Project/Filter owned batch 被释放)。`all=true` 级联;`all=false` 用 `LinkedHashSet<List<Object>>` 行级去重。输出单批,`VectorSchemaRoot.of()` 前必须 `setValueCount`(of 的 rowCount 取第一个 vector 的 valueCount)。
-- `plan/MiniDbSetOp` — INTERSECT/EXCEPT,`SetOp` 子类,kind 字段区分(`SqlKind.INTERSECT`/`MINUS`,SetOp 自带 kind+all,无 INTERSECT_ALL 枚举)。**eager**:每输入统计行级 key 计数(LinkedHashMap 保序),INTERSECT 取跨输入 min 计数、EXCEPT 取 count0-Σrest,>0 保留;`all=false` 每 key 输出 1 行、`all=true` 输出 n 行。输出顺序 = 第一输入首见顺序。
-- `plan/MiniDbCalc` — Calc(Project+Filter 泛化),`Calc` 子类,**防御性算子**:当前规划器配置下常规 SQL 不产生 LogicalCalc(全部 Project/Filter),未来若有 Calc 节点即可处理。**lazy 流式**:program.getProjectList() 逐个 expandLocalRef + getCondition(),eval 求值,按条件行过滤后 renameFiltered 拷入新向量。
-- `plan/MiniDbJoin` — JOIN,`Join` 子类,`Strategy{AUTO,HASH,SORT_MERGE,NESTED_LOOP}`。**eager 物化**两侧为 List<Object[]>。HASH:左建表右探测(等值键);SORT_MERGE:两侧按键排序归并(null 排最后,显式不匹配);NESTED_LOOP:逐对行构造 1 行拼接 root eval 全条件。AUTO=纯等值→HASH,否则→NESTED_LOOP。INNER/LEFT/RIGHT/FULL 支持,SEMI/ANTI 抛错。输出单批,getRowType()=左+右。
-- `plan/WindowFunctions` — 窗口函数静态工具:`materialize` + `computeOver(RexOver, rows)`。按 RexWindow 的 partitionKeys 分组、orderKeys 排序,逐行计算:聚合 SUM/AVG/COUNT/MIN/MAX over 帧、ROW_NUMBER/RANK/DENSE_RANK(peers)、LEAD/LAG(offset+default)、FIRST_VALUE/LAST_VALUE。帧=RexWindowBound 转行位置(RANGE/ROWS 同位置语义)。**窗口执行在 MiniDbProject 内嵌**:检测投影含 RexOver → eager 路径,`RexShuttle.visitOver` 提取为窗口列引用后 eval 改写表达式。Calcite 1.42 无 LogicalWindow(ProjectToWindowRule 不可靠),无窗口算子/规则。
-- `plan/Planner` — VolcanoPlanner + `MiniDbRules.ALL`(ConverterRule 把 Logical* 转成 MiniDb*)。`plan(sql)` 委托 `plan(sql, "public")`,透传 currentSchema 给 `CalciteContext.planInCluster`。
-- `plan/MiniDbRules` — 转换规则集聚合类,`rule` 包(见下)。
-- `rule/` 包(`com.minidb.server.rule`,plan 同级)——每个规则一个类:`MiniDbScanRule`/`MiniDbFilterRule`/`MiniDbProjectRule`/`MiniDbSortRule`/`MiniDbValuesRule`/`MiniDbModifyRule`/`MiniDbAggregateRule`/`MiniDbUnionRule`/`MiniDbIntersectRule`/`MiniDbExceptRule`/`MiniDbCalcRule`/`MiniDbJoinRule`,均 `extends ConverterRule`,构造器链:`this(Config.INSTANCE.withConversion(...).withRuleFactory(XxxRule::new))` + 私有 `(Config)` 构造器 `super(config)`。`MiniDbRules.ALL` 聚合引用。
+**规划与算子(`plan/` + `rule/` 四包子结构):**
+- `plan/Planner` — 编排,**两阶段规划**:先 `LogicalOptimizer.optimize(logical)`(HepPlanner 逻辑优化)→ 再 VolcanoPlanner 物理转换。`plan(sql)` 委托 `plan(sql, "public")`,透传 currentSchema 给 `CalciteContext.planInCluster`。物理阶段注册 `ConventionTraitDef` + `RelCollationTraitDef`(先于 `RelOptCluster.create`)+ `MiniDbPhysicalRules.ALL`(12 个 ConverterRule),`changeTraits(MiniDbConvention.INSTANCE)` → `findBestExp()` 产出 MiniDbRel。
+- `plan/logical/LogicalOptimizer` — 逻辑阶段:HepPlanner 直接优化 Calcite Logical* 树(不自建逻辑节点),跑 `rule/logical` 规则集,返回 `findBest()`。
+- `rule/logical/MiniDbLogicalRules` — 逻辑规则集(Calcite 内置,`Config.DEFAULT.toRule()` 构造):`FilterJoinRule.FilterIntoJoinRule`(FilterPushDown 进 join)/`FilterProjectTransposeRule`/`ProjectMergeRule`/`FilterMergeRule`。
+- `plan/physical/`(`com.minidb.server.plan.physical`)——MiniDb* 物理算子,均 `implements MiniDbRel`:
+  - `MiniDbRel` — 接口:`BatchIterator execute(ExecContext)`。每个算子自己 `execute()` 内部调子算子 `execute()`(拉模式)。
+  - `MiniDbScan` — 表扫描,返回表 owned 的 batches(close 是 no-op,batches 归表所有)。
+  - `MiniDbFilter` — 过滤,自己分配输出 batch,`owned` 队列跟踪待关闭。
+  - `MiniDbProject` — 投影,RexInterpreter 求值后重命名列。
+  - `MiniDbSort` — **eager**:`execute()` 内全量物化+排序,返回惰性迭代器。offset/fetch 字面量处理。
+  - `MiniDbValues` — VALUES 字面量。
+  - `MiniDbModify` — INSERT/UPDATE/DELETE,写路径调 `storage.markDirty(tableName)`(此处触发 stats stale 钩子)。
+  - `MiniDbAggregate` — 聚合,`Aggregate` 子类。**eager**:`execute()` 拉取输入全量,流式分组聚合,输出单批。分组 key 为 `List<Object>` 规范化值(含 null),`LinkedHashMap` 保首见顺序;每 `AggregateCall` 一个 `Accumulator`(COUNT=long,SUM 按参数 long/double,AVG=sum+count,MIN/MAX=Comparable;`DISTINCT` 聚合用 `DistinctAcc` 维护 `LinkedHashSet` 去重后按类型聚合)。NULL 语义:聚合忽略 NULL;`COUNT(*)` 计所有行;空输入无 GROUP BY → 1 行(COUNT=0 其余 NULL);有 GROUP BY 空表 → 0 行。输出列类型按 `getRowType()`(Calcite 推导)。`SELECT DISTINCT` 由 Calcite 规划为无 aggCalls 的分组聚合,天然支持。
+  - `MiniDbUnion` — UNION/UNION ALL,`Union` 子类。**eager**:先收集所有输入 batches 再 merge(必须 merge 后才 `close()` 输入迭代器,否则 Project/Filter owned batch 被释放)。`all=true` 级联;`all=false` 用 `LinkedHashSet<List<Object>>` 行级去重。输出单批,`VectorSchemaRoot.of()` 前必须 `setValueCount`(of 的 rowCount 取第一个 vector 的 valueCount)。
+  - `MiniDbSetOp` — INTERSECT/EXCEPT,`SetOp` 子类,kind 字段区分(`SqlKind.INTERSECT`/`MINUS`,SetOp 自带 kind+all,无 INTERSECT_ALL 枚举)。**eager**:每输入统计行级 key 计数(LinkedHashMap 保序),INTERSECT 取跨输入 min 计数、EXCEPT 取 count0-Σrest,>0 保留;`all=false` 每 key 输出 1 行、`all=true` 输出 n 行。输出顺序 = 第一输入首见顺序。
+  - `MiniDbCalc` — Calc(Project+Filter 泛化),`Calc` 子类,**防御性算子**:当前规划器配置下常规 SQL 不产生 LogicalCalc(全部 Project/Filter),未来若有 Calc 节点即可处理。**lazy 流式**:program.getProjectList() 逐个 expandLocalRef + getCondition(),eval 求值,按条件行过滤后 renameFiltered 拷入新向量。
+  - `MiniDbJoin` — JOIN,`Join` 子类,**抽象基类**:`execute()` 编排(eager 物化两侧为 `List<Object[]>` → 抽象 `joinRows(left,right,info,type,ctx)` → `buildOutput` 单批惰性迭代器),共享辅助方法(`materialize`/`readObject`/`writeObject`/`keyOf`/`concat`/`compareKeys`/`sortedIndices`/`containsNull`);`coversKeys(List<RelCollation>, List<Integer>)` 判 collation 是否升序前缀覆盖 join 键。INNER/LEFT/RIGHT/FULL 支持,SEMI/ANTI 抛错。输出单批,getRowType()=左+右。三个实现类:
+    - `MiniDbHashJoin` — 等值:HASH 左建表右探测(NULL 键等值不匹配)。
+    - `MiniDbSortMergeJoin` — 等值 + 双侧输入有序:构造时 `RelMetadataQuery.collations(input)` 经 `coversKeys` 检查 collation 覆盖 join 键,已覆盖侧用输入序(identity,跳过内部排序)、未覆盖侧才 `sortedIndices`(null 排最后);`leftInputSorted()`/`rightInputSorted()` 暴露判断结果。
+    - `MiniDbNestedLoopJoin` — 任意条件:逐对行构造 1 行 probe root eval 全条件(正确性优先)。
+  - `WindowFunctions` — 窗口函数静态工具:`materialize` + `computeOver(RexOver, rows)`。按 RexWindow 的 partitionKeys 分组、orderKeys 排序,逐行计算:聚合 SUM/AVG/COUNT/MIN/MAX over 帧、ROW_NUMBER/RANK/DENSE_RANK(peers)、LEAD/LAG(offset+default)、FIRST_VALUE/LAST_VALUE。帧=RexWindowBound 转行位置(RANGE/ROWS 同位置语义)。**窗口执行在 MiniDbProject 内嵌**:检测投影含 RexOver → eager 路径,`RexShuttle.visitOver` 提取为窗口列引用后 eval 改写表达式。Calcite 1.42 无 LogicalWindow(ProjectToWindowRule 不可靠),无窗口算子/规则。
+- `rule/physical/`(`com.minidb.server.rule.physical`)——每个规则一个类:`MiniDbScanRule`/`MiniDbFilterRule`/`MiniDbProjectRule`/`MiniDbSortRule`/`MiniDbValuesRule`/`MiniDbModifyRule`/`MiniDbAggregateRule`/`MiniDbUnionRule`/`MiniDbIntersectRule`/`MiniDbExceptRule`/`MiniDbCalcRule`/`MiniDbJoinRule`,均 `extends ConverterRule`,构造器链:`this(Config.INSTANCE.withConversion(...).withRuleFactory(XxxRule::new))` + 私有 `(Config)` 构造器 `super(config)`。`MiniDbJoinRule` 决策:非等值 → `MiniDbNestedLoopJoin`;等值 + 双侧逻辑输入 collation 覆盖 join 键 → `MiniDbSortMergeJoin`;其余等值 → `MiniDbHashJoin`。`MiniDbPhysicalRules`(原 `MiniDbRules` 更名,与 logical 侧对称)聚合引用。
 
 **存储(`storage/`):**
 - `storage/StorageManager` — 表目录 + Arrow IPC 持久化。**schema 感知**:存储 key 为 `schema.table`(小写),文件路径 `data/<schema>/<table>.arrow`(子目录),`flushTable` 必须 `createDirectories(file.getParent())`。`loadAll` 两级目录遍历,从 Arrow schema metadata 恢复 schemaName。`getTable(schema,table)`/`dropTable(schema,table)`/`markDirty(schema,table)`/`truncateTable(schema,table)`/`dropSchema(name)`(级联删表+文件,catalog 抛 public/missing);裸名重载委托 `public`。持有 `volatile StatsManager` 引用,`markDirty` 触发 `markStale`(key 为 `schema.table`),`dropTable`/`dropSchema` 触发 `dropStats`。
@@ -158,6 +163,12 @@ QueryExecutor.execute(sql, currentSchema)
 32. **窗口函数**:Calcite 1.42 把窗口函数放在 **Project 表达式里的 RexOver**(无 LogicalWindow 节点,除非优化规则);空分区保护包成 `CASE(>(COUNT(x) OVER (...), 0), SUM(x) OVER (...), null)`。ProjectToWindowRule 单独注册 NPE(缺 RelOptSchema)、与 ConverterRule 协同不触发——**别走那条路**,在 MiniDbProject 里检测 RexOver 后 eager 提取(visitOver 改写为窗口列引用)再 eval。窗口实现=WindowFunctions 静态工具。RexFieldCollation 无 getFieldIndex,用 `((RexInputRef) fc.left).getIndex()`。
 33. **EXPLAIN trivial Project 折叠**:`ExplainExecutor` 原无条件折叠所有 MiniDbProject(列选择),窗口 Project(非 identity)也被折叠 → EXPLAIN 无 Project 行。已改为 `isTrivialProject`(全 RexInputRef 且索引连续才折叠)。
 34. **RexInterpreter 的 CASE**:窗口 null 保护 `CASE(cond, then, else)` 需要求值;caseExpr 按行选第一个为真的分支,输出向量类型 = call.getType()(newVector 按 SqlTypeName 建 Int/BigInt/Float8/VarChar/Bit/Date/Timestamp)。同时覆盖 `COALESCE`(解析为 CASE)——坑 31 里说的 CASE 缺失已修复。
+35. **HepPlanner 无 `(program, cluster)` 构造器**——签名是 `(HepProgram)` / `(HepProgram, Context)` / `(HepProgram, Context, boolean, ...)`,没有 `(HepProgram, RelOptCluster)`。逻辑优化阶段不能复用 VolcanoPlanner 的 cluster,只能 `new HepPlanner(program)` 自建 context(`LogicalOptimizer.optimize` 即如此),`setRoot(logical)` + `findBestExp()` 返回优化后逻辑树。
+36. **Calcite 1.42 内置规则无静态 `INSTANCE`**——`FilterProjectTransposeRule`/`ProjectMergeRule`/`FilterMergeRule` 等规则类没有 `XxxRule.INSTANCE` 静态字段,用 `XxxRule.Config.DEFAULT.toRule()` 创建(`MiniDbLogicalRules.ALL` 即此);`FilterJoinRule` 用 `new FilterJoinRule.FilterIntoJoinRule(false, RelFactories.LOGICAL_BUILDER, TRUE_PREDICATE)`。`ConverterRule` 同理走 `Config.INSTANCE.withConversion(...).withRuleFactory(...)`。
+37. **`RelMetadataQuery.collations()` 替代 `getCollation`,且查逻辑树**——1.42 的 `RelMetadataQuery` 只有 `collations(RelNode)`(返回 `List<RelCollation>`,节点可能声明多个),没有 `getCollation`。join 有序性判断要对**逻辑树输入**调 `mq.collations(join.getLeft())`(转换后的物理子节点是 RelSubset,traitSet 只报空 collation),经 `MiniDbJoin.coversKeys` 检查是否有 collation 升序前缀覆盖 join 键(`MiniDbJoinRule` 与 `MiniDbSortMergeJoin` 构造都用)。
+38. **collation trait 注册时机(先于 cluster 创建)**——`RelCollationTraitDef.INSTANCE` 必须**在 `RelOptCluster.create(planner, ...)` 之前** `planner.addRelTraitDef(...)`,否则 RelNode 的 traitSet 缺 collation 分量,trait 不匹配抛 AssertionError。`Planner` 顺序:`addRelTraitDef(ConventionTraitDef)` → `addRelTraitDef(RelCollationTraitDef)` → `addRule` 全部 → 再 `RelOptCluster.create`。
+39. **`MiniDbProject`/`MiniDbFilter` 物理层暂不声明 collation**——这两个物理算子构造不替换 collation trait(仅透传规则传入的 traitSet),不声明输出排序;join 决策的有序性判断完全靠逻辑树侧 `RelMetadataQuery.collations()`(RelMdCollation 从 Sort/Project/Filter 派生,Scan 等默认 EMPTY),物理节点无需额外实现(设计 spec 的"物理节点声明 collation"未落地,以 RelMetadataQuery 为准)。
+40. **派生表 ORDER BY 无 LIMIT 可能被优化掉**——子查询 `(SELECT * FROM t ORDER BY a)` 不带 LIMIT 时 ORDER BY 无语义,Calcite 规划会丢弃 Sort(子查询并入 join 后输入无 collation,RelMdCollation 返回 EMPTY)→ join 选不了 SortMergeJoin。要保输入有序必须带 `LIMIT n`(CollationJoinTest 用 `ORDER BY id LIMIT 1000`)。
 
 ## 文档与计划
 
