@@ -1,13 +1,17 @@
 package com.minidb.server.exec;
 
 import com.minidb.server.catalog.MiniDbCatalog;
-import com.minidb.server.plan.physical.MiniDbJoin;
 import com.minidb.server.plan.Planner;
+import com.minidb.server.plan.physical.MiniDbHashJoin;
+import com.minidb.server.plan.physical.MiniDbJoin;
+import com.minidb.server.plan.physical.MiniDbNestedLoopJoin;
+import com.minidb.server.plan.physical.MiniDbSortMergeJoin;
 import com.minidb.server.storage.StorageManager;
 import com.minidb.server.stats.StatsManager;
 import java.nio.file.Path;
 import java.util.ArrayList;
 import java.util.List;
+import java.util.function.Function;
 import org.apache.arrow.memory.BufferAllocator;
 import org.apache.arrow.memory.RootAllocator;
 import org.apache.arrow.vector.VectorSchemaRoot;
@@ -20,13 +24,21 @@ import static org.junit.jupiter.api.Assertions.assertEquals;
 /**
  * Verifies all three join strategies (HASH / SORT_MERGE / NESTED_LOOP) produce
  * identical results on the same equi-join, including outer joins with NULL
- * keys. The strategy is applied by rebuilding the plan's MiniDbJoin node with
- * an explicit Strategy.
+ * keys. Each strategy is applied by rebuilding the plan's MiniDbJoin node with
+ * the corresponding concrete implementation.
  */
 class JoinStrategyTest {
 
     @TempDir
     Path dataDir;
+
+    private static final List<Function<MiniDbJoin, MiniDbJoin>> MAKERS = List.of(
+            j -> new MiniDbHashJoin(j.getCluster(), j.getTraitSet(),
+                    j.getLeft(), j.getRight(), j.getCondition(), j.getJoinType()),
+            j -> new MiniDbSortMergeJoin(j.getCluster(), j.getTraitSet(),
+                    j.getLeft(), j.getRight(), j.getCondition(), j.getJoinType()),
+            j -> new MiniDbNestedLoopJoin(j.getCluster(), j.getTraitSet(),
+                    j.getLeft(), j.getRight(), j.getCondition(), j.getJoinType()));
 
     @Test
     void allStrategiesProduceSameInnerResult() {
@@ -62,22 +74,16 @@ class JoinStrategyTest {
                 executor.execute("INSERT INTO b VALUES (2, 'y'), (3, 'y'), (4, 'w'), (NULL, 'z')");
 
                 List<String> expected = null;
-                for (MiniDbJoin.Strategy s : MiniDbJoin.Strategy.values()) {
-                    if (s == MiniDbJoin.Strategy.AUTO) {
-                        continue;
-                    }
+                for (Function<MiniDbJoin, MiniDbJoin> maker : MAKERS) {
                     RelNode plan = new Planner(catalog).plan(sql);
                     MiniDbJoin join = findJoin(plan);
-                    MiniDbJoin forced = new MiniDbJoin(join.getCluster(),
-                            join.getTraitSet(), join.getLeft(), join.getRight(),
-                            join.getCondition(), join.getJoinType(), s);
+                    MiniDbJoin forced = maker.apply(join);
                     List<String> rows = new ArrayList<>(executeRows(forced, storage, allocator));
                     rows.sort(String::compareTo); // join output order is not guaranteed
                     if (expected == null) {
                         expected = rows;
                     } else {
-                        assertEquals(expected, rows,
-                                "strategy " + s + " diverged");
+                        assertEquals(expected, rows, "strategy diverged");
                     }
                 }
             } finally {
