@@ -68,7 +68,7 @@ public class CalciteContext {
     public RelRoot plan(String sql, String currentSchema) {
         HepPlanner planner = new HepPlanner(new HepProgramBuilder().build());
         SqlTypeFactoryImpl typeFactory =
-                new SqlTypeFactoryImpl(RelDataTypeSystem.DEFAULT);
+                new Utf8SqlTypeFactory(RelDataTypeSystem.DEFAULT);
         RelOptCluster cluster = RelOptCluster.create(planner, new RexBuilder(typeFactory));
         return planInCluster(sql, cluster, currentSchema);
     }

@@ -3,6 +3,7 @@ package com.minidb.server.exec;
 import com.minidb.server.catalog.MiniDbCatalog;
 import com.minidb.server.storage.StorageManager;
 import com.minidb.server.stats.StatsManager;
+import java.nio.charset.StandardCharsets;
 import java.nio.file.Path;
 import org.apache.arrow.memory.BufferAllocator;
 import org.apache.arrow.memory.RootAllocator;
@@ -93,6 +94,20 @@ class QueryExecutorTest {
         assertEquals(2, ((IntVector) root.getVector("id")).get(0));
         assertEquals("b",
                 new String(((VarCharVector) root.getVector("name")).get(0)));
+        root.close();
+    }
+
+    @Test
+    void chineseVarcharRoundTrip() {
+        executor.execute("CREATE TABLE t (id INTEGER, name VARCHAR)");
+        executor.execute("INSERT INTO t VALUES (1, '张总'), (2, '李四')");
+        QueryResult select = executor.execute(
+                "SELECT name FROM t WHERE name = '张总'");
+        VectorSchemaRoot root = ((QueryResult.Rows) select).data();
+        assertEquals(1, root.getRowCount());
+        assertEquals("张总", new String(
+                ((VarCharVector) root.getVector("name")).get(0),
+                StandardCharsets.UTF_8));
         root.close();
     }
 

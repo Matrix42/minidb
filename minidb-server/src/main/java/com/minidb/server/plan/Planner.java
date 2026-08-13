@@ -1,6 +1,7 @@
 package com.minidb.server.plan;
 
 import com.minidb.server.calcite.CalciteContext;
+import com.minidb.server.calcite.Utf8SqlTypeFactory;
 import com.minidb.server.catalog.MiniDbCatalog;
 import com.minidb.server.plan.logical.LogicalOptimizer;
 import com.minidb.server.plan.physical.MiniDbConvention;
@@ -44,7 +45,7 @@ public class Planner {
             volcanoPlanner.addRule(rule);
         }
         SqlTypeFactoryImpl typeFactory =
-                new SqlTypeFactoryImpl(RelDataTypeSystem.DEFAULT);
+                new Utf8SqlTypeFactory(RelDataTypeSystem.DEFAULT);
         RelOptCluster cluster = RelOptCluster.create(volcanoPlanner, new RexBuilder(typeFactory));
 
         RelRoot root = calcite.planInCluster(sql, cluster, currentSchema);
