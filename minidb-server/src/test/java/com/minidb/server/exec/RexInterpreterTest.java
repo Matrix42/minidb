@@ -209,4 +209,124 @@ class RexInterpreterTest {
         assertTrue(out.isNull(2));
         out.close();
     }
+
+    private RelDataType varcharType() {
+        return typeFactory.createSqlType(SqlTypeName.VARCHAR);
+    }
+
+    /** 单列 VarCharVector 输入:["Ab", " x ", "abc", null],供字符串函数测试含 null 的 STRICT 语义。 */
+    private VectorSchemaRoot varcharInput() {
+        Field s = new Field("s", FieldType.nullable(ArrowType.Utf8.INSTANCE), List.of());
+        VectorSchemaRoot root = VectorSchemaRoot.create(new Schema(List.of(s)), allocator);
+        root.allocateNew();
+        VarCharVector v = (VarCharVector) root.getVector("s");
+        v.setSafe(0, "Ab".getBytes(StandardCharsets.UTF_8));
+        v.setSafe(1, " x ".getBytes(StandardCharsets.UTF_8));
+        v.setSafe(2, "abc".getBytes(StandardCharsets.UTF_8));
+        v.setNull(3);
+        root.setRowCount(4);
+        return root;
+    }
+
+    private static String varchar(VarCharVector v, int i) {
+        return new String(v.get(i), StandardCharsets.UTF_8);
+    }
+
+    @Test
+    void stringUpper() {
+        VectorSchemaRoot root = varcharInput();
+        RexNode expr = rex.makeCall(SqlStdOperatorTable.UPPER, rex.makeInputRef(varcharType(), 0));
+        ValueVector out = interpreter.eval(expr, root);
+        VarCharVector v = (VarCharVector) out;
+        assertEquals("AB", varchar(v, 0));
+        assertEquals(" X ", varchar(v, 1));
+        assertEquals("ABC", varchar(v, 2));
+        assertTrue(v.isNull(3));
+        out.close();
+        root.close();
+    }
+
+    @Test
+    void stringLower() {
+        VectorSchemaRoot root = varcharInput();
+        RexNode expr = rex.makeCall(SqlStdOperatorTable.LOWER, rex.makeInputRef(varcharType(), 0));
+        ValueVector out = interpreter.eval(expr, root);
+        VarCharVector v = (VarCharVector) out;
+        assertEquals("ab", varchar(v, 0));
+        assertEquals(" x ", varchar(v, 1));
+        assertEquals("abc", varchar(v, 2));
+        assertTrue(v.isNull(3));
+        out.close();
+        root.close();
+    }
+
+    @Test
+    void stringTrim() {
+        VectorSchemaRoot root = varcharInput();
+        // TRIM 的返回类型推断是 ARG2(3 参形式),单参 makeCall 会越界;这里显式指定返回类型,
+        // 注册的是单参 String::trim 核(与 brief 一致)。
+        RexNode expr = rex.makeCall(varcharType(), SqlStdOperatorTable.TRIM,
+                List.<RexNode>of(rex.makeInputRef(varcharType(), 0)));
+        ValueVector out = interpreter.eval(expr, root);
+        VarCharVector v = (VarCharVector) out;
+        assertEquals("Ab", varchar(v, 0));
+        assertEquals("x", varchar(v, 1));
+        assertEquals("abc", varchar(v, 2));
+        assertTrue(v.isNull(3));
+        out.close();
+        root.close();
+    }
+
+    @Test
+    void stringLength() {
+        VectorSchemaRoot root = varcharInput();
+        RexNode expr = rex.makeCall(SqlStdOperatorTable.CHAR_LENGTH, rex.makeInputRef(varcharType(), 0));
+        ValueVector out = interpreter.eval(expr, root);
+        IntVector v = (IntVector) out;
+        assertEquals(2, v.get(0));
+        assertEquals(3, v.get(1));
+        assertEquals(3, v.get(2));
+        assertTrue(v.isNull(3));
+        out.close();
+        root.close();
+    }
+
+    @Test
+    void stringConcat() {
+        VectorSchemaRoot root = varcharInput();
+        // 字面量路径:'a' || 'b' → 'ab'。
+        RexNode litExpr = rex.makeCall(SqlStdOperatorTable.CONCAT,
+                rex.makeLiteral("a", varcharType()), rex.makeLiteral("b", varcharType()));
+        ValueVector litOut = interpreter.eval(litExpr, root);
+        assertEquals("ab", varchar((VarCharVector) litOut, 0));
+        litOut.close();
+
+        // 列路径:null 行 STRICT 传播。
+        RexNode expr = rex.makeCall(SqlStdOperatorTable.CONCAT,
+                rex.makeInputRef(varcharType(), 0), rex.makeInputRef(varcharType(), 0));
+        ValueVector out = interpreter.eval(expr, root);
+        VarCharVector v = (VarCharVector) out;
+        assertEquals("AbAb", varchar(v, 0));
+        assertTrue(v.isNull(3));
+        out.close();
+        root.close();
+    }
+
+    @Test
+    void stringSubstring() {
+        VectorSchemaRoot root = varcharInput();
+        // 第二/三参是整数字面量 → BigIntVector(坑 #23),走 [VarChar,BigInt,BigInt] 重载。
+        RexNode expr = rex.makeCall(SqlStdOperatorTable.SUBSTRING,
+                rex.makeInputRef(varcharType(), 0),
+                rex.makeExactLiteral(java.math.BigDecimal.ONE, intType()),
+                rex.makeExactLiteral(java.math.BigDecimal.valueOf(2), intType()));
+        ValueVector out = interpreter.eval(expr, root);
+        VarCharVector v = (VarCharVector) out;
+        assertEquals("Ab", varchar(v, 0));
+        assertEquals(" x", varchar(v, 1));
+        assertEquals("ab", varchar(v, 2));
+        assertTrue(v.isNull(3));
+        out.close();
+        root.close();
+    }
 }

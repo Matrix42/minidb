@@ -1,10 +1,13 @@
 package com.minidb.server.exec.functions;
 
+import java.nio.charset.StandardCharsets;
 import java.util.List;
 import org.apache.arrow.vector.BigIntVector;
 import org.apache.arrow.vector.BitVector;
+import org.apache.arrow.vector.FieldVector;
 import org.apache.arrow.vector.Float8Vector;
 import org.apache.arrow.vector.IntVector;
+import org.apache.arrow.vector.ValueVector;
 import org.apache.arrow.vector.VarCharVector;
 import org.apache.calcite.sql.SqlKind;
 import org.apache.calcite.sql.SqlOperator;
@@ -18,7 +21,99 @@ public final class BuiltInFunctions {
         FunctionRegistry registry = new FunctionRegistry();
         arithmetic(registry);
         comparison(registry);
+        stringFunctions(registry);
         return registry;
+    }
+
+    /**
+     * 字符串函数:UPPER/LOWER/TRIM 走一元 String 核(STRICT,null 由 Kernels 内做);LENGTH 走
+     * StringToInt 核(结果 INTEGER);CONCAT 走二元 String 核;SUBSTRING 是 3 参,单独 Tier-2 核。
+     * LENGTH 在 Calcite 里是 CHAR_LENGTH 的别名(无独立的 SqlStdOperatorTable.LENGTH 单例),只注册
+     * {@link SqlStdOperatorTable#CHAR_LENGTH}。
+     */
+    private static void stringFunctions(FunctionRegistry r) {
+        unaryString(r, SqlStdOperatorTable.UPPER, String::toUpperCase);
+        unaryString(r, SqlStdOperatorTable.LOWER, String::toLowerCase);
+        unaryString(r, SqlStdOperatorTable.TRIM, String::trim);
+        r.register(SqlStdOperatorTable.CHAR_LENGTH,
+                new Function(SqlStdOperatorTable.CHAR_LENGTH.getName(), List.of(new Overload(
+                        List.of(VarCharVector.class),
+                        (args, out) -> Kernels.fillStringToInt(
+                                (VarCharVector) args.get(0), (IntVector) out, String::length)))));
+        binaryString(r, SqlStdOperatorTable.CONCAT, String::concat);
+        r.register(SqlStdOperatorTable.SUBSTRING, substringFunction());
+    }
+
+    /** 一元字符串函数:VarCharVector → VarCharVector,结果类型由 call.getType() 决定(VARCHAR)。 */
+    private static void unaryString(FunctionRegistry r, SqlOperator op, ScalarKernels.StringUnary fn) {
+        r.register(op, new Function(op.getName(), List.of(new Overload(
+                List.of(VarCharVector.class),
+                (args, out) -> Kernels.fillUnaryString(
+                        (VarCharVector) args.get(0), (VarCharVector) out, fn)))));
+    }
+
+    /** 二元字符串函数:两 VarCharVector → VarCharVector(如 CONCAT)。 */
+    private static void binaryString(FunctionRegistry r, SqlOperator op, ScalarKernels.StringBinary fn) {
+        r.register(op, new Function(op.getName(), List.of(new Overload(
+                List.of(VarCharVector.class, VarCharVector.class),
+                (args, out) -> Kernels.fillBinaryString(
+                        (VarCharVector) args.get(0), (VarCharVector) args.get(1),
+                        (VarCharVector) out, fn)))));
+    }
+
+    /**
+     * SUBSTRING(s, from, len) 的 3 参核。第二/三参在真实 SQL 里是整型:字面量恒产 BigIntVector
+     * (坑 #23),而 INTEGER 列产 IntVector —— 两种类型都要能接,故各组合都注册到同一个核,核内用
+     * {@link #intArg} 类型无关地读取出 int 值。
+     */
+    private static Function substringFunction() {
+        Kernel substringKernel = BuiltInFunctions::substring;
+        return new Function(SqlStdOperatorTable.SUBSTRING.getName(), List.of(
+                new Overload(List.of(VarCharVector.class, IntVector.class, IntVector.class), substringKernel),
+                new Overload(List.of(VarCharVector.class, IntVector.class, BigIntVector.class), substringKernel),
+                new Overload(List.of(VarCharVector.class, BigIntVector.class, IntVector.class), substringKernel),
+                new Overload(List.of(VarCharVector.class, BigIntVector.class, BigIntVector.class), substringKernel)));
+    }
+
+    private static void substring(List<ValueVector> args, FieldVector out) {
+        VarCharVector s = (VarCharVector) args.get(0);
+        ValueVector from = args.get(1);
+        ValueVector len = args.get(2);
+        VarCharVector result = (VarCharVector) out;
+        for (int i = 0; i < s.getValueCount(); i++) {
+            if (s.isNull(i) || from.isNull(i) || len.isNull(i)) {
+                result.setNull(i);
+                continue;
+            }
+            String str = new String(s.get(i), StandardCharsets.UTF_8);
+            int start = intArg(from, i) - 1; // SQL SUBSTRING 是 1-based,转成 0-based。
+            int length = intArg(len, i);
+            result.setSafe(i, slice(str, start, length).getBytes(StandardCharsets.UTF_8));
+        }
+    }
+
+    /** 从 Int/BigInt 向量第 i 行读取 int 值(SUBSTRING 的第二/三参)。 */
+    private static int intArg(ValueVector v, int i) {
+        if (v instanceof IntVector iv) {
+            return iv.get(i);
+        }
+        if (v instanceof BigIntVector bv) {
+            return (int) bv.get(i);
+        }
+        throw new IllegalArgumentException("SUBSTRING operand is not an integer vector: " + v.getClass());
+    }
+
+    /** 从 0-based start 截取最多 length 个字符;负 start 裁剪到 0,越界或 length<=0 返回空串。 */
+    private static String slice(String s, int start, int length) {
+        if (s.isEmpty() || length <= 0) {
+            return "";
+        }
+        int begin = Math.max(0, start);
+        if (begin >= s.length()) {
+            return "";
+        }
+        int end = Math.min(s.length(), begin + length);
+        return s.substring(begin, end);
     }
 
     private static void comparison(FunctionRegistry r) {
