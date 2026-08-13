@@ -1103,6 +1103,26 @@ class QueryExecutorTest {
     }
 
     @Test
+    void windowOrderByOnUnsortedInput() {
+        executor.execute("CREATE TABLE t (x INTEGER)");
+        executor.execute("INSERT INTO t VALUES (3), (1), (2)");
+        QueryResult r = executor.execute(
+                "SELECT x, ROW_NUMBER() OVER (ORDER BY x) AS rn FROM t ORDER BY x");
+        VectorSchemaRoot root = ((QueryResult.Rows) r).data();
+        assertEquals(3, root.getRowCount());
+        IntVector x = (IntVector) root.getVector("x");
+        BigIntVector rn = (BigIntVector) root.getVector("rn");
+        // ORDER BY x sorts rows to 1,2,3; ROW_NUMBER assigns 1,2,3 in that order.
+        assertEquals(1, x.get(0));
+        assertEquals(1L, rn.get(0));
+        assertEquals(2, x.get(1));
+        assertEquals(2L, rn.get(1));
+        assertEquals(3, x.get(2));
+        assertEquals(3L, rn.get(2));
+        root.close();
+    }
+
+    @Test
     void rankAndDenseRankWithPeers() {
         executor.execute("CREATE TABLE t (g VARCHAR, x INTEGER)");
         executor.execute("INSERT INTO t VALUES ('a', 1), ('a', 1), ('a', 2)");

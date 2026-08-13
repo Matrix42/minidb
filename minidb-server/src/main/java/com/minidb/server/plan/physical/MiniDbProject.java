@@ -78,32 +78,32 @@ public class MiniDbProject extends Project implements MiniDbRel {
     private BatchIterator windowExecute(ExecContext ctx) {
         List<Object[]> rows = WindowFunctions.materialize(getInput(), ctx);
         int inputCols = getInput().getRowType().getFieldCount();
-        List<RexOver> overs = new ArrayList<>();
-        RexShuttle extract = new RexShuttle() {
+        List<RexOver> windowOvers = new ArrayList<>();
+        RexShuttle overExtractor = new RexShuttle() {
             @Override
             public RexNode visitOver(RexOver over) {
-                overs.add(over);
-                return new RexInputRef(inputCols + overs.size() - 1, over.getType());
+                windowOvers.add(over);
+                return new RexInputRef(inputCols + windowOvers.size() - 1, over.getType());
             }
         };
-        List<RexNode> rewritten = new ArrayList<>();
-        for (RexNode p : getProjects()) {
-            rewritten.add(p.accept(extract));
+        List<RexNode> rewrittenProjects = new ArrayList<>();
+        for (RexNode project : getProjects()) {
+            rewrittenProjects.add(project.accept(overExtractor));
         }
-        List<List<Object>> winCols = new ArrayList<>();
-        for (RexOver over : overs) {
-            winCols.add(WindowFunctions.computeOver(over, rows));
+        List<List<Object>> windowColumns = new ArrayList<>();
+        for (RexOver over : windowOvers) {
+            windowColumns.add(WindowFunctions.computeOver(over, rows));
         }
-        VectorSchemaRoot joined = buildWindowBatch(rows, winCols, inputCols, overs, ctx);
+        VectorSchemaRoot windowBatch = buildWindowBatch(rows, windowColumns, inputCols, windowOvers, ctx);
         try {
-            List<FieldVector> outVectors = new ArrayList<>();
-            for (int p = 0; p < rewritten.size(); p++) {
-                ValueVector evaluated = ctx.interpreter().eval(rewritten.get(p), joined);
-                RelDataTypeField field = getRowType().getFieldList().get(p);
-                outVectors.add(rename(evaluated, field.getName(), ctx));
+            List<FieldVector> outputVectors = new ArrayList<>();
+            for (int projectIdx = 0; projectIdx < rewrittenProjects.size(); projectIdx++) {
+                ValueVector evaluated = ctx.interpreter().eval(rewrittenProjects.get(projectIdx), windowBatch);
+                RelDataTypeField field = getRowType().getFieldList().get(projectIdx);
+                outputVectors.add(rename(evaluated, field.getName(), ctx));
             }
-            VectorSchemaRoot out = VectorSchemaRoot.of(outVectors.toArray(new FieldVector[0]));
-            out.setRowCount(rows.size());
+            VectorSchemaRoot outputRoot = VectorSchemaRoot.of(outputVectors.toArray(new FieldVector[0]));
+            outputRoot.setRowCount(rows.size());
             boolean[] done = {false};
             return new BatchIterator() {
                 @Override
@@ -114,49 +114,50 @@ public class MiniDbProject extends Project implements MiniDbRel {
                 @Override
                 public VectorSchemaRoot next() {
                     done[0] = true;
-                    return out;
+                    return outputRoot;
                 }
 
                 @Override
                 public void close() {
-                    out.close();
+                    outputRoot.close();
                 }
             };
         } finally {
-            joined.close();
+            windowBatch.close();
         }
     }
 
     private VectorSchemaRoot buildWindowBatch(List<Object[]> rows,
-                                              List<List<Object>> winCols,
+                                              List<List<Object>> windowColumns,
                                               int inputCols,
-                                              List<RexOver> overs,
+                                              List<RexOver> windowOvers,
                                               ExecContext ctx) {
         List<FieldVector> vectors = new ArrayList<>();
-        for (RelDataTypeField f : getInput().getRowType().getFieldList()) {
-            vectors.add(ArrowTypes.field(f).createVector(ctx.allocator()));
+        for (RelDataTypeField field : getInput().getRowType().getFieldList()) {
+            vectors.add(ArrowTypes.field(field).createVector(ctx.allocator()));
         }
-        for (RexOver over : overs) {
-            vectors.add(ArrowTypes.field(over.getType(), "w" + overs.indexOf(over)).createVector(ctx.allocator()));
+        for (RexOver over : windowOvers) {
+            vectors.add(ArrowTypes.field(over.getType(), "w" + windowOvers.indexOf(over))
+                    .createVector(ctx.allocator()));
         }
-        for (FieldVector v : vectors) {
-            v.setInitialCapacity(rows.size());
-            v.allocateNew();
+        for (FieldVector vector : vectors) {
+            vector.setInitialCapacity(rows.size());
+            vector.allocateNew();
         }
-        for (int r = 0; r < rows.size(); r++) {
-            Object[] row = rows.get(r);
-            for (int c = 0; c < inputCols; c++) {
-                writeObject(vectors.get(c), r, row[c]);
+        for (int rowIdx = 0; rowIdx < rows.size(); rowIdx++) {
+            Object[] row = rows.get(rowIdx);
+            for (int colIdx = 0; colIdx < inputCols; colIdx++) {
+                writeObject(vectors.get(colIdx), rowIdx, row[colIdx]);
             }
         }
-        for (int w = 0; w < winCols.size(); w++) {
-            List<Object> col = winCols.get(w);
-            for (int r = 0; r < col.size(); r++) {
-                writeObject(vectors.get(inputCols + w), r, col.get(r));
+        for (int windowColIdx = 0; windowColIdx < windowColumns.size(); windowColIdx++) {
+            List<Object> windowColumn = windowColumns.get(windowColIdx);
+            for (int rowIdx = 0; rowIdx < windowColumn.size(); rowIdx++) {
+                writeObject(vectors.get(inputCols + windowColIdx), rowIdx, windowColumn.get(rowIdx));
             }
         }
-        for (FieldVector v : vectors) {
-            v.setValueCount(rows.size());
+        for (FieldVector vector : vectors) {
+            vector.setValueCount(rows.size());
         }
         return VectorSchemaRoot.of(vectors.toArray(new FieldVector[0]));
     }
@@ -230,28 +231,28 @@ public class MiniDbProject extends Project implements MiniDbRel {
         return dst;
     }
 
-    private static void writeObject(FieldVector out, int row, Object o) {
-        if (o == null) {
-            out.setNull(row);
+    private static void writeObject(FieldVector vector, int row, Object value) {
+        if (value == null) {
+            vector.setNull(row);
             return;
         }
-        if (out instanceof IntVector iv) {
-            iv.setSafe(row, ((Number) o).intValue());
-        } else if (out instanceof BigIntVector bv) {
-            bv.setSafe(row, ((Number) o).longValue());
-        } else if (out instanceof Float8Vector fv) {
-            fv.setSafe(row, ((Number) o).doubleValue());
-        } else if (out instanceof VarCharVector vv) {
-            vv.setSafe(row, o.toString().getBytes(StandardCharsets.UTF_8));
-        } else if (out instanceof BitVector bv) {
-            bv.setSafe(row, ((Number) o).intValue());
-        } else if (out instanceof DateDayVector dv) {
-            dv.setSafe(row, ((Number) o).intValue());
-        } else if (out instanceof TimeStampMilliVector tv) {
-            tv.setSafe(row, ((Number) o).longValue());
+        if (vector instanceof IntVector iv) {
+            iv.setSafe(row, ((Number) value).intValue());
+        } else if (vector instanceof BigIntVector bv) {
+            bv.setSafe(row, ((Number) value).longValue());
+        } else if (vector instanceof Float8Vector fv) {
+            fv.setSafe(row, ((Number) value).doubleValue());
+        } else if (vector instanceof VarCharVector vv) {
+            vv.setSafe(row, value.toString().getBytes(StandardCharsets.UTF_8));
+        } else if (vector instanceof BitVector bv) {
+            bv.setSafe(row, ((Number) value).intValue());
+        } else if (vector instanceof DateDayVector dv) {
+            dv.setSafe(row, ((Number) value).intValue());
+        } else if (vector instanceof TimeStampMilliVector tv) {
+            tv.setSafe(row, ((Number) value).longValue());
         } else {
             throw new UnsupportedOperationException(
-                    "cannot write value to " + out.getMinorType());
+                    "cannot write value to " + vector.getMinorType());
         }
     }
 }
