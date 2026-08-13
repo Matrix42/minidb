@@ -143,16 +143,20 @@ public class QueryExecutor {
             ColumnType type = ArrowTypes.fromSqlTypeName(typeName);
             int precision = ColumnMeta.PRECISION_UNSET;
             int scale = ColumnMeta.SCALE_UNSET;
-            // Calcite 1.42 把 precision/scale 挂在 SqlBasicTypeNameSpec 上
-            // (SqlDataTypeSpec 无 getPrecision/getScale);未指定时 precision 返回 -1、
-            // scale 返回 RelDataType.SCALE_NOT_SPECIFIED(Integer.MIN_VALUE),
-            // 这里按 <0 统一归一为 ColumnMeta 的 -1 哨兵,避免泄露 Calcite 的哨兵值。
-            if (column.dataType.getTypeNameSpec() instanceof SqlBasicTypeNameSpec basicSpec) {
-                if (basicSpec.getPrecision() >= 0) {
-                    precision = basicSpec.getPrecision();
-                }
-                if (basicSpec.getScale() >= 0) {
-                    scale = basicSpec.getScale();
+            // precision/scale 只对 DECIMAL/NUMERIC 有意义(见 ColumnMeta 文档);
+            // 其余类型(如 VARCHAR(20) 的 20 是长度、TIME(3) 的 3 是秒精度)保持 -1。
+            if (type == ColumnType.DECIMAL || type == ColumnType.NUMERIC) {
+                // Calcite 1.42 把 precision/scale 挂在 SqlBasicTypeNameSpec 上
+                // (SqlDataTypeSpec 无 getPrecision/getScale);未指定时 precision 返回 -1、
+                // scale 返回 RelDataType.SCALE_NOT_SPECIFIED(Integer.MIN_VALUE),
+                // 这里按 <0 统一归一为 ColumnMeta 的 -1 哨兵,避免泄露 Calcite 的哨兵值。
+                if (column.dataType.getTypeNameSpec() instanceof SqlBasicTypeNameSpec basicSpec) {
+                    if (basicSpec.getPrecision() >= 0) {
+                        precision = basicSpec.getPrecision();
+                    }
+                    if (basicSpec.getScale() >= 0) {
+                        scale = basicSpec.getScale();
+                    }
                 }
             }
             columns.add(new ColumnMeta(column.name.getSimple(), type, precision, scale));
