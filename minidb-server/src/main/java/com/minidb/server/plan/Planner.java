@@ -5,6 +5,7 @@ import com.minidb.server.catalog.MiniDbCatalog;
 import com.minidb.server.plan.logical.LogicalOptimizer;
 import com.minidb.server.plan.physical.MiniDbConvention;
 import com.minidb.server.plan.physical.MiniDbRel;
+import com.minidb.server.rule.logical.MiniDbLogicalRules;
 import com.minidb.server.rule.physical.MiniDbPhysicalRules;
 import org.apache.calcite.plan.ConventionTraitDef;
 import org.apache.calcite.plan.RelOptCluster;
@@ -34,6 +35,12 @@ public class Planner {
         volcanoPlanner.addRelTraitDef(ConventionTraitDef.INSTANCE);
         volcanoPlanner.addRelTraitDef(RelCollationTraitDef.INSTANCE);
         for (RelOptRule rule : MiniDbPhysicalRules.ALL) {
+            volcanoPlanner.addRule(rule);
+        }
+        // Sort simplification rules need RelCollationTraitDef, which the
+        // HepPlanner cannot register (its addRelTraitDef is a no-op), so they
+        // run here in the VolcanoPlanner alongside the converter rules.
+        for (RelOptRule rule : MiniDbLogicalRules.SORT) {
             volcanoPlanner.addRule(rule);
         }
         SqlTypeFactoryImpl typeFactory =

@@ -13,7 +13,7 @@ public final class LogicalOptimizer {
     /** Runs the logical optimization rules over the Calcite Logical* tree. */
     public static RelNode optimize(RelNode logical) {
         HepProgramBuilder programBuilder = new HepProgramBuilder();
-        programBuilder.addRuleCollection(MiniDbLogicalRules.ALL);
+        programBuilder.addRuleCollection(MiniDbLogicalRules.HEP);
         HepPlanner hepPlanner = new HepPlanner(programBuilder.build());
         hepPlanner.setRoot(logical);
         return hepPlanner.findBestExp();

@@ -5,6 +5,7 @@ import com.minidb.server.exec.QueryExecutor;
 import com.minidb.server.exec.QueryResult;
 import com.minidb.server.plan.physical.MiniDbFilter;
 import com.minidb.server.plan.physical.MiniDbJoin;
+import com.minidb.server.plan.physical.MiniDbSort;
 import com.minidb.server.storage.StorageManager;
 import com.minidb.server.stats.StatsManager;
 import java.nio.file.Path;
@@ -54,6 +55,44 @@ class LogicalOptimizerTest {
                 storage.close();
             }
         }
+    }
+
+    @Test
+    void sortRemovedWhenSortKeysAreConstant() {
+        try (BufferAllocator allocator = new RootAllocator()) {
+            MiniDbCatalog catalog = new MiniDbCatalog();
+            StorageManager storage = new StorageManager(catalog, allocator, dataDir);
+            StatsManager stats = new StatsManager(storage, allocator, dataDir);
+            storage.setStatsManager(stats);
+            QueryExecutor executor = new QueryExecutor(catalog, storage, allocator, stats);
+            try {
+                executor.execute("CREATE TABLE t (id INTEGER, name VARCHAR)");
+                executor.execute("INSERT INTO t VALUES (1, 'a'), (1, 'b'), (2, 'c')");
+
+                String sql = "SELECT * FROM t WHERE id = 1 ORDER BY id";
+                RelNode plan = new Planner(catalog).plan(sql);
+                // WHERE id=1 makes the sort key constant, so the Sort is redundant.
+                assertTrue(!containsSort(plan),
+                        "sort should be removed when the sort key is constant, plan=" + plan);
+
+                List<String> rows = rows(executor, sql);
+                assertEquals(2, rows.size());
+            } finally {
+                storage.close();
+            }
+        }
+    }
+
+    private static boolean containsSort(RelNode node) {
+        if (node instanceof MiniDbSort) {
+            return true;
+        }
+        for (RelNode in : node.getInputs()) {
+            if (containsSort(in)) {
+                return true;
+            }
+        }
+        return false;
     }
 
     private static MiniDbJoin findJoin(RelNode node) {
