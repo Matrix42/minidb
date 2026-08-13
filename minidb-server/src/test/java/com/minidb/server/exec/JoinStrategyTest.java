@@ -60,7 +60,28 @@ class JoinStrategyTest {
         run("SELECT a.id, b.id AS bid FROM a JOIN b ON a.id = b.id AND a.name = b.val ORDER BY a.id");
     }
 
+    @Test
+    void allStrategiesHandleSimultaneousNullKeysInFullJoin() {
+        // left=[1,NULL], right=[1,NULL]: after matching id=1 both merge pointers
+        // hit the null region at the same time -> exercises the ln && rn branch.
+        // FULL must keep both null rows (one from each side).
+        run("SELECT a.id AS aid, b.id AS bid FROM a FULL JOIN b ON a.id = b.id",
+                List.of(
+                        "CREATE TABLE a (id INTEGER, name VARCHAR)",
+                        "CREATE TABLE b (id INTEGER, val VARCHAR)",
+                        "INSERT INTO a VALUES (1, 'x'), (NULL, 'z')",
+                        "INSERT INTO b VALUES (1, 'y'), (NULL, 'w')"));
+    }
+
     private void run(String sql) {
+        run(sql, List.of(
+                "CREATE TABLE a (id INTEGER, name VARCHAR)",
+                "CREATE TABLE b (id INTEGER, val VARCHAR)",
+                "INSERT INTO a VALUES (1, 'x'), (2, 'y'), (3, 'y'), (NULL, 'z')",
+                "INSERT INTO b VALUES (2, 'y'), (3, 'y'), (4, 'w'), (NULL, 'z')"));
+    }
+
+    private void run(String sql, List<String> setup) {
         try (BufferAllocator allocator = new RootAllocator()) {
             MiniDbCatalog catalog = new MiniDbCatalog();
             StorageManager storage = new StorageManager(catalog, allocator, dataDir);
@@ -68,10 +89,9 @@ class JoinStrategyTest {
             storage.setStatsManager(stats);
             QueryExecutor executor = new QueryExecutor(catalog, storage, allocator, stats);
             try {
-                executor.execute("CREATE TABLE a (id INTEGER, name VARCHAR)");
-                executor.execute("CREATE TABLE b (id INTEGER, val VARCHAR)");
-                executor.execute("INSERT INTO a VALUES (1, 'x'), (2, 'y'), (3, 'y'), (NULL, 'z')");
-                executor.execute("INSERT INTO b VALUES (2, 'y'), (3, 'y'), (4, 'w'), (NULL, 'z')");
+                for (String stmt : setup) {
+                    executor.execute(stmt);
+                }
 
                 List<String> expected = null;
                 for (Function<MiniDbJoin, MiniDbJoin> maker : MAKERS) {

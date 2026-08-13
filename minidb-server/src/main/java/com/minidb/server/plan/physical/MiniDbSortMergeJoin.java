@@ -70,6 +70,12 @@ public class MiniDbSortMergeJoin extends MiniDbJoin {
             boolean rn = containsNull(right.get(rj), rk);
             if (ln || rn) {
                 if (ln && rn) {
+                    if (leftPreserved) {
+                        out.add(concat(left.get(li), nullRight));
+                    }
+                    if (rightPreserved) {
+                        out.add(concat(nullLeft, right.get(rj)));
+                    }
                     i++;
                     j++;
                 } else if (ln) {
