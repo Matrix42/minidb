@@ -1297,6 +1297,54 @@ class QueryExecutorTest {
         root.close();
     }
 
+    // ---- scalar functions (columnar function framework) ----
+
+    @Test
+    void scalarFunctionsEndToEnd() {
+        executor.execute("CREATE TABLE t (id INTEGER, name VARCHAR)");
+        executor.execute("INSERT INTO t VALUES (1, '张总'), (2, ''), (-1, 'abc')");
+        QueryResult r = executor.execute(
+                "SELECT UPPER(name) AS up, CHAR_LENGTH(name) AS len, "
+              + "name || '_s' AS cat, SUBSTRING(name, 1, 2) AS sub, "
+              + "ABS(id) AS abs_id, id + 1 AS next_id "
+              + "FROM t ORDER BY id");
+        VectorSchemaRoot root = ((QueryResult.Rows) r).data();
+        assertEquals(3, root.getRowCount());
+
+        VarCharVector up = (VarCharVector) root.getVector("up");
+        IntVector len = (IntVector) root.getVector("len");
+        VarCharVector cat = (VarCharVector) root.getVector("cat");
+        VarCharVector sub = (VarCharVector) root.getVector("sub");
+        IntVector absId = (IntVector) root.getVector("abs_id");
+        IntVector nextId = (IntVector) root.getVector("next_id");
+
+        // Row 0: id=-1, name='abc' (ORDER BY id puts it first)
+        assertEquals("ABC", new String(up.get(0), StandardCharsets.UTF_8));
+        assertEquals(3, len.get(0));
+        assertEquals("abc_s", new String(cat.get(0), StandardCharsets.UTF_8));
+        assertEquals("ab", new String(sub.get(0), StandardCharsets.UTF_8));
+        assertEquals(1, absId.get(0));
+        assertEquals(0, nextId.get(0));
+
+        // Row 1: id=1, name='张总' (UPPER leaves Chinese unchanged)
+        assertEquals("张总", new String(up.get(1), StandardCharsets.UTF_8));
+        assertEquals(2, len.get(1));
+        assertEquals("张总_s", new String(cat.get(1), StandardCharsets.UTF_8));
+        assertEquals("张总", new String(sub.get(1), StandardCharsets.UTF_8));
+        assertEquals(1, absId.get(1));
+        assertEquals(2, nextId.get(1));
+
+        // Row 2: id=2, name='' (empty string)
+        assertEquals("", new String(up.get(2), StandardCharsets.UTF_8));
+        assertEquals(0, len.get(2));
+        assertEquals("_s", new String(cat.get(2), StandardCharsets.UTF_8));
+        assertEquals("", new String(sub.get(2), StandardCharsets.UTF_8));
+        assertEquals(2, absId.get(2));
+        assertEquals(3, nextId.get(2));
+
+        root.close();
+    }
+
     @Test
     void explainAnalyzeWindowProjectMeasuresRows() {
         createWindowTable();
