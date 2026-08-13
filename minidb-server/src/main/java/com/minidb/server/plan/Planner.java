@@ -32,6 +32,7 @@ public class Planner {
     public RelNode plan(String sql, String currentSchema) {
         VolcanoPlanner planner = new VolcanoPlanner();
         planner.addRelTraitDef(ConventionTraitDef.INSTANCE);
+        planner.addRelTraitDef(RelCollationTraitDef.INSTANCE);
         for (RelOptRule rule : MiniDbPhysicalRules.ALL) {
             planner.addRule(rule);
         }

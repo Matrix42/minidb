@@ -9,16 +9,34 @@ import org.apache.calcite.rel.RelNode;
 import org.apache.calcite.rel.core.Join;
 import org.apache.calcite.rel.core.JoinInfo;
 import org.apache.calcite.rel.core.JoinRelType;
+import org.apache.calcite.rel.metadata.RelMetadataQuery;
 import org.apache.calcite.rex.RexNode;
 
 /** Sort-merge join: merges equal-key groups after sorting both sides by the
- *  equi columns (null keys last). Task 5 adds collation-aware skip-sorting. */
+ *  equi columns (null keys last). If an input's declared collation already
+ *  covers the join keys it is used as-is (no internal sort); otherwise that
+ *  side is sorted internally. */
 public class MiniDbSortMergeJoin extends MiniDbJoin {
+
+    private final boolean leftSorted;
+    private final boolean rightSorted;
 
     public MiniDbSortMergeJoin(RelOptCluster cluster, RelTraitSet traitSet,
                                RelNode left, RelNode right, RexNode condition,
                                JoinRelType joinType) {
         super(cluster, traitSet, left, right, condition, joinType);
+        JoinInfo info = JoinInfo.of(left, right, condition);
+        RelMetadataQuery mq = RelMetadataQuery.instance();
+        this.leftSorted = coversKeys(mq.collations(left), info.leftKeys);
+        this.rightSorted = coversKeys(mq.collations(right), info.rightKeys);
+    }
+
+    public boolean leftInputSorted() {
+        return leftSorted;
+    }
+
+    public boolean rightInputSorted() {
+        return rightSorted;
     }
 
     @Override
@@ -34,8 +52,8 @@ public class MiniDbSortMergeJoin extends MiniDbJoin {
                                       JoinInfo info, JoinRelType type, ExecContext ctx) {
         List<Integer> lk = info.leftKeys;
         List<Integer> rk = info.rightKeys;
-        List<Integer> lorder = sortedIndices(left, lk);
-        List<Integer> rorder = sortedIndices(right, rk);
+        List<Integer> lorder = leftSorted ? identity(left.size()) : sortedIndices(left, lk);
+        List<Integer> rorder = rightSorted ? identity(right.size()) : sortedIndices(right, rk);
         boolean leftPreserved = type == JoinRelType.LEFT || type == JoinRelType.FULL;
         boolean rightPreserved = type == JoinRelType.RIGHT || type == JoinRelType.FULL;
         boolean[] leftMatched = new boolean[left.size()];
@@ -119,5 +137,13 @@ public class MiniDbSortMergeJoin extends MiniDbJoin {
             j++;
         }
         return out;
+    }
+
+    private static List<Integer> identity(int n) {
+        List<Integer> order = new ArrayList<>(n);
+        for (int i = 0; i < n; i++) {
+            order.add(i);
+        }
+        return order;
     }
 }

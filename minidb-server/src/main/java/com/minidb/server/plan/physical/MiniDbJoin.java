@@ -242,8 +242,13 @@ public abstract class MiniDbJoin extends Join implements MiniDbRel {
         return ((Comparable) a).compareTo(b);
     }
 
-    /** True if any collation covers {@code keys} as an ascending prefix. */
+    /** True if any collation covers {@code keys} as an ascending prefix.
+     *  Null collations (e.g. an unscannable table with no ordering) are
+     *  treated as covering nothing. */
     public static boolean coversKeys(List<RelCollation> collations, List<Integer> keys) {
+        if (collations == null || keys == null) {
+            return false;
+        }
         for (RelCollation c : collations) {
             List<RelFieldCollation> fcs = c.getFieldCollations();
             if (fcs.size() < keys.size()) {

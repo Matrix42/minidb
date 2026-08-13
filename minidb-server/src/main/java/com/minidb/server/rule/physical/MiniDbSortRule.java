@@ -24,7 +24,9 @@ public final class MiniDbSortRule extends ConverterRule {
     public RelNode convert(RelNode rel) {
         LogicalSort sort = (LogicalSort) rel;
         return new MiniDbSort(sort.getCluster(),
-                sort.getTraitSet().replace(MiniDbConvention.INSTANCE),
+                sort.getTraitSet()
+                        .replace(MiniDbConvention.INSTANCE)
+                        .replace(sort.getCollation()),
                 convert(sort.getInput(), MiniDbConvention.INSTANCE),
                 sort.getCollation(), sort.offset, sort.fetch);
     }
