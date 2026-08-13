@@ -17,7 +17,9 @@ public final class MiniDbPhysicalRules {
             new MiniDbIntersectRule(),
             new MiniDbExceptRule(),
             new MiniDbCalcRule(),
-            new MiniDbJoinRule());
+            new MiniDbJoinRule(),
+            new MiniDbTableSpoolRule(),
+            new MiniDbRepeatUnionRule());
 
     private MiniDbPhysicalRules() {
     }

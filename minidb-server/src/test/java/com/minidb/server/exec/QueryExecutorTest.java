@@ -48,6 +48,55 @@ class QueryExecutorTest {
     }
 
     @Test
+    void recursiveCteCounter() {
+        QueryResult select = executor.execute(
+                "WITH RECURSIVE nums(n) AS "
+                + "(VALUES (1) UNION ALL SELECT n + 1 FROM nums WHERE n < 5) "
+                + "SELECT n FROM nums ORDER BY n");
+        VectorSchemaRoot root = ((QueryResult.Rows) select).data();
+        assertEquals(5, root.getRowCount());
+        IntVector n = (IntVector) root.getVector("n");
+        for (int i = 0; i < 5; i++) {
+            assertEquals(i + 1, n.get(i));
+        }
+        root.close();
+    }
+
+    @Test
+    void recursiveCteGraphTraversal() {
+        executor.execute("CREATE TABLE edges (src INTEGER, dst INTEGER)");
+        executor.execute("INSERT INTO edges VALUES (1, 2), (2, 3), (1, 3), (3, 4)");
+        QueryResult select = executor.execute(
+                "WITH RECURSIVE reach(n) AS ("
+                + "  VALUES (1)"
+                + "  UNION"
+                + "  SELECT e.dst FROM edges e JOIN reach r ON e.src = r.n"
+                + ") SELECT n FROM reach ORDER BY n");
+        VectorSchemaRoot root = ((QueryResult.Rows) select).data();
+        assertEquals(4, root.getRowCount());
+        IntVector n = (IntVector) root.getVector("n");
+        for (int i = 0; i < 4; i++) {
+            assertEquals(i + 1, n.get(i));
+        }
+        root.close();
+    }
+
+    @Test
+    void commonTableExpression() {
+        executor.execute("CREATE TABLE t (id INTEGER, name VARCHAR)");
+        executor.execute("INSERT INTO t VALUES (1, 'a'), (2, 'b'), (3, 'c')");
+        QueryResult select = executor.execute(
+                "WITH c AS (SELECT id, name FROM t WHERE id > 1) "
+                + "SELECT id, name FROM c ORDER BY id");
+        VectorSchemaRoot root = ((QueryResult.Rows) select).data();
+        assertEquals(2, root.getRowCount());
+        assertEquals(2, ((IntVector) root.getVector("id")).get(0));
+        assertEquals("b",
+                new String(((VarCharVector) root.getVector("name")).get(0)));
+        root.close();
+    }
+
+    @Test
     void createTableInsertSelect() {
         QueryResult ddl = executor.execute(
                 "CREATE TABLE t (id INTEGER, name VARCHAR)");

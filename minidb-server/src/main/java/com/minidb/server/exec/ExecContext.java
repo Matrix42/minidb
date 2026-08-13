@@ -3,6 +3,9 @@ package com.minidb.server.exec;
 import com.minidb.server.catalog.MiniDbCatalog;
 import com.minidb.server.storage.ArrowTable;
 import com.minidb.server.storage.StorageManager;
+import java.util.HashMap;
+import java.util.List;
+import java.util.Map;
 import org.apache.arrow.memory.BufferAllocator;
 
 public class ExecContext {
@@ -11,6 +14,11 @@ public class ExecContext {
     private final BufferAllocator allocator;
     private final RexInterpreter interpreter;
     private final String currentSchema;
+    // Transient tables for recursive CTE (WITH RECURSIVE). Keyed by the CTE
+    // name; MiniDbRepeatUnion registers the current working rows here and the
+    // recursive body's scan reads them back. Per-query, so a plain HashMap
+    // suffices (no concurrent access).
+    private final Map<String, List<Object[]>> transientTables = new HashMap<>();
 
     public ExecContext(StorageManager storage, BufferAllocator allocator) {
         this(storage, allocator, MiniDbCatalog.DEFAULT_SCHEMA);
@@ -64,5 +72,17 @@ public class ExecContext {
      */
     public ArrowTable getTable(String tableName) {
         return storage.getTable(currentSchema, tableName);
+    }
+
+    public void putTransientTable(String name, List<Object[]> rows) {
+        transientTables.put(name, rows);
+    }
+
+    public List<Object[]> transientTable(String name) {
+        return transientTables.get(name);
+    }
+
+    public void removeTransientTable(String name) {
+        transientTables.remove(name);
     }
 }

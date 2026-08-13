@@ -27,6 +27,14 @@ public class MiniDbScan extends TableScan implements MiniDbRel {
     public BatchIterator execute(ExecContext ctx) {
         List<String> qualified = table.getQualifiedName();
         int n = qualified.size();
+        if (n == 1) {
+            // A single-segment name is a recursive CTE transient table (real
+            // tables come through as [minidb, t] or [minidb, schema, t]).
+            List<Object[]> transientRows = ctx.transientTable(qualified.get(0));
+            if (transientRows != null) {
+                return transientScan(transientRows, ctx);
+            }
+        }
         ArrowTable arrowTable;
         if (n >= 3) {
             // qualified name like [minidb, other, t] — schema is second-to-last
@@ -50,6 +58,29 @@ public class MiniDbScan extends TableScan implements MiniDbRel {
             @Override
             public void close() {
                 // batches are owned by the table
+            }
+        };
+    }
+
+    private BatchIterator transientScan(List<Object[]> rows, ExecContext ctx) {
+        VectorSchemaRoot root =
+                RowVectors.buildRoot(rows, table.getRowType(), ctx.allocator());
+        boolean[] done = {false};
+        return new BatchIterator() {
+            @Override
+            public boolean hasNext() {
+                return !done[0];
+            }
+
+            @Override
+            public VectorSchemaRoot next() {
+                done[0] = true;
+                return root;
+            }
+
+            @Override
+            public void close() {
+                root.close();
             }
         };
     }
