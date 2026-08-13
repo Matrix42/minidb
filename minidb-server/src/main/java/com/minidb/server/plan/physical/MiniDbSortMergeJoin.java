@@ -12,10 +12,14 @@ import org.apache.calcite.rel.core.JoinRelType;
 import org.apache.calcite.rel.metadata.RelMetadataQuery;
 import org.apache.calcite.rex.RexNode;
 
-/** Sort-merge join: merges equal-key groups after sorting both sides by the
- *  equi columns (null keys last). If an input's declared collation already
- *  covers the join keys it is used as-is (no internal sort); otherwise that
- *  side is sorted internally. */
+/**
+ * Sort-merge join: both inputs are ordered by the equi key columns (nulls
+ * last) and merged, emitting the cross product of equal-key groups. If an
+ * input's declared collation already covers the join keys it is consumed
+ * as-is (no internal sort); otherwise that side is sorted internally.
+ * Null keys never match in an equi-join, so for outer joins they are emitted
+ * as preserved rows instead.
+ */
 public class MiniDbSortMergeJoin extends MiniDbJoin {
 
     private final boolean leftSorted;
@@ -50,99 +54,106 @@ public class MiniDbSortMergeJoin extends MiniDbJoin {
     @Override
     protected List<Object[]> joinRows(List<Object[]> left, List<Object[]> right,
                                       JoinInfo info, JoinRelType type, ExecContext ctx) {
-        List<Integer> lk = info.leftKeys;
-        List<Integer> rk = info.rightKeys;
-        List<Integer> lorder = leftSorted ? identity(left.size()) : sortedIndices(left, lk);
-        List<Integer> rorder = rightSorted ? identity(right.size()) : sortedIndices(right, rk);
-        boolean leftPreserved = type == JoinRelType.LEFT || type == JoinRelType.FULL;
-        boolean rightPreserved = type == JoinRelType.RIGHT || type == JoinRelType.FULL;
-        boolean[] leftMatched = new boolean[left.size()];
-        boolean[] rightMatched = new boolean[right.size()];
-        Object[] nullLeft = new Object[left.get(0).length];
-        Object[] nullRight = new Object[right.get(0).length];
-        List<Object[]> out = new ArrayList<>();
-        int i = 0;
-        int j = 0;
-        while (i < lorder.size() && j < rorder.size()) {
-            int li = lorder.get(i);
-            int rj = rorder.get(j);
-            boolean ln = containsNull(left.get(li), lk);
-            boolean rn = containsNull(right.get(rj), rk);
-            if (ln || rn) {
-                if (ln && rn) {
-                    if (leftPreserved) {
-                        out.add(concat(left.get(li), nullRight));
+        List<Integer> leftKeyCols = info.leftKeys;
+        List<Integer> rightKeyCols = info.rightKeys;
+        // Row indices in merge order: a pre-sorted input can be consumed in
+        // its natural order (identity), otherwise sort internally by the keys.
+        List<Integer> leftScanOrder = leftSorted ? identity(left.size()) : sortedIndices(left, leftKeyCols);
+        List<Integer> rightScanOrder = rightSorted ? identity(right.size()) : sortedIndices(right, rightKeyCols);
+        // Outer-join semantics: unmatched rows on the preserved side are padded
+        // with nulls on the other side.
+        boolean keepUnmatchedLeft = type == JoinRelType.LEFT || type == JoinRelType.FULL;
+        boolean keepUnmatchedRight = type == JoinRelType.RIGHT || type == JoinRelType.FULL;
+        Object[] nullRowLeft = new Object[left.get(0).length];
+        Object[] nullRowRight = new Object[right.get(0).length];
+        List<Object[]> outputRows = new ArrayList<>();
+        int leftPos = 0;
+        int rightPos = 0;
+        while (leftPos < leftScanOrder.size() && rightPos < rightScanOrder.size()) {
+            int leftRowIdx = leftScanOrder.get(leftPos);
+            int rightRowIdx = rightScanOrder.get(rightPos);
+            boolean leftHasNullKey = hasNullKey(left.get(leftRowIdx), leftKeyCols);
+            boolean rightHasNullKey = hasNullKey(right.get(rightRowIdx), rightKeyCols);
+            if (leftHasNullKey || rightHasNullKey) {
+                // Null keys never match. For outer joins each null-keyed row is
+                // emitted as a preserved row (padded with nulls on the other side);
+                // for inner joins it is simply skipped.
+                if (leftHasNullKey && rightHasNullKey) {
+                    if (keepUnmatchedLeft) {
+                        outputRows.add(concat(left.get(leftRowIdx), nullRowRight));
                     }
-                    if (rightPreserved) {
-                        out.add(concat(nullLeft, right.get(rj)));
+                    if (keepUnmatchedRight) {
+                        outputRows.add(concat(nullRowLeft, right.get(rightRowIdx)));
                     }
-                    i++;
-                    j++;
-                } else if (ln) {
-                    if (leftPreserved) {
-                        out.add(concat(left.get(li), nullRight));
+                    leftPos++;
+                    rightPos++;
+                } else if (leftHasNullKey) {
+                    if (keepUnmatchedLeft) {
+                        outputRows.add(concat(left.get(leftRowIdx), nullRowRight));
                     }
-                    i++;
+                    leftPos++;
                 } else {
-                    if (rightPreserved) {
-                        out.add(concat(nullLeft, right.get(rj)));
+                    if (keepUnmatchedRight) {
+                        outputRows.add(concat(nullRowLeft, right.get(rightRowIdx)));
                     }
-                    j++;
+                    rightPos++;
                 }
                 continue;
             }
-            int cmp = compareKeys(left.get(li), lk, right.get(rj), rk);
+            int cmp = compareKeys(left.get(leftRowIdx), leftKeyCols,
+                    right.get(rightRowIdx), rightKeyCols);
             if (cmp < 0) {
-                if (leftPreserved) {
-                    out.add(concat(left.get(li), nullRight));
+                if (keepUnmatchedLeft) {
+                    outputRows.add(concat(left.get(leftRowIdx), nullRowRight));
                 }
-                i++;
+                leftPos++;
             } else if (cmp > 0) {
-                if (rightPreserved) {
-                    out.add(concat(nullLeft, right.get(rj)));
+                if (keepUnmatchedRight) {
+                    outputRows.add(concat(nullRowLeft, right.get(rightRowIdx)));
                 }
-                j++;
+                rightPos++;
             } else {
-                int i2 = i;
-                while (i2 < lorder.size()
-                        && !containsNull(left.get(lorder.get(i2)), lk)
-                        && compareKeys(left.get(lorder.get(i2)), lk,
-                        right.get(rj), rk) == 0) {
-                    i2++;
+                // Equal keys: find the full group of matching rows on each side
+                // (contiguous, non-null, same key) and cross-product them.
+                int leftGroupEnd = leftPos;
+                while (leftGroupEnd < leftScanOrder.size()
+                        && !hasNullKey(left.get(leftScanOrder.get(leftGroupEnd)), leftKeyCols)
+                        && compareKeys(left.get(leftScanOrder.get(leftGroupEnd)), leftKeyCols,
+                        right.get(rightRowIdx), rightKeyCols) == 0) {
+                    leftGroupEnd++;
                 }
-                int j2 = j;
-                while (j2 < rorder.size()
-                        && !containsNull(right.get(rorder.get(j2)), rk)
-                        && compareKeys(right.get(rorder.get(j2)), rk,
-                        left.get(li), lk) == 0) {
-                    j2++;
+                int rightGroupEnd = rightPos;
+                while (rightGroupEnd < rightScanOrder.size()
+                        && !hasNullKey(right.get(rightScanOrder.get(rightGroupEnd)), rightKeyCols)
+                        && compareKeys(right.get(rightScanOrder.get(rightGroupEnd)), rightKeyCols,
+                        left.get(leftRowIdx), leftKeyCols) == 0) {
+                    rightGroupEnd++;
                 }
-                for (int a = i; a < i2; a++) {
-                    for (int b = j; b < j2; b++) {
-                        int la = lorder.get(a);
-                        int rb = rorder.get(b);
-                        out.add(concat(left.get(la), right.get(rb)));
-                        leftMatched[la] = true;
-                        rightMatched[rb] = true;
+                for (int lp = leftPos; lp < leftGroupEnd; lp++) {
+                    for (int rp = rightPos; rp < rightGroupEnd; rp++) {
+                        outputRows.add(concat(left.get(leftScanOrder.get(lp)),
+                                right.get(rightScanOrder.get(rp))));
                     }
                 }
-                i = i2;
-                j = j2;
+                leftPos = leftGroupEnd;
+                rightPos = rightGroupEnd;
             }
         }
-        while (i < lorder.size()) {
-            if (leftPreserved) {
-                out.add(concat(left.get(lorder.get(i)), nullRight));
+        // Drain whichever side still has rows (all remaining rows there have
+        // keys larger than the exhausted side's, or are null-keyed).
+        while (leftPos < leftScanOrder.size()) {
+            if (keepUnmatchedLeft) {
+                outputRows.add(concat(left.get(leftScanOrder.get(leftPos)), nullRowRight));
             }
-            i++;
+            leftPos++;
         }
-        while (j < rorder.size()) {
-            if (rightPreserved) {
-                out.add(concat(nullLeft, right.get(rorder.get(j))));
+        while (rightPos < rightScanOrder.size()) {
+            if (keepUnmatchedRight) {
+                outputRows.add(concat(nullRowLeft, right.get(rightScanOrder.get(rightPos))));
             }
-            j++;
+            rightPos++;
         }
-        return out;
+        return outputRows;
     }
 
     private static List<Integer> identity(int n) {

@@ -63,8 +63,8 @@ class JoinStrategyTest {
     @Test
     void allStrategiesHandleSimultaneousNullKeysInFullJoin() {
         // left=[1,NULL], right=[1,NULL]: after matching id=1 both merge pointers
-        // hit the null region at the same time -> exercises the ln && rn branch.
-        // FULL must keep both null rows (one from each side).
+        // hit the null-keyed region at the same time (SortMerge's
+        // both-null branch). FULL must keep both null rows (one from each side).
         run("SELECT a.id AS aid, b.id AS bid FROM a FULL JOIN b ON a.id = b.id",
                 List.of(
                         "CREATE TABLE a (id INTEGER, name VARCHAR)",

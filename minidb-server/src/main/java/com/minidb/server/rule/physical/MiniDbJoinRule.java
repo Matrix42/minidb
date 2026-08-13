@@ -29,27 +29,29 @@ public final class MiniDbJoinRule extends ConverterRule {
     @Override
     public RelNode convert(RelNode rel) {
         LogicalJoin join = (LogicalJoin) rel;
-        RelTraitSet traits = join.getTraitSet().replace(MiniDbConvention.INSTANCE);
-        RelNode left = convert(join.getLeft(), MiniDbConvention.INSTANCE);
-        RelNode right = convert(join.getRight(), MiniDbConvention.INSTANCE);
-        JoinInfo info = JoinInfo.of(join.getLeft(), join.getRight(), join.getCondition());
-        if (!info.isEqui()) {
-            return new MiniDbNestedLoopJoin(join.getCluster(), traits, left, right,
+        RelTraitSet physicalTraits = join.getTraitSet().replace(MiniDbConvention.INSTANCE);
+        RelNode leftInput = convert(join.getLeft(), MiniDbConvention.INSTANCE);
+        RelNode rightInput = convert(join.getRight(), MiniDbConvention.INSTANCE);
+        JoinInfo joinInfo = JoinInfo.of(join.getLeft(), join.getRight(), join.getCondition());
+        if (!joinInfo.isEqui()) {
+            return new MiniDbNestedLoopJoin(join.getCluster(), physicalTraits, leftInput, rightInput,
                     join.getCondition(), join.getJoinType());
         }
-        RelMetadataQuery mq = RelMetadataQuery.instance();
+        RelMetadataQuery metadataQuery = RelMetadataQuery.instance();
         // Query collations on the logical inputs: the converted children are
         // RelSubsets whose trait set only reports the requested traits (empty
         // collation); RelMdCollation on the logical tree propagates the
         // ORDER BY collation through Sort/Project, which the physical
         // conversion preserves.
-        boolean leftSorted = MiniDbJoin.coversKeys(mq.collations(join.getLeft()), info.leftKeys);
-        boolean rightSorted = MiniDbJoin.coversKeys(mq.collations(join.getRight()), info.rightKeys);
-        if (leftSorted && rightSorted) {
-            return new MiniDbSortMergeJoin(join.getCluster(), traits, left, right,
+        boolean leftInputSorted = MiniDbJoin.coversKeys(
+                metadataQuery.collations(join.getLeft()), joinInfo.leftKeys);
+        boolean rightInputSorted = MiniDbJoin.coversKeys(
+                metadataQuery.collations(join.getRight()), joinInfo.rightKeys);
+        if (leftInputSorted && rightInputSorted) {
+            return new MiniDbSortMergeJoin(join.getCluster(), physicalTraits, leftInput, rightInput,
                     join.getCondition(), join.getJoinType());
         }
-        return new MiniDbHashJoin(join.getCluster(), traits, left, right,
+        return new MiniDbHashJoin(join.getCluster(), physicalTraits, leftInput, rightInput,
                 join.getCondition(), join.getJoinType());
     }
 }

@@ -103,33 +103,33 @@ public abstract class MiniDbJoin extends Join implements MiniDbRel {
         return rows;
     }
 
-    protected static Object readObject(ValueVector v, int row) {
-        if (v.isNull(row)) {
+    protected static Object readObject(ValueVector vector, int row) {
+        if (vector.isNull(row)) {
             return null;
         }
-        if (v instanceof IntVector iv) {
+        if (vector instanceof IntVector iv) {
             return iv.get(row);
         }
-        if (v instanceof BigIntVector bv) {
+        if (vector instanceof BigIntVector bv) {
             return bv.get(row);
         }
-        if (v instanceof Float8Vector fv) {
+        if (vector instanceof Float8Vector fv) {
             return fv.get(row);
         }
-        if (v instanceof VarCharVector vv) {
+        if (vector instanceof VarCharVector vv) {
             return new String(vv.get(row), StandardCharsets.UTF_8);
         }
-        if (v instanceof BitVector bv) {
+        if (vector instanceof BitVector bv) {
             return bv.get(row);
         }
-        if (v instanceof DateDayVector dv) {
+        if (vector instanceof DateDayVector dv) {
             return dv.get(row);
         }
-        if (v instanceof TimeStampMilliVector tv) {
+        if (vector instanceof TimeStampMilliVector tv) {
             return tv.get(row);
         }
         throw new UnsupportedOperationException(
-                "cannot join column type: " + v.getMinorType());
+                "cannot join column type: " + vector.getMinorType());
     }
 
     protected VectorSchemaRoot buildOutput(List<Object[]> rows, ExecContext ctx) {
@@ -179,93 +179,97 @@ public abstract class MiniDbJoin extends Join implements MiniDbRel {
         }
     }
 
-    protected static boolean containsNull(Object[] row, List<Integer> keys) {
-        for (int k : keys) {
-            if (row[k] == null) {
+    /** True if any of the join-key columns in {@code row} is null. */
+    protected static boolean hasNullKey(Object[] row, List<Integer> keyCols) {
+        for (int colIdx : keyCols) {
+            if (row[colIdx] == null) {
                 return true;
             }
         }
         return false;
     }
 
-    protected static List<Object> keyOf(Object[] row, List<Integer> keys) {
-        List<Object> key = new ArrayList<>(keys.size());
-        for (int k : keys) {
-            key.add(row[k]);
+    /** The values of the join-key columns of {@code row}, as a hashable key. */
+    protected static List<Object> buildKey(Object[] row, List<Integer> keyCols) {
+        List<Object> key = new ArrayList<>(keyCols.size());
+        for (int colIdx : keyCols) {
+            key.add(row[colIdx]);
         }
         return key;
     }
 
-    protected static Object[] concat(Object[] l, Object[] r) {
-        Object[] out = new Object[l.length + r.length];
-        System.arraycopy(l, 0, out, 0, l.length);
-        System.arraycopy(r, 0, out, l.length, r.length);
+    protected static Object[] concat(Object[] leftRow, Object[] rightRow) {
+        Object[] out = new Object[leftRow.length + rightRow.length];
+        System.arraycopy(leftRow, 0, out, 0, leftRow.length);
+        System.arraycopy(rightRow, 0, out, leftRow.length, rightRow.length);
         return out;
     }
 
-    protected static List<Integer> sortedIndices(List<Object[]> rows, List<Integer> keys) {
+    /** Row indices of {@code rows} ordered by the key columns, nulls last. */
+    protected static List<Integer> sortedIndices(List<Object[]> rows, List<Integer> keyCols) {
         List<Integer> order = new ArrayList<>(rows.size());
-        for (int i = 0; i < rows.size(); i++) {
-            order.add(i);
+        for (int rowIdx = 0; rowIdx < rows.size(); rowIdx++) {
+            order.add(rowIdx);
         }
-        order.sort(Comparator.comparingInt((Integer i) -> nullFlag(rows.get(i), keys))
+        order.sort(Comparator.comparingInt((Integer rowIdx) -> nullKeyFlag(rows.get(rowIdx), keyCols))
                 .thenComparing((Integer a, Integer b) ->
-                        compareKeys(rows.get(a), keys, rows.get(b), keys)));
+                        compareKeys(rows.get(a), keyCols, rows.get(b), keyCols)));
         return order;
     }
 
-    protected static int nullFlag(Object[] row, List<Integer> keys) {
-        return containsNull(row, keys) ? 1 : 0; // null keys sort last
+    /** 1 when the row has a null key, 0 otherwise — lets null-keyed rows sort last. */
+    protected static int nullKeyFlag(Object[] row, List<Integer> keyCols) {
+        return hasNullKey(row, keyCols) ? 1 : 0;
     }
 
-    protected static int compareKeys(Object[] a, List<Integer> ak,
-                                     Object[] b, List<Integer> bk) {
-        for (int k = 0; k < ak.size(); k++) {
-            Object x = a[ak.get(k)];
-            Object y = b[bk.get(k)];
-            if (x == null || y == null) {
-                if (x == null && y == null) {
+    protected static int compareKeys(Object[] leftRow, List<Integer> leftKeyCols,
+                                     Object[] rightRow, List<Integer> rightKeyCols) {
+        for (int k = 0; k < leftKeyCols.size(); k++) {
+            Object leftVal = leftRow[leftKeyCols.get(k)];
+            Object rightVal = rightRow[rightKeyCols.get(k)];
+            if (leftVal == null || rightVal == null) {
+                if (leftVal == null && rightVal == null) {
                     continue;
                 }
-                return x == null ? 1 : -1;
+                return leftVal == null ? 1 : -1;
             }
-            int c = compareValues(x, y);
-            if (c != 0) {
-                return c;
+            int cmp = compareValues(leftVal, rightVal);
+            if (cmp != 0) {
+                return cmp;
             }
         }
         return 0;
     }
 
     @SuppressWarnings({"rawtypes", "unchecked"})
-    protected static int compareValues(Object a, Object b) {
-        return ((Comparable) a).compareTo(b);
+    protected static int compareValues(Object left, Object right) {
+        return ((Comparable) left).compareTo(right);
     }
 
     /** True if any collation covers {@code keys} as an ascending prefix.
-     *  Null collations (e.g. an unscannable table with no ordering) are
-     *  treated as covering nothing. */
+     *  Null collations (e.g. a table with no declared ordering) are treated
+     *  as covering nothing. */
     public static boolean coversKeys(List<RelCollation> collations, List<Integer> keys) {
         if (collations == null || keys == null) {
             return false;
         }
-        for (RelCollation c : collations) {
-            List<RelFieldCollation> fcs = c.getFieldCollations();
-            if (fcs.size() < keys.size()) {
+        for (RelCollation collation : collations) {
+            List<RelFieldCollation> fieldCollations = collation.getFieldCollations();
+            if (fieldCollations.size() < keys.size()) {
                 continue;
             }
-            boolean ok = true;
+            boolean covers = true;
             for (int i = 0; i < keys.size(); i++) {
-                RelFieldCollation fc = fcs.get(i);
-                RelFieldCollation.Direction d = fc.getDirection();
-                if (fc.getFieldIndex() != keys.get(i)
-                        || (d != RelFieldCollation.Direction.ASCENDING
-                            && d != RelFieldCollation.Direction.STRICTLY_ASCENDING)) {
-                    ok = false;
+                RelFieldCollation fieldCollation = fieldCollations.get(i);
+                RelFieldCollation.Direction direction = fieldCollation.getDirection();
+                if (fieldCollation.getFieldIndex() != keys.get(i)
+                        || (direction != RelFieldCollation.Direction.ASCENDING
+                            && direction != RelFieldCollation.Direction.STRICTLY_ASCENDING)) {
+                    covers = false;
                     break;
                 }
             }
-            if (ok) {
+            if (covers) {
                 return true;
             }
         }

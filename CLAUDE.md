@@ -33,7 +33,7 @@ MiniDB 是一个基于 Apache Calcite(解析/规划)+ Apache Arrow(列式存储)
 1. **改完代码就提交**。用 conventional commit 风格(`feat:`/`fix:`/`test:`/`refactor:`/`docs:`),不要 amend,不要 `--no-verify`。
 2. **在 `master` 分支工作**。功能分支命名 `<feature-name>`(如 `explain-analyze`),完成后 fast-forward 合并回 `master` 并删除功能分支。本仓库无远程(纯本地),无 PR 流程。
 3. **小步提交**:一个逻辑改动一个 commit,便于回溯。
-4. **不要在文档/注释里写废话注释**(解释 WHAT 而非 WHY)。代码自解释优先。
+4. **代码是给人读的,不只是给 AI 读**。命名必须自解释:不用无意义的短缩写(`lk`/`rn`/`i2`/`j2` 这类),用描述性名字(`leftKeyCols`/`leftHasNullKey`/`leftScanOrder` 等)。注释解释 WHY 而非复述 WHAT(WHAT 由好命名承担);非显然的逻辑(如 null 键在等值 join 永不匹配、输入已有序时跳过内部排序)必须加注释说明原因。重构时顺带清理死代码与冗余计算。
 5. **测试用 JUnit 5 + `@TempDir` + `RootAllocator`**。断言关系/比例而非精确浮点值(选择率单元测试除外,用 1e-9 delta)。
 6. **现有 7 个物理算子文件(`MiniDbScan`/`Filter`/`Project`/`Sort`/`Values`/`Modify`/`Aggregate`)和 `minidb-protocol` 模块尽量不改**——它们是稳定核心,扩展应通过新模块(参考 EXPLAIN 用 `ExplainExecutor` + `Instrumenter` 外挂的方式,零侵入算子)。规则类在 `rule/physical` 包(逻辑优化规则在 `rule/logical`)。
 7. **用中文回复用户**(代码/标识符/路径保持原文)。

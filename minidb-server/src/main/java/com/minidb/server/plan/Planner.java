@@ -30,25 +30,25 @@ public class Planner {
     }
 
     public RelNode plan(String sql, String currentSchema) {
-        VolcanoPlanner planner = new VolcanoPlanner();
-        planner.addRelTraitDef(ConventionTraitDef.INSTANCE);
-        planner.addRelTraitDef(RelCollationTraitDef.INSTANCE);
+        VolcanoPlanner volcanoPlanner = new VolcanoPlanner();
+        volcanoPlanner.addRelTraitDef(ConventionTraitDef.INSTANCE);
+        volcanoPlanner.addRelTraitDef(RelCollationTraitDef.INSTANCE);
         for (RelOptRule rule : MiniDbPhysicalRules.ALL) {
-            planner.addRule(rule);
+            volcanoPlanner.addRule(rule);
         }
         SqlTypeFactoryImpl typeFactory =
                 new SqlTypeFactoryImpl(RelDataTypeSystem.DEFAULT);
-        RelOptCluster cluster = RelOptCluster.create(planner, new RexBuilder(typeFactory));
+        RelOptCluster cluster = RelOptCluster.create(volcanoPlanner, new RexBuilder(typeFactory));
 
         RelRoot root = calcite.planInCluster(sql, cluster, currentSchema);
         RelNode logical = root.rel;
         // Phase 1: logical optimization (HepPlanner over Calcite Logical* tree)
         RelNode optimized = LogicalOptimizer.optimize(logical);
         // Phase 2: physical conversion (VolcanoPlanner)
-        RelNode converted = planner.changeTraits(optimized,
+        RelNode converted = volcanoPlanner.changeTraits(optimized,
                 optimized.getTraitSet().replace(MiniDbConvention.INSTANCE));
-        planner.setRoot(converted);
-        RelNode best = planner.findBestExp();
+        volcanoPlanner.setRoot(converted);
+        RelNode best = volcanoPlanner.findBestExp();
         if (!(best instanceof MiniDbRel)) {
             throw new IllegalStateException(
                     "planner produced non-physical root: " + best);

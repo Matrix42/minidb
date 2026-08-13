@@ -13,8 +13,12 @@ import org.apache.calcite.rel.core.JoinInfo;
 import org.apache.calcite.rel.core.JoinRelType;
 import org.apache.calcite.rex.RexNode;
 
-/** Hash join: builds a hash table on the left input keyed by the equi
- *  columns and probes with the right input. Equi-join only. */
+/**
+ * Hash join: builds a hash table on the left input keyed by the equi columns,
+ * then probes it with the right input. Equi-join only. Null keys never match
+ * in an equi-join, so null-keyed rows are excluded from the table and, for
+ * outer joins, emitted as preserved rows instead.
+ */
 public class MiniDbHashJoin extends MiniDbJoin {
 
     public MiniDbHashJoin(RelOptCluster cluster, RelTraitSet traitSet,
@@ -34,44 +38,49 @@ public class MiniDbHashJoin extends MiniDbJoin {
     @Override
     protected List<Object[]> joinRows(List<Object[]> left, List<Object[]> right,
                                       JoinInfo info, JoinRelType type, ExecContext ctx) {
-        List<Integer> lk = info.leftKeys;
-        List<Integer> rk = info.rightKeys;
-        Map<List<Object>, List<Integer>> hash = new HashMap<>();
-        for (int i = 0; i < left.size(); i++) {
-            if (containsNull(left.get(i), lk)) {
+        List<Integer> leftKeyCols = info.leftKeys;
+        List<Integer> rightKeyCols = info.rightKeys;
+        // Build: key -> row indices of the left input sharing that key.
+        // Null-keyed rows are skipped (they can never match).
+        Map<List<Object>, List<Integer>> buildTable = new HashMap<>();
+        for (int leftIdx = 0; leftIdx < left.size(); leftIdx++) {
+            if (hasNullKey(left.get(leftIdx), leftKeyCols)) {
                 continue;
             }
-            hash.computeIfAbsent(keyOf(left.get(i), lk), k -> new ArrayList<>()).add(i);
+            buildTable.computeIfAbsent(buildKey(left.get(leftIdx), leftKeyCols),
+                    k -> new ArrayList<>()).add(leftIdx);
         }
-        boolean leftPreserved = type == JoinRelType.LEFT || type == JoinRelType.FULL;
-        boolean rightPreserved = type == JoinRelType.RIGHT || type == JoinRelType.FULL;
-        boolean[] leftMatched = new boolean[left.size()];
-        Object[] nullLeft = new Object[left.get(0).length];
-        Object[] nullRight = new Object[right.get(0).length];
-        List<Object[]> out = new ArrayList<>();
-        for (int j = 0; j < right.size(); j++) {
-            List<Integer> matches;
-            if (containsNull(right.get(j), rk)) {
-                matches = null;
+        boolean keepUnmatchedLeft = type == JoinRelType.LEFT || type == JoinRelType.FULL;
+        boolean keepUnmatchedRight = type == JoinRelType.RIGHT || type == JoinRelType.FULL;
+        boolean[] matchedLeft = new boolean[left.size()];
+        Object[] nullRowLeft = new Object[left.get(0).length];
+        Object[] nullRowRight = new Object[right.get(0).length];
+        List<Object[]> outputRows = new ArrayList<>();
+        // Probe: for each right row, join with every left row of the same key.
+        for (int rightIdx = 0; rightIdx < right.size(); rightIdx++) {
+            List<Integer> matchingLeftRows;
+            if (hasNullKey(right.get(rightIdx), rightKeyCols)) {
+                matchingLeftRows = null;
             } else {
-                matches = hash.get(keyOf(right.get(j), rk));
+                matchingLeftRows = buildTable.get(buildKey(right.get(rightIdx), rightKeyCols));
             }
-            if (matches != null) {
-                for (int i : matches) {
-                    out.add(concat(left.get(i), right.get(j)));
-                    leftMatched[i] = true;
+            if (matchingLeftRows != null) {
+                for (int leftIdx : matchingLeftRows) {
+                    outputRows.add(concat(left.get(leftIdx), right.get(rightIdx)));
+                    matchedLeft[leftIdx] = true;
                 }
-            } else if (rightPreserved) {
-                out.add(concat(nullLeft, right.get(j)));
+            } else if (keepUnmatchedRight) {
+                // Right-preserved outer join: emit the unmatched right row.
+                outputRows.add(concat(nullRowLeft, right.get(rightIdx)));
             }
         }
-        if (leftPreserved) {
-            for (int i = 0; i < left.size(); i++) {
-                if (!leftMatched[i]) {
-                    out.add(concat(left.get(i), nullRight));
+        if (keepUnmatchedLeft) {
+            for (int leftIdx = 0; leftIdx < left.size(); leftIdx++) {
+                if (!matchedLeft[leftIdx]) {
+                    outputRows.add(concat(left.get(leftIdx), nullRowRight));
                 }
             }
         }
-        return out;
+        return outputRows;
     }
 }
