@@ -26,6 +26,7 @@ import org.apache.arrow.vector.VectorUnloader;
 import org.apache.arrow.vector.ipc.ArrowFileReader;
 import org.apache.arrow.vector.ipc.ArrowFileWriter;
 import org.apache.arrow.vector.ipc.message.ArrowRecordBatch;
+import org.apache.arrow.vector.types.FloatingPointPrecision;
 import org.apache.arrow.vector.types.pojo.ArrowType;
 import org.apache.arrow.vector.types.pojo.Field;
 import org.slf4j.Logger;
@@ -280,7 +281,7 @@ public class StorageManager implements AutoCloseable {
             String schemaName, String tableName) {
         List<ColumnMeta> columns = new ArrayList<>();
         for (Field field : arrowSchema.getFields()) {
-            columns.add(new ColumnMeta(field.getName(), toColumnType(field.getType())));
+            columns.add(toColumnMeta(field));
         }
         String resolvedSchema = schemaName;
         Map<String, String> meta = arrowSchema.getCustomMetadata();
@@ -290,22 +291,50 @@ public class StorageManager implements AutoCloseable {
         return new TableSchema(resolvedSchema, tableName, columns);
     }
 
-    private static ColumnType toColumnType(ArrowType type) {
+    private static ColumnMeta toColumnMeta(Field field) {
+        Map<String, String> meta = field.getMetadata();
+        String typeName = meta != null ? meta.get(ArrowTypes.TYPE_NAME_METADATA) : null;
+        if (typeName != null) {
+            ColumnType type = ArrowTypes.fromSqlTypeName(typeName);
+            if (type == ColumnType.DECIMAL || type == ColumnType.NUMERIC) {
+                ArrowType.Decimal d = (ArrowType.Decimal) field.getType();
+                return new ColumnMeta(field.getName(), type, d.getPrecision(), d.getScale());
+            }
+            return new ColumnMeta(field.getName(), type);
+        }
+        // 旧文件无元数据:回退到 Arrow 类型推断。
+        return new ColumnMeta(field.getName(), inferFromArrowType(field.getType()));
+    }
+
+    private static ColumnType inferFromArrowType(ArrowType type) {
         switch (type.getTypeID()) {
             case Int: {
                 ArrowType.Int intType = (ArrowType.Int) type;
-                return intType.getBitWidth() == 32 ? ColumnType.INTEGER : ColumnType.BIGINT;
+                int w = intType.getBitWidth();
+                if (w == 16) {
+                    return ColumnType.SMALLINT;
+                }
+                return w == 32 ? ColumnType.INTEGER : ColumnType.BIGINT;
             }
             case FloatingPoint:
-                return ColumnType.DOUBLE;
+                return ((ArrowType.FloatingPoint) type).getPrecision() == FloatingPointPrecision.SINGLE
+                        ? ColumnType.REAL : ColumnType.DOUBLE;
+            case Decimal:
+                // 旧格式(无元数据)的 Decimal 无法区分 DECIMAL/NUMERIC,统一归 DECIMAL;
+                // precision/scale 由 ColumnMeta 默认 UNSET,toCalciteType 补默认值。
+                return ColumnType.DECIMAL;
             case Utf8:
                 return ColumnType.VARCHAR;
             case Bool:
                 return ColumnType.BOOLEAN;
             case Date:
                 return ColumnType.DATE;
+            case Time:
+                return ColumnType.TIME;
             case Timestamp:
                 return ColumnType.TIMESTAMP;
+            case Binary:
+                return ColumnType.VARBINARY;
             default:
                 throw new IllegalArgumentException(
                         "unsupported arrow type in file: " + type);

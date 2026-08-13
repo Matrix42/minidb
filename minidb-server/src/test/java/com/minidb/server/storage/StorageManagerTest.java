@@ -117,4 +117,35 @@ class StorageManagerTest {
             storage.close();
         }
     }
+
+    @Test
+    void reloadPreservesNewColumnTypesAndDecimalScale(@TempDir Path dir) {
+        TableSchema schema = new TableSchema("t", List.of(
+                new ColumnMeta("s", ColumnType.SMALLINT),
+                new ColumnMeta("r", ColumnType.REAL),
+                new ColumnMeta("p", ColumnType.DECIMAL, 10, 2),
+                new ColumnMeta("c", ColumnType.CHAR),
+                new ColumnMeta("b", ColumnType.VARBINARY)));
+        MiniDbCatalog catalog = new MiniDbCatalog();
+        try (BufferAllocator allocator = new RootAllocator()) {
+            StorageManager storage = new StorageManager(catalog, allocator, dir);
+            storage.createTable(schema);
+            storage.markDirty("t");
+            storage.close();
+        }
+        MiniDbCatalog catalog2 = new MiniDbCatalog();
+        try (BufferAllocator allocator = new RootAllocator()) {
+            StorageManager storage2 = new StorageManager(catalog2, allocator, dir);
+            storage2.loadAll();
+            List<ColumnMeta> cols = catalog2.getTable("t").columns();
+            assertEquals(ColumnType.SMALLINT, cols.get(0).type());
+            assertEquals(ColumnType.REAL, cols.get(1).type());
+            assertEquals(ColumnType.DECIMAL, cols.get(2).type());
+            assertEquals(10, cols.get(2).precision());
+            assertEquals(2, cols.get(2).scale());
+            assertEquals(ColumnType.CHAR, cols.get(3).type());
+            assertEquals(ColumnType.VARBINARY, cols.get(4).type());
+            storage2.close();
+        }
+    }
 }
