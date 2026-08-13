@@ -32,9 +32,8 @@ public final class BuiltInFunctions {
         r.register(SqlStdOperatorTable.ABS, absFunction());
         unaryDouble(r, SqlStdOperatorTable.FLOOR, Math::floor);
         unaryDouble(r, SqlStdOperatorTable.CEIL, Math::ceil);
-        // ROUND(double) → double,就近取整(tie 到偶数);MiniDB 的 DECIMAL 坍缩成 double,
-        // 故返回 double 与类型边界一致。
-        unaryDouble(r, SqlStdOperatorTable.ROUND, Math::rint);
+        // ROUND(double) → double,就近取整、0.5 远离零(SQL 标准语义,非 Math.rint 的 tie-to-even)。
+        unaryDouble(r, SqlStdOperatorTable.ROUND, BuiltInFunctions::roundHalfAwayFromZero);
     }
 
     /**
@@ -67,6 +66,11 @@ public final class BuiltInFunctions {
                         (Float8Vector) args.get(0), (Float8Vector) out, fn)))));
     }
 
+    /** 就近取整、0.5 远离零(SQL ROUND 语义):sign(x) * floor(|x| + 0.5)。 */
+    private static double roundHalfAwayFromZero(double x) {
+        return Math.signum(x) * Math.floor(Math.abs(x) + 0.5);
+    }
+
     /**
      * 字符串函数。UPPER/LOWER 走一元 String 核;CHAR_LENGTH/LENGTH 走 StringToInt 核
      * (结果 INTEGER);CONCAT 是 `||` 算符、CONCAT_FUNCTION 是 `CONCAT(a,b,...)` 变参函数;
@@ -83,12 +87,13 @@ public final class BuiltInFunctions {
         r.register(SqlStdOperatorTable.SUBSTRING, substringFunction());
     }
 
-    /** LENGTH / CHAR_LENGTH:VarCharVector → INTEGER(IntVector)。 */
+    /** LENGTH / CHAR_LENGTH:VarCharVector → INTEGER(IntVector),按 Unicode code point 计。 */
     private static void registerLength(FunctionRegistry r, SqlOperator op) {
         r.register(op, new Function(op.getName(), List.of(new Overload(
                 List.of(VarCharVector.class), IntVector.class,
                 (args, out) -> Kernels.fillStringToInt(
-                        (VarCharVector) args.get(0), (IntVector) out, String::length)))));
+                        (VarCharVector) args.get(0), (IntVector) out,
+                        s -> s.codePointCount(0, s.length()))))));
     }
 
     /** 一元字符串函数:VarCharVector → VarCharVector。 */
@@ -167,34 +172,40 @@ public final class BuiltInFunctions {
                 continue;
             }
             String str = new String(s.get(i), StandardCharsets.UTF_8);
-            int start = intArg(from, i) - 1; // SQL SUBSTRING 是 1-based,转成 0-based。
-            int length = intArg(len, i);
+            long start = longArg(from, i) - 1; // SQL SUBSTRING 是 1-based,转成 0-based。
+            long length = longArg(len, i);
             result.setSafe(i, slice(str, start, length).getBytes(StandardCharsets.UTF_8));
         }
     }
 
-    /** 从 Int/BigInt 向量第 i 行读取 int 值(SUBSTRING 的第二/三参)。 */
-    private static int intArg(ValueVector v, int i) {
+    /** 从 Int/BigInt 向量第 i 行读取 long 值(SUBSTRING 的第二/三参,不截断,交给 slice 在 long 域 clamp)。 */
+    private static long longArg(ValueVector v, int i) {
         if (v instanceof IntVector iv) {
             return iv.get(i);
         }
         if (v instanceof BigIntVector bv) {
-            return (int) bv.get(i);
+            return bv.get(i);
         }
         throw new IllegalArgumentException("SUBSTRING operand is not an integer vector: " + v.getClass());
     }
 
-    /** 从 0-based start 截取最多 length 个字符;负 start 裁剪到 0,越界或 length<=0 返回空串。 */
-    private static String slice(String s, int start, int length) {
+    /**
+     * 从 0-based start(字符位,code point)截取最多 length 个字符。start/length 用 long 传入、
+     * 在本方法内 clamp 到 [0, codePointCount],避免超大字面量在 int 截断时回绕;负 start 裁剪到 0,
+     * 越界或 length<=0 返回空串。按 Unicode code point 截取(非 UTF-16 code unit)。
+     */
+    private static String slice(String s, long start, long length) {
         if (s.isEmpty() || length <= 0) {
             return "";
         }
-        int begin = Math.max(0, start);
-        if (begin >= s.length()) {
+        int total = s.codePointCount(0, s.length());
+        long begin = Math.max(0, start);
+        if (begin >= total) {
             return "";
         }
-        int end = Math.min(s.length(), begin + length);
-        return s.substring(begin, end);
+        long end = Math.min(total, begin + length);
+        int[] codePoints = s.codePoints().skip((int) begin).limit(end - begin).toArray();
+        return new String(codePoints, 0, codePoints.length);
     }
 
     private static void comparison(FunctionRegistry r) {

@@ -124,21 +124,32 @@ public class RexInterpreter {
         }
     }
 
-    /** 按 Flag 的 left/right 掩码,从字符串两端剥离 chars 集合内的字符(同 SQL TRIM 语义)。 */
+    /** 按 Flag 的 left/right 掩码,从字符串两端剥离 chars 集合内的字符(按 Unicode code point)。 */
     private static String trim(String s, String chars, boolean stripLeading, boolean stripTrailing) {
+        int[] codePoints = s.codePoints().toArray();
+        int[] trimSet = chars.codePoints().toArray();
         int begin = 0;
-        int end = s.length();
+        int end = codePoints.length;
         if (stripLeading) {
-            while (begin < end && chars.indexOf(s.charAt(begin)) >= 0) {
+            while (begin < end && contains(trimSet, codePoints[begin])) {
                 begin++;
             }
         }
         if (stripTrailing) {
-            while (end > begin && chars.indexOf(s.charAt(end - 1)) >= 0) {
+            while (end > begin && contains(trimSet, codePoints[end - 1])) {
                 end--;
             }
         }
-        return s.substring(begin, end);
+        return new String(codePoints, begin, end - begin);
+    }
+
+    private static boolean contains(int[] values, int target) {
+        for (int value : values) {
+            if (value == target) {
+                return true;
+            }
+        }
+        return false;
     }
 
     private ValueVector logic(List<RexNode> operands, VectorSchemaRoot input, boolean isAnd) {

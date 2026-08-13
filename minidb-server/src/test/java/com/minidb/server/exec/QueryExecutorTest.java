@@ -1371,14 +1371,35 @@ class QueryExecutorTest {
         root.close();
 
         // ROUND 用单列 DOUBLE 表(多列多行含 DOUBLE 会触发坑 23 的 LogicalUnion)。
+        // 用 0.5 的 tie 值验证 SQL 的 round-half-away-from-zero(非 Math.rint 的 tie-to-even)。
         executor.execute("CREATE TABLE d (val DOUBLE)");
-        executor.execute("INSERT INTO d VALUES (2.7), (-1.7)");
+        executor.execute("INSERT INTO d VALUES (2.5), (-2.5)");
         QueryResult r2 = executor.execute("SELECT ROUND(val) AS rounded FROM d ORDER BY val");
         VectorSchemaRoot root2 = ((QueryResult.Rows) r2).data();
         Float8Vector rounded = (Float8Vector) root2.getVector("rounded");
-        assertEquals(-2.0, rounded.get(0), 1e-9);
+        assertEquals(-3.0, rounded.get(0), 1e-9);
         assertEquals(3.0, rounded.get(1), 1e-9);
         root2.close();
+    }
+
+    @Test
+    void scalarFunctionsNonBmpCodePoints() {
+        executor.execute("CREATE TABLE t (id INTEGER, name VARCHAR)");
+        executor.execute("INSERT INTO t VALUES (1, '😀a'), (2, 'b')");
+        QueryResult r = executor.execute(
+                "SELECT LENGTH(name) AS len, SUBSTRING(name, 1, 1) AS sub "
+              + "FROM t ORDER BY id");
+        VectorSchemaRoot root = ((QueryResult.Rows) r).data();
+        IntVector len = (IntVector) root.getVector("len");
+        VarCharVector sub = (VarCharVector) root.getVector("sub");
+
+        // '😀a' = 2 个 code point(😀 + a),按 code point 计 LENGTH=2(非 UTF-16 code unit 的 3)。
+        assertEquals(2, len.get(0));
+        // SUBSTRING(name,1,1) = 第一个 code point '😀'(非半个代理对)。
+        assertEquals("😀", new String(sub.get(0), StandardCharsets.UTF_8));
+        assertEquals(1, len.get(1));
+        assertEquals("b", new String(sub.get(1), StandardCharsets.UTF_8));
+        root.close();
     }
 
     @Test
