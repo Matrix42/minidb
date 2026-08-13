@@ -2,6 +2,7 @@ package com.minidb.server.catalog;
 
 import java.util.List;
 import java.util.Locale;
+import java.util.Map;
 import org.apache.arrow.memory.BufferAllocator;
 import org.apache.arrow.vector.types.DateUnit;
 import org.apache.arrow.vector.types.FloatingPointPrecision;
@@ -16,27 +17,59 @@ import org.apache.calcite.sql.type.SqlTypeName;
 
 public final class ArrowTypes {
 
+    /** 保存到 Arrow Field 元数据里、标识声明类型名的 key(类型名端到端保真的核心)。 */
+    public static final String TYPE_NAME_METADATA = "minidb.type";
+    private static final int DEFAULT_DECIMAL_PRECISION = 10;
+    private static final int DEFAULT_DECIMAL_SCALE = 0;
+
     private ArrowTypes() {
     }
 
     public static ColumnType fromSqlTypeName(String name) {
         String upper = name.toUpperCase(Locale.ROOT);
         switch (upper) {
+            case "SMALLINT":
+                return ColumnType.SMALLINT;
             case "INTEGER":
             case "INT":
                 return ColumnType.INTEGER;
             case "BIGINT":
                 return ColumnType.BIGINT;
+            case "REAL":
+                return ColumnType.REAL;
+            case "FLOAT":
+                return ColumnType.FLOAT;
             case "DOUBLE":
+            case "DOUBLE PRECISION":
                 return ColumnType.DOUBLE;
+            case "DECIMAL":
+                return ColumnType.DECIMAL;
+            case "NUMERIC":
+                return ColumnType.NUMERIC;
             case "VARCHAR":
                 return ColumnType.VARCHAR;
+            case "CHAR":
+            case "CHARACTER":
+                return ColumnType.CHAR;
+            case "NCHAR":
+            case "NATIONAL CHARACTER":
+                return ColumnType.NCHAR;
+            case "NVARCHAR":
+            case "NATIONAL CHARACTER VARYING":
+                return ColumnType.NVARCHAR;
             case "BOOLEAN":
                 return ColumnType.BOOLEAN;
             case "DATE":
                 return ColumnType.DATE;
+            case "TIME":
+                return ColumnType.TIME;
             case "TIMESTAMP":
                 return ColumnType.TIMESTAMP;
+            case "BINARY":
+                return ColumnType.BINARY;
+            case "VARBINARY":
+            case "BINARY VARYING":
+                return ColumnType.VARBINARY;
             default:
                 throw new IllegalArgumentException(
                         "unsupported column type: " + name);
@@ -45,63 +78,100 @@ public final class ArrowTypes {
 
     public static String toSqlTypeName(ColumnType type) {
         switch (type) {
+            case SMALLINT:
+                return "SMALLINT";
             case INTEGER:
                 return "INTEGER";
             case BIGINT:
                 return "BIGINT";
+            case REAL:
+                return "REAL";
+            case FLOAT:
+                return "FLOAT";
             case DOUBLE:
                 return "DOUBLE";
+            case DECIMAL:
+                return "DECIMAL";
+            case NUMERIC:
+                return "NUMERIC";
             case VARCHAR:
                 return "VARCHAR";
+            case CHAR:
+                return "CHAR";
+            case NCHAR:
+                return "NCHAR";
+            case NVARCHAR:
+                return "NVARCHAR";
             case BOOLEAN:
                 return "BOOLEAN";
             case DATE:
                 return "DATE";
+            case TIME:
+                return "TIME";
             case TIMESTAMP:
                 return "TIMESTAMP";
+            case BINARY:
+                return "BINARY";
+            case VARBINARY:
+                return "VARBINARY";
             default:
                 throw new IllegalArgumentException("unknown type: " + type);
         }
     }
 
     public static ArrowType arrowType(ColumnType type, BufferAllocator allocator) {
-        return arrowTypeOf(type);
+        return arrowTypeOf(type, DEFAULT_DECIMAL_PRECISION, DEFAULT_DECIMAL_SCALE);
     }
 
     public static Field field(ColumnMeta meta) {
-        return new Field(meta.name(), FieldType.nullable(arrowTypeOf(meta.type())),
+        return new Field(meta.name(),
+                new FieldType(true, arrowTypeOf(meta.type(), meta.precision(), meta.scale()),
+                        null, Map.of(TYPE_NAME_METADATA, meta.type().name())),
                 List.of());
     }
 
-    /**
-     * Build an Arrow field for a Calcite {@link RelDataTypeField}, mirroring the
-     * type mapping the plan operators use. Used to derive the schema of a result
-     * set when no batches were produced (e.g. SELECT over an empty table).
-     */
     public static Field field(RelDataTypeField dataTypeField) {
         return new Field(dataTypeField.getName(),
-                FieldType.nullable(arrowTypeOf(dataTypeField.getType().getSqlTypeName())),
+                FieldType.nullable(arrowTypeOf(dataTypeField.getType())),
                 List.of());
     }
 
-    /** Build an Arrow field for a raw Calcite type (e.g. a window function result). */
     public static Field field(RelDataType type, String name) {
         return new Field(name,
-                FieldType.nullable(arrowTypeOf(type.getSqlTypeName())),
+                FieldType.nullable(arrowTypeOf(type)),
                 List.of());
+    }
+
+    private static ArrowType arrowTypeOf(RelDataType type) {
+        if (type.getSqlTypeName() == SqlTypeName.DECIMAL) {
+            int precision = type.getPrecision();
+            int scale = type.getScale();
+            if (precision < 0) {
+                precision = DEFAULT_DECIMAL_PRECISION;
+            }
+            if (scale < 0) {
+                scale = DEFAULT_DECIMAL_SCALE;
+            }
+            return new ArrowType.Decimal(precision, scale, 128);
+        }
+        return arrowTypeOf(type.getSqlTypeName());
     }
 
     private static ArrowType arrowTypeOf(SqlTypeName type) {
         switch (type) {
+            case SMALLINT:
+                return new ArrowType.Int(16, true);
             case INTEGER:
                 return new ArrowType.Int(32, true);
             case BIGINT:
                 return new ArrowType.Int(64, true);
-            case DOUBLE:
-            case FLOAT:
             case REAL:
-            case DECIMAL:
+            case FLOAT:
+                return new ArrowType.FloatingPoint(FloatingPointPrecision.SINGLE);
+            case DOUBLE:
                 return new ArrowType.FloatingPoint(FloatingPointPrecision.DOUBLE);
+            case DECIMAL:
+                return new ArrowType.Decimal(DEFAULT_DECIMAL_PRECISION, DEFAULT_DECIMAL_SCALE, 128);
             case VARCHAR:
             case CHAR:
                 return ArrowType.Utf8.INSTANCE;
@@ -109,49 +179,90 @@ public final class ArrowTypes {
                 return ArrowType.Bool.INSTANCE;
             case DATE:
                 return new ArrowType.Date(DateUnit.DAY);
+            case TIME:
+                return new ArrowType.Time(TimeUnit.MILLISECOND, 32);
             case TIMESTAMP:
                 return new ArrowType.Timestamp(TimeUnit.MILLISECOND, null);
+            case BINARY:
+            case VARBINARY:
+                return ArrowType.Binary.INSTANCE;
             default:
                 throw new IllegalArgumentException(
                         "unsupported sql type: " + type);
         }
     }
 
-    private static ArrowType arrowTypeOf(ColumnType type) {
+    private static ArrowType arrowTypeOf(ColumnType type, int precision, int scale) {
         switch (type) {
+            case SMALLINT:
+                return new ArrowType.Int(16, true);
             case INTEGER:
                 return new ArrowType.Int(32, true);
             case BIGINT:
                 return new ArrowType.Int(64, true);
+            case REAL:
+            case FLOAT:
+                return new ArrowType.FloatingPoint(FloatingPointPrecision.SINGLE);
             case DOUBLE:
                 return new ArrowType.FloatingPoint(FloatingPointPrecision.DOUBLE);
+            case DECIMAL:
+            case NUMERIC: {
+                int p = precision >= 0 ? precision : DEFAULT_DECIMAL_PRECISION;
+                int s = scale >= 0 ? scale : DEFAULT_DECIMAL_SCALE;
+                return new ArrowType.Decimal(p, s, 128);
+            }
             case VARCHAR:
+            case CHAR:
+            case NCHAR:
+            case NVARCHAR:
                 return ArrowType.Utf8.INSTANCE;
             case BOOLEAN:
                 return ArrowType.Bool.INSTANCE;
             case DATE:
                 return new ArrowType.Date(DateUnit.DAY);
+            case TIME:
+                return new ArrowType.Time(TimeUnit.MILLISECOND, 32);
             case TIMESTAMP:
                 return new ArrowType.Timestamp(TimeUnit.MILLISECOND, null);
+            case BINARY:
+            case VARBINARY:
+                return ArrowType.Binary.INSTANCE;
             default:
                 throw new IllegalArgumentException("unknown type: " + type);
         }
     }
 
-    public static RelDataType toCalciteType(ColumnType type, RelDataTypeFactory factory) {
+    public static RelDataType toCalciteType(ColumnMeta meta, RelDataTypeFactory factory) {
+        if (meta.type() == ColumnType.DECIMAL || meta.type() == ColumnType.NUMERIC) {
+            int precision = meta.precision() >= 0 ? meta.precision() : DEFAULT_DECIMAL_PRECISION;
+            int scale = meta.scale() >= 0 ? meta.scale() : DEFAULT_DECIMAL_SCALE;
+            return factory.createSqlType(SqlTypeName.DECIMAL, precision, scale);
+        }
         SqlTypeName sqlType;
-        switch (type) {
+        switch (meta.type()) {
+            case SMALLINT:
+                sqlType = SqlTypeName.SMALLINT;
+                break;
             case INTEGER:
                 sqlType = SqlTypeName.INTEGER;
                 break;
             case BIGINT:
                 sqlType = SqlTypeName.BIGINT;
                 break;
+            case REAL:
+            case FLOAT:
+                sqlType = SqlTypeName.REAL;
+                break;
             case DOUBLE:
                 sqlType = SqlTypeName.DOUBLE;
                 break;
             case VARCHAR:
+            case NCHAR:
+            case NVARCHAR:
                 sqlType = SqlTypeName.VARCHAR;
+                break;
+            case CHAR:
+                sqlType = SqlTypeName.CHAR;
                 break;
             case BOOLEAN:
                 sqlType = SqlTypeName.BOOLEAN;
@@ -159,13 +270,23 @@ public final class ArrowTypes {
             case DATE:
                 sqlType = SqlTypeName.DATE;
                 break;
+            case TIME:
+                sqlType = SqlTypeName.TIME;
+                break;
             case TIMESTAMP:
                 sqlType = SqlTypeName.TIMESTAMP;
                 break;
+            case BINARY:
+                sqlType = SqlTypeName.BINARY;
+                break;
+            case VARBINARY:
+                sqlType = SqlTypeName.VARBINARY;
+                break;
             default:
-                throw new IllegalArgumentException("unknown type: " + type);
+                throw new IllegalArgumentException("unknown type: " + meta.type());
         }
-        if (sqlType == SqlTypeName.VARCHAR) {
+        if (sqlType == SqlTypeName.VARCHAR || sqlType == SqlTypeName.CHAR
+                || sqlType == SqlTypeName.BINARY || sqlType == SqlTypeName.VARBINARY) {
             return factory.createSqlType(sqlType, Integer.MAX_VALUE);
         }
         return factory.createSqlType(sqlType);

@@ -68,9 +68,33 @@ class ArrowTypesTest {
 
     @Test
     void sqlTypeNameRoundTrip() {
-        for (ColumnType t : new ColumnType[]{ColumnType.INTEGER, ColumnType.BIGINT, ColumnType.DOUBLE,
-                ColumnType.VARCHAR, ColumnType.BOOLEAN, ColumnType.DATE, ColumnType.TIMESTAMP}) {
+        for (ColumnType t : ColumnType.values()) {
             assertEquals(t, ArrowTypes.fromSqlTypeName(ArrowTypes.toSqlTypeName(t)));
         }
+    }
+
+    @Test
+    void newSqlTypeNamesMapToColumnType() {
+        assertEquals(ColumnType.SMALLINT, ArrowTypes.fromSqlTypeName("SMALLINT"));
+        assertEquals(ColumnType.REAL, ArrowTypes.fromSqlTypeName("REAL"));
+        assertEquals(ColumnType.FLOAT, ArrowTypes.fromSqlTypeName("FLOAT"));
+        assertEquals(ColumnType.DOUBLE, ArrowTypes.fromSqlTypeName("DOUBLE PRECISION"));
+        assertEquals(ColumnType.CHAR, ArrowTypes.fromSqlTypeName("CHAR"));
+        assertEquals(ColumnType.NCHAR, ArrowTypes.fromSqlTypeName("NCHAR"));
+        assertEquals(ColumnType.NVARCHAR, ArrowTypes.fromSqlTypeName("NVARCHAR"));
+        assertEquals(ColumnType.DECIMAL, ArrowTypes.fromSqlTypeName("DECIMAL"));
+        assertEquals(ColumnType.NUMERIC, ArrowTypes.fromSqlTypeName("NUMERIC"));
+        assertEquals(ColumnType.TIME, ArrowTypes.fromSqlTypeName("TIME"));
+        assertEquals(ColumnType.BINARY, ArrowTypes.fromSqlTypeName("BINARY"));
+        assertEquals(ColumnType.VARBINARY, ArrowTypes.fromSqlTypeName("VARBINARY"));
+    }
+
+    @Test
+    void decimalFieldCarriesPrecisionScaleAndTypeName() {
+        Field f = ArrowTypes.field(new ColumnMeta("price", ColumnType.DECIMAL, 10, 2));
+        ArrowType.Decimal d = (ArrowType.Decimal) f.getType();
+        assertEquals(10, d.getPrecision());
+        assertEquals(2, d.getScale());
+        assertEquals("DECIMAL", f.getMetadata().get("minidb.type"));
     }
 }

@@ -21,7 +21,7 @@ public class MiniDbCalciteTable extends AbstractTable {
     public RelDataType getRowType(RelDataTypeFactory typeFactory) {
         RelDataTypeFactory.Builder builder = typeFactory.builder();
         for (ColumnMeta column : schema.columns()) {
-            RelDataType type = ArrowTypes.toCalciteType(column.type(), typeFactory);
+            RelDataType type = ArrowTypes.toCalciteType(column, typeFactory);
             builder.add(column.name(), type).nullable(true);
         }
         return builder.build();
