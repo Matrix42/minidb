@@ -300,7 +300,19 @@ public class RexInterpreter {
             SqlTypeName target = call.getType().getSqlTypeName();
             int rows = input.getRowCount();
             switch (target) {
-                case INTEGER:
+                case INTEGER: {
+                    IntVector out = new IntVector("cast", allocator);
+                    out.allocateNew(rows);
+                    for (int i = 0; i < rows; i++) {
+                        if (v.isNull(i)) {
+                            out.setNull(i);
+                        } else {
+                            out.setSafe(i, (int) asLong(v, i));
+                        }
+                    }
+                    out.setValueCount(rows);
+                    return out;
+                }
                 case BIGINT: {
                     BigIntVector out = new BigIntVector("cast", allocator);
                     out.allocateNew(rows);
@@ -330,6 +342,33 @@ public class RexInterpreter {
                     out.setValueCount(rows);
                     return out;
                 }
+                case CHAR:
+                case VARCHAR: {
+                    VarCharVector out = new VarCharVector("cast", allocator);
+                    out.allocateNew();
+                    for (int i = 0; i < rows; i++) {
+                        if (v.isNull(i)) {
+                            out.setNull(i);
+                        } else {
+                            out.setSafe(i, asString(v, i).getBytes(StandardCharsets.UTF_8));
+                        }
+                    }
+                    out.setValueCount(rows);
+                    return out;
+                }
+                case BOOLEAN: {
+                    BitVector out = new BitVector("cast", allocator);
+                    out.allocateNew(rows);
+                    for (int i = 0; i < rows; i++) {
+                        if (v.isNull(i)) {
+                            out.setNull(i);
+                        } else {
+                            out.setSafe(i, asBoolean(v, i) ? 1 : 0);
+                        }
+                    }
+                    out.setValueCount(rows);
+                    return out;
+                }
                 default:
                     throw new UnsupportedOperationException(
                             "unsupported CAST target: " + target);
@@ -347,7 +386,16 @@ public class RexInterpreter {
         switch (typeName) {
             case TINYINT:
             case SMALLINT:
-            case INTEGER:
+            case INTEGER: {
+                IntVector out = new IntVector("lit", allocator);
+                out.allocateNew(rows);
+                int value = literal.getValueAs(BigDecimal.class).intValue();
+                for (int i = 0; i < rows; i++) {
+                    out.setSafe(i, value);
+                }
+                out.setValueCount(rows);
+                return out;
+            }
             case BIGINT: {
                 BigIntVector out = new BigIntVector("lit", allocator);
                 out.allocateNew(rows);
@@ -427,6 +475,8 @@ public class RexInterpreter {
             case TINYINT:
             case SMALLINT:
             case INTEGER:
+                out = new IntVector("lit", allocator);
+                break;
             case BIGINT:
                 out = new BigIntVector("lit", allocator);
                 break;
@@ -469,6 +519,12 @@ public class RexInterpreter {
         if (v instanceof Float8Vector fv) {
             return (long) fv.get(i);
         }
+        if (v instanceof BitVector bv) {
+            return bv.get(i);
+        }
+        if (v instanceof VarCharVector vv) {
+            return Long.parseLong(new String(vv.get(i), StandardCharsets.UTF_8).trim());
+        }
         throw new IllegalArgumentException("not a numeric vector: " + v.getClass());
     }
 
@@ -482,6 +538,47 @@ public class RexInterpreter {
         if (v instanceof Float8Vector fv) {
             return fv.get(i);
         }
+        if (v instanceof BitVector bv) {
+            return bv.get(i);
+        }
+        if (v instanceof VarCharVector vv) {
+            return Double.parseDouble(new String(vv.get(i), StandardCharsets.UTF_8).trim());
+        }
         throw new IllegalArgumentException("not a numeric vector: " + v.getClass());
+    }
+
+    private static String asString(ValueVector v, int i) {
+        if (v instanceof VarCharVector vv) {
+            return new String(vv.get(i), StandardCharsets.UTF_8);
+        }
+        if (v instanceof IntVector iv) {
+            return Integer.toString(iv.get(i));
+        }
+        if (v instanceof BigIntVector bv) {
+            return Long.toString(bv.get(i));
+        }
+        if (v instanceof Float8Vector fv) {
+            return Double.toString(fv.get(i));
+        }
+        if (v instanceof BitVector bv) {
+            return bv.get(i) == 1 ? "true" : "false";
+        }
+        throw new IllegalArgumentException("cannot cast to string: " + v.getClass());
+    }
+
+    private static boolean asBoolean(ValueVector v, int i) {
+        if (v instanceof BitVector bv) {
+            return bv.get(i) == 1;
+        }
+        if (v instanceof IntVector iv) {
+            return iv.get(i) != 0;
+        }
+        if (v instanceof BigIntVector bv) {
+            return bv.get(i) != 0;
+        }
+        if (v instanceof VarCharVector vv) {
+            return Boolean.parseBoolean(new String(vv.get(i), StandardCharsets.UTF_8).trim());
+        }
+        throw new IllegalArgumentException("cannot cast to boolean: " + v.getClass());
     }
 }

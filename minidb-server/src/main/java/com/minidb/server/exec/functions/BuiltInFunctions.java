@@ -37,19 +37,13 @@ public final class BuiltInFunctions {
     }
 
     /**
-     * ABS 的四个重载收进同一个 {@link Function}(注册表按 SqlOperator 覆盖)。
-     * 整数字面量恒产 BigIntVector(坑 #23)但结果类型仍是 INTEGER → IntVector,故
-     * [BigIntVector] 输入按输出类型拆成两个重载:→IntVector(字面量,long 域算完截断)
-     * 与 →BigIntVector(BIGINT 列)。输出类型参与分发后无需再在核内 instanceof 分支。
+     * ABS 的三个同型重载收进同一个 {@link Function}(注册表按 SqlOperator 覆盖)。
      */
     private static Function absFunction() {
         return new Function(SqlStdOperatorTable.ABS.getName(), List.of(
                 new Overload(List.of(IntVector.class), IntVector.class,
                         (args, out) -> Kernels.fillUnaryInt(
                                 (IntVector) args.get(0), (IntVector) out, Math::abs)),
-                new Overload(List.of(BigIntVector.class), IntVector.class,
-                        (args, out) -> Kernels.fillUnaryLongToInt(
-                                (BigIntVector) args.get(0), (IntVector) out, Math::abs)),
                 new Overload(List.of(BigIntVector.class), BigIntVector.class,
                         (args, out) -> Kernels.fillUnaryLong(
                                 (BigIntVector) args.get(0), (BigIntVector) out, Math::abs)),
@@ -144,9 +138,9 @@ public final class BuiltInFunctions {
     }
 
     /**
-     * SUBSTRING(s, from, len) 的 3 参核。第二/三参在真实 SQL 里是整型:字面量恒产 BigIntVector
-     * (坑 #23),而 INTEGER 列产 IntVector —— 两种类型都要能接,故各组合都注册到同一个核,核内用
-     * {@link #intArg} 类型无关地读取出 int 值。结果恒 VARCHAR(VarCharVector)。
+     * SUBSTRING(s, from, len) 的 3 参核。第二/三参是整型,但可能是 INTEGER(IntVector)或
+     * BIGINT(BigIntVector)列/字面量 —— 两种类型都要能接,故各组合都注册到同一个核,核内用
+     * {@link #longArg} 类型无关地读取出 long 值(再在 slice 里 clamp)。结果恒 VARCHAR(VarCharVector)。
      */
     private static Function substringFunction() {
         Kernel substringKernel = BuiltInFunctions::substring;
@@ -225,9 +219,9 @@ public final class BuiltInFunctions {
 
     /**
      * 单个比较运算符的所有重载合成一个 {@link Function}(注册表按 SqlOperator 覆盖)。结果恒
-     * BOOLEAN(BitVector);同型 Int/Long/Double 各走对应核,字符串走 String 核;整数字面量恒产
-     * BigIntVector(坑 #23)而 INTEGER 列是 IntVector,故注册 [Int,BigInt]/[BigInt,Int] 两个跨型
-     * 重载,promote int 到 long 后按 Long 比较。
+     * BOOLEAN(BitVector);同型 Int/Long/Double 各走对应核,字符串走 String 核。真混型
+     * INTEGER/BIGINT(如 `int_col > bigint_col`)Calcite 不强制 CAST,需 [Int,BigInt]/[BigInt,Int]
+     * 跨型重载(int 侧 promote 到 long)。
      */
     private static Function comparisonFunction(SqlOperator op, SqlKind kind) {
         return new Function(op.getName(), List.of(
@@ -266,8 +260,10 @@ public final class BuiltInFunctions {
 
     /**
      * 单个算术运算符的所有重载合成一个 {@link Function}。每个 SqlOperator 在注册表里只对应
-     * 一个 Function({@code register} 会覆盖),故同型(Int/Long/Double)与跨型重载必须收进同一
-     * 个 overload 列表。跨型输出恒 IntVector(整数字面量坑,结果类型 INTEGER)。
+     * 一个 Function({@code register} 会覆盖)。真混型 INTEGER/BIGINT(如 `int_col + bigint_col`)
+     * Calcite **不**强制 CAST,操作数保持 Int+BigInt 混型、结果 BIGINT,故需跨型重载(输出
+     * BigIntVector,int 侧 promote 到 long)。整数字面量经 RexInterpreter 已是 IntVector(不再
+     * 产 BigIntVector),故不再有「字面量坑」的 Int 结果跨型。
      */
     private static Function arithmeticFunction(SqlOperator op) {
         ScalarKernels.IntBinary intOp = intKernel(op);
@@ -283,17 +279,12 @@ public final class BuiltInFunctions {
                 new Overload(List.of(Float8Vector.class, Float8Vector.class), Float8Vector.class,
                         (args, out) -> Kernels.fillBinaryDouble(
                                 (Float8Vector) args.get(0), (Float8Vector) args.get(1), (Float8Vector) out, doubleOp)),
-                // 整数字面量经 RexInterpreter.literalVector 恒产 BigIntVector(坑 #23),而 INTEGER
-                // 列经 RowCopier.copyVector 产 IntVector —— 二者混算(如 `id + 1`)没有同型重载,
-                // 必须注册跨型重载。输出硬编码 IntVector:真正混型 INTEGER/BIGINT 的操作数
-                // Calcite 会在算子前 CAST 成 BIGINT,故跨型只由「字面量是 BigIntVector 但 Calcite
-                // 类型仍是 INTEGER」的坑触发,结果类型恒 INTEGER。
-                new Overload(List.of(IntVector.class, BigIntVector.class), IntVector.class,
+                new Overload(List.of(IntVector.class, BigIntVector.class), BigIntVector.class,
                         (args, out) -> fillIntLongBinary(
-                                (IntVector) args.get(0), (BigIntVector) args.get(1), (IntVector) out, longOp)),
-                new Overload(List.of(BigIntVector.class, IntVector.class), IntVector.class,
+                                (IntVector) args.get(0), (BigIntVector) args.get(1), (BigIntVector) out, longOp)),
+                new Overload(List.of(BigIntVector.class, IntVector.class), BigIntVector.class,
                         (args, out) -> fillLongIntBinary(
-                                (BigIntVector) args.get(0), (IntVector) args.get(1), (IntVector) out, longOp))));
+                                (BigIntVector) args.get(0), (IntVector) args.get(1), (BigIntVector) out, longOp))));
     }
 
     private static ScalarKernels.IntBinary intKernel(SqlOperator op) {
@@ -335,19 +326,20 @@ public final class BuiltInFunctions {
         return (a, b) -> { if (b == 0) throw new ArithmeticException("division by zero"); return a / b; };
     }
 
-    private static void fillIntLongBinary(IntVector left, BigIntVector right, IntVector out,
+    /** 跨型算术(INTEGER 列 vs BIGINT 列):int 侧 promote 到 long,结果写 BigIntVector。 */
+    private static void fillIntLongBinary(IntVector left, BigIntVector right, BigIntVector out,
                                           ScalarKernels.LongBinary op) {
         for (int i = 0; i < left.getValueCount(); i++) {
             if (left.isNull(i) || right.isNull(i)) { out.setNull(i); continue; }
-            out.setSafe(i, (int) op.apply(left.get(i), right.get(i)));
+            out.setSafe(i, op.apply(left.get(i), right.get(i)));
         }
     }
 
-    private static void fillLongIntBinary(BigIntVector left, IntVector right, IntVector out,
+    private static void fillLongIntBinary(BigIntVector left, IntVector right, BigIntVector out,
                                           ScalarKernels.LongBinary op) {
         for (int i = 0; i < left.getValueCount(); i++) {
             if (left.isNull(i) || right.isNull(i)) { out.setNull(i); continue; }
-            out.setSafe(i, (int) op.apply(left.get(i), right.get(i)));
+            out.setSafe(i, op.apply(left.get(i), right.get(i)));
         }
     }
 }

@@ -1403,6 +1403,32 @@ class QueryExecutorTest {
     }
 
     @Test
+    void mixedIntegerBigintArithmeticCoerces() {
+        executor.execute("CREATE TABLE t (a INTEGER, b BIGINT)");
+        executor.execute("INSERT INTO t VALUES (2, 3)");
+        QueryResult r = executor.execute("SELECT a + b AS s FROM t");
+        VectorSchemaRoot root = ((QueryResult.Rows) r).data();
+        // INTEGER + BIGINT → Calcite 把 INTEGER 侧 CAST 成 BIGINT,结果 BIGINT。
+        assertEquals(5L, ((BigIntVector) root.getVector("s")).get(0));
+        root.close();
+    }
+
+    @Test
+    void castStringNumberConversions() {
+        executor.execute("CREATE TABLE t (id INTEGER)");
+        executor.execute("INSERT INTO t VALUES (42)");
+        QueryResult r = executor.execute(
+                "SELECT CAST(id AS VARCHAR) AS s, CAST('123' AS INTEGER) AS n, "
+              + "CAST('2.5' AS DOUBLE) AS d FROM t");
+        VectorSchemaRoot root = ((QueryResult.Rows) r).data();
+        assertEquals("42", new String(
+                ((VarCharVector) root.getVector("s")).get(0), StandardCharsets.UTF_8));
+        assertEquals(123, ((IntVector) root.getVector("n")).get(0));
+        assertEquals(2.5, ((Float8Vector) root.getVector("d")).get(0), 1e-9);
+        root.close();
+    }
+
+    @Test
     void explainAnalyzeWindowProjectMeasuresRows() {
         createWindowTable();
         QueryResult r = executor.execute(
