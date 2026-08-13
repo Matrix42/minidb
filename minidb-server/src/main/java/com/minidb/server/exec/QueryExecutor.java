@@ -19,6 +19,7 @@ import org.apache.arrow.vector.VectorSchemaRoot;
 import org.apache.arrow.vector.types.pojo.Field;
 import org.apache.calcite.rel.RelNode;
 import org.apache.calcite.rel.type.RelDataTypeField;
+import org.apache.calcite.sql.SqlBasicTypeNameSpec;
 import org.apache.calcite.sql.SqlNode;
 import org.apache.calcite.sql.ddl.SqlColumnDeclaration;
 import org.apache.calcite.sql.ddl.SqlCreateSchema;
@@ -140,7 +141,21 @@ public class QueryExecutor {
             SqlColumnDeclaration column = (SqlColumnDeclaration) columnNode;
             String typeName = column.dataType.getTypeName().getSimple();
             ColumnType type = ArrowTypes.fromSqlTypeName(typeName);
-            columns.add(new ColumnMeta(column.name.getSimple(), type));
+            int precision = ColumnMeta.PRECISION_UNSET;
+            int scale = ColumnMeta.SCALE_UNSET;
+            // Calcite 1.42 把 precision/scale 挂在 SqlBasicTypeNameSpec 上
+            // (SqlDataTypeSpec 无 getPrecision/getScale);未指定时 precision 返回 -1、
+            // scale 返回 RelDataType.SCALE_NOT_SPECIFIED(Integer.MIN_VALUE),
+            // 这里按 <0 统一归一为 ColumnMeta 的 -1 哨兵,避免泄露 Calcite 的哨兵值。
+            if (column.dataType.getTypeNameSpec() instanceof SqlBasicTypeNameSpec basicSpec) {
+                if (basicSpec.getPrecision() >= 0) {
+                    precision = basicSpec.getPrecision();
+                }
+                if (basicSpec.getScale() >= 0) {
+                    scale = basicSpec.getScale();
+                }
+            }
+            columns.add(new ColumnMeta(column.name.getSimple(), type, precision, scale));
         }
         TableSchema schema = new TableSchema(schemaName, tableName, columns);
         storage.createTable(schema);
