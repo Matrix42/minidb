@@ -129,4 +129,29 @@ class RexInterpreterTest {
         assertTrue(d.isNull(2));
         out.close();
     }
+
+    @Test
+    void longArithmetic() {
+        RelDataType bigint = typeFactory.createSqlType(SqlTypeName.BIGINT);
+        Field la = new Field("la", FieldType.nullable(new ArrowType.Int(64, true)), List.of());
+        Field lb = new Field("lb", FieldType.nullable(new ArrowType.Int(64, true)), List.of());
+        VectorSchemaRoot longInput = VectorSchemaRoot.create(new Schema(List.of(la, lb)), allocator);
+        longInput.allocateNew();
+        BigIntVector vla = (BigIntVector) longInput.getVector("la");
+        BigIntVector vlb = (BigIntVector) longInput.getVector("lb");
+        vla.setSafe(0, 10L); vlb.setSafe(0, 3L);
+        vla.setSafe(1, 100L); vlb.setSafe(1, 7L);
+        vla.setNull(2);      vlb.setSafe(2, 5L);
+        longInput.setRowCount(3);
+
+        RexNode expr = rex.makeCall(SqlStdOperatorTable.MINUS,
+                rex.makeInputRef(bigint, 0), rex.makeInputRef(bigint, 1));
+        ValueVector out = interpreter.eval(expr, longInput);
+        BigIntVector result = (BigIntVector) out;
+        assertEquals(7L, result.get(0));
+        assertEquals(93L, result.get(1));
+        assertTrue(result.isNull(2));
+        out.close();
+        longInput.close();
+    }
 }
