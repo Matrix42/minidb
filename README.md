@@ -5,7 +5,8 @@
 ## 特性
 
 - 自研 JDBC 驱动（`jdbc:minidb://host:port`），基于自定义 Netty wire 协议
-- Calcite 驱动的 SQL：CREATE/DROP TABLE、INSERT（VALUES 与 ...SELECT 两种形式）、SELECT（支持 WHERE / ORDER BY / LIMIT）
+- Calcite 驱动的 SQL：CREATE/DROP TABLE、INSERT（VALUES 与 ...SELECT 两种形式）、UPDATE/DELETE/TRUNCATE、SELECT（WHERE / ORDER BY / LIMIT / OFFSET）
+- 查询能力：JOIN（INNER/LEFT/RIGHT/FULL）、聚合（GROUP BY + COUNT/SUM/AVG/MIN/MAX + DISTINCT）、集合运算（UNION/INTERSECT/EXCEPT）、窗口函数（SUM/AVG/COUNT/MIN/MAX over + ROW_NUMBER/RANK/DENSE_RANK/LEAD/LAG/FIRST_VALUE/LAST_VALUE）、CTE（WITH，含递归 WITH RECURSIVE）
 - Schema 支持：CREATE/DROP SCHEMA、`schema.table` 限定名、`USE SCHEMA` 切换当前 schema（每连接隔离），所有表默认属于 `public` schema
 - 数据以 Arrow 列式批次存于内存，持久化为 Arrow IPC 文件（`data/<schema>/<table>.arrow`）
 - VolcanoPlanner + 自研 ConverterRule 生成物理算子，批式向量化执行
@@ -63,7 +64,7 @@ INTEGER、BIGINT、DOUBLE、VARCHAR、BOOLEAN、DATE、TIMESTAMP。
 
 ## 限制
 
-- 无事务（autoCommit 恒为 true）、无 UPDATE/DELETE、无 JOIN、无聚合
+- 无事务（autoCommit 恒为 true）
 - 崩溃可能丢失未 flush 的插入（正常关闭时统一落盘）
 - PreparedStatement 为客户端参数替换实现
 - 结果集在客户端一次性物化，不做服务端分页
