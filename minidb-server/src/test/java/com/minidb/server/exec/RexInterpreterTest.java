@@ -154,4 +154,29 @@ class RexInterpreterTest {
         out.close();
         longInput.close();
     }
+
+    @Test
+    void literalMinusColumn() {
+        // 字面量在左(整数字面量恒 BigIntVector,坑 #23)、列在右(IntVector),走反向跨型重载。
+        RexNode expr = rex.makeCall(SqlStdOperatorTable.MINUS,
+                rex.makeExactLiteral(java.math.BigDecimal.valueOf(100), intType()),
+                rex.makeInputRef(intType(), 0));
+        ValueVector out = interpreter.eval(expr, input);
+        assertEquals(99, ((IntVector) out).get(0));
+        assertEquals(95, ((IntVector) out).get(1));
+        assertTrue(out.isNull(2));
+        out.close();
+    }
+
+    @Test
+    void literalDivideColumn() {
+        RexNode expr = rex.makeCall(SqlStdOperatorTable.DIVIDE,
+                rex.makeExactLiteral(java.math.BigDecimal.valueOf(10), intType()),
+                rex.makeInputRef(intType(), 0));
+        ValueVector out = interpreter.eval(expr, input);
+        assertEquals(10, ((IntVector) out).get(0));
+        assertEquals(2, ((IntVector) out).get(1));
+        assertTrue(out.isNull(2));
+        out.close();
+    }
 }

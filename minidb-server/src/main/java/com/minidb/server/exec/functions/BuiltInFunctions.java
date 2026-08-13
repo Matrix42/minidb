@@ -45,13 +45,16 @@ public final class BuiltInFunctions {
                                 (Float8Vector) args.get(0), (Float8Vector) args.get(1), (Float8Vector) out, doubleOp)),
                 // 整数字面量经 RexInterpreter.literalVector 恒产 BigIntVector(坑 #23),而 INTEGER
                 // 列经 RowCopier.copyVector 产 IntVector —— 二者混算(如 `id + 1`、`id * 2`)没有任何
-                // 同型重载匹配,必须注册跨型重载,结果类型仍为 INTEGER。两种操作数顺序都注册。
+                // 同型重载匹配,必须注册跨型重载。输出硬编码 IntVector 是安全的:真正混型
+                // INTEGER/BIGINT 的操作数 Calcite 会在算子前 CAST 成 BIGINT,故跨型只由「字面量
+                // 是 BigIntVector 但 Calcite 类型仍是 INTEGER」的坑触发,结果类型恒为 INTEGER。
+                // 两种操作数顺序都注册,且各自按真实操作数顺序计算(非交换的 MINUS/DIVIDE 不能颠倒)。
                 new Overload(List.of(IntVector.class, BigIntVector.class),
                         (args, out) -> fillIntLongBinary(
                                 (IntVector) args.get(0), (BigIntVector) args.get(1), (IntVector) out, longOp)),
                 new Overload(List.of(BigIntVector.class, IntVector.class),
-                        (args, out) -> fillIntLongBinary(
-                                (IntVector) args.get(1), (BigIntVector) args.get(0), (IntVector) out, longOp))));
+                        (args, out) -> fillLongIntBinary(
+                                (BigIntVector) args.get(0), (IntVector) args.get(1), (IntVector) out, longOp))));
     }
 
     private static ScalarKernels.IntBinary intKernel(SqlOperator op) {
@@ -94,6 +97,14 @@ public final class BuiltInFunctions {
     }
 
     private static void fillIntLongBinary(IntVector left, BigIntVector right, IntVector out,
+                                          ScalarKernels.LongBinary op) {
+        for (int i = 0; i < left.getValueCount(); i++) {
+            if (left.isNull(i) || right.isNull(i)) { out.setNull(i); continue; }
+            out.setSafe(i, (int) op.apply(left.get(i), right.get(i)));
+        }
+    }
+
+    private static void fillLongIntBinary(BigIntVector left, IntVector right, IntVector out,
                                           ScalarKernels.LongBinary op) {
         for (int i = 0; i < left.getValueCount(); i++) {
             if (left.isNull(i) || right.isNull(i)) { out.setNull(i); continue; }
