@@ -4,6 +4,7 @@ import com.minidb.server.exec.functions.BuiltInFunctions;
 import com.minidb.server.exec.functions.Function;
 import com.minidb.server.exec.functions.FunctionRegistry;
 import java.math.BigDecimal;
+import java.nio.charset.StandardCharsets;
 import java.util.ArrayList;
 import java.util.Calendar;
 import java.util.List;
@@ -25,6 +26,7 @@ import org.apache.calcite.rex.RexInputRef;
 import org.apache.calcite.rex.RexLiteral;
 import org.apache.calcite.rex.RexNode;
 import org.apache.calcite.sql.SqlKind;
+import org.apache.calcite.sql.fun.SqlTrimFunction;
 import org.apache.calcite.sql.type.SqlTypeName;
 
 public class RexInterpreter {
@@ -67,6 +69,8 @@ public class RexInterpreter {
                 return evalCast(call, input);
             case CASE:
                 return caseExpr(call, input);
+            case TRIM:
+                return evalTrim(call, input);
             default: {
                 List<ValueVector> args = new ArrayList<>();
                 for (RexNode operand : call.getOperands()) {
@@ -82,6 +86,59 @@ public class RexInterpreter {
                 return f.evaluate(args, call.getType(), allocator);
             }
         }
+    }
+
+    /**
+     * TRIM 的 3 参形式(Calcite 把 `TRIM(s)` 解析期重写为 `TRIM(Flag, ' ', s)`):第一参是
+     * SYMBOL 字面量(LEADING/TRAILING/BOTH,经 RexBuilder.makeFlag 产出),不是列值,无法走
+     * 常规字面量向量,故从 RexLiteral 直接取 Flag;第二/三参(trim 字符集、输入串)正常求值。
+     */
+    private ValueVector evalTrim(RexCall call, VectorSchemaRoot input) {
+        SqlTrimFunction.Flag flag =
+                ((RexLiteral) call.getOperands().get(0)).getValueAs(SqlTrimFunction.Flag.class);
+        ValueVector trimChars = eval(call.getOperands().get(1), input);
+        ValueVector str = eval(call.getOperands().get(2), input);
+        int rows = input.getRowCount();
+        VarCharVector out = new VarCharVector("trim", allocator);
+        out.setInitialCapacity(rows);
+        out.allocateNew();
+        try {
+            for (int i = 0; i < rows; i++) {
+                if (trimChars.isNull(i) || str.isNull(i)) {
+                    out.setNull(i);
+                    continue;
+                }
+                String chars = new String(((VarCharVector) trimChars).get(i), StandardCharsets.UTF_8);
+                String s = new String(((VarCharVector) str).get(i), StandardCharsets.UTF_8);
+                out.setSafe(i, trim(s, chars, flag.getLeft() == 1, flag.getRight() == 1)
+                        .getBytes(StandardCharsets.UTF_8));
+            }
+            out.setValueCount(rows);
+            return out;
+        } catch (RuntimeException e) {
+            out.close();
+            throw e;
+        } finally {
+            trimChars.close();
+            str.close();
+        }
+    }
+
+    /** 按 Flag 的 left/right 掩码,从字符串两端剥离 chars 集合内的字符(同 SQL TRIM 语义)。 */
+    private static String trim(String s, String chars, boolean stripLeading, boolean stripTrailing) {
+        int begin = 0;
+        int end = s.length();
+        if (stripLeading) {
+            while (begin < end && chars.indexOf(s.charAt(begin)) >= 0) {
+                begin++;
+            }
+        }
+        if (stripTrailing) {
+            while (end > begin && chars.indexOf(s.charAt(end - 1)) >= 0) {
+                end--;
+            }
+        }
+        return s.substring(begin, end);
     }
 
     private ValueVector logic(List<RexNode> operands, VectorSchemaRoot input, boolean isAnd) {

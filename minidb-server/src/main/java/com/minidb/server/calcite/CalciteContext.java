@@ -17,7 +17,8 @@ import org.apache.calcite.rel.RelRoot;
 import org.apache.calcite.rex.RexBuilder;
 import org.apache.calcite.schema.SchemaPlus;
 import org.apache.calcite.sql.SqlNode;
-import org.apache.calcite.sql.fun.SqlStdOperatorTable;
+import org.apache.calcite.sql.fun.SqlLibrary;
+import org.apache.calcite.sql.fun.SqlLibraryOperatorTableFactory;
 import org.apache.calcite.sql.parser.SqlParseException;
 import org.apache.calcite.sql.parser.SqlParser;
 import org.apache.calcite.sql.parser.ddl.SqlDdlParserImpl;
@@ -82,8 +83,12 @@ public class CalciteContext {
         SqlTypeFactoryImpl typeFactory =
                 (SqlTypeFactoryImpl) cluster.getTypeFactory();
         CalciteCatalogReader catalogReader = buildCatalogReader(typeFactory, currentSchema);
+        // 标准算子(STANDARD)+ MYSQL/POSTGRESQL 库算子(提供 CONCAT(arg,...)/LENGTH 等常用函数)。
+        // 注意:getOperatorTable 只返回显式列出的库;漏 STANDARD 会丢掉 +/> 等标准算子。
         SqlValidator validator = SqlValidatorUtil.newValidator(
-                SqlStdOperatorTable.instance(), catalogReader, typeFactory,
+                SqlLibraryOperatorTableFactory.INSTANCE.getOperatorTable(
+                        SqlLibrary.STANDARD, SqlLibrary.MYSQL, SqlLibrary.POSTGRESQL),
+                catalogReader, typeFactory,
                 SqlValidator.Config.DEFAULT.withIdentifierExpansion(true));
         SqlNode validated = validator.validate(parsed);
         SqlToRelConverter converter = new SqlToRelConverter(

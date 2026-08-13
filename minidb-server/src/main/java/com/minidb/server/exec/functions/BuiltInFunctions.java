@@ -11,6 +11,7 @@ import org.apache.arrow.vector.ValueVector;
 import org.apache.arrow.vector.VarCharVector;
 import org.apache.calcite.sql.SqlKind;
 import org.apache.calcite.sql.SqlOperator;
+import org.apache.calcite.sql.fun.SqlLibraryOperators;
 import org.apache.calcite.sql.fun.SqlStdOperatorTable;
 
 /** 内置标量函数:按 SqlOperator 挂到 {@link FunctionRegistry},供 {@code RexInterpreter} 分发。 */
@@ -26,115 +27,133 @@ public final class BuiltInFunctions {
         return registry;
     }
 
-    /**
-     * 数学函数:ABS 按输入类型注册 int/long/double 三个同型重载({@code Math::abs} 对每种原语
-     * 各自重载,由 ScalarKernels.IntUnary/LongUnary/DoubleUnary 的函数型自动选中对应版本);FLOOR/
-     * CEIL 只对 double 注册(输出恒 double)。ROUND 不注册:其返回类型在 DECIMAL→double 的映射下
-     * 含糊,超出本任务范围。
-     */
+    /** 数学函数:ABS 按输入/输出类型注册;FLOOR/CEIL/ROUND 只对 double 注册。 */
     private static void mathFunctions(FunctionRegistry r) {
         r.register(SqlStdOperatorTable.ABS, absFunction());
         unaryDouble(r, SqlStdOperatorTable.FLOOR, Math::floor);
         unaryDouble(r, SqlStdOperatorTable.CEIL, Math::ceil);
+        // ROUND(double) → double,就近取整(tie 到偶数);MiniDB 的 DECIMAL 坍缩成 double,
+        // 故返回 double 与类型边界一致。
+        unaryDouble(r, SqlStdOperatorTable.ROUND, Math::rint);
     }
 
     /**
-     * ABS 的三个同型重载必须收进同一个 {@link Function}:{@link FunctionRegistry#register} 按
-     * SqlOperator 覆盖,逐个 register 会互相覆盖,只剩最后注册的重载(同算术/比较的合成模式)。
+     * ABS 的四个重载收进同一个 {@link Function}(注册表按 SqlOperator 覆盖)。
+     * 整数字面量恒产 BigIntVector(坑 #23)但结果类型仍是 INTEGER → IntVector,故
+     * [BigIntVector] 输入按输出类型拆成两个重载:→IntVector(字面量,long 域算完截断)
+     * 与 →BigIntVector(BIGINT 列)。输出类型参与分发后无需再在核内 instanceof 分支。
      */
     private static Function absFunction() {
         return new Function(SqlStdOperatorTable.ABS.getName(), List.of(
-                new Overload(List.of(IntVector.class),
+                new Overload(List.of(IntVector.class), IntVector.class,
                         (args, out) -> Kernels.fillUnaryInt(
                                 (IntVector) args.get(0), (IntVector) out, Math::abs)),
-                new Overload(List.of(BigIntVector.class), BuiltInFunctions::absBigInt),
-                new Overload(List.of(Float8Vector.class),
+                new Overload(List.of(BigIntVector.class), IntVector.class,
+                        (args, out) -> Kernels.fillUnaryLongToInt(
+                                (BigIntVector) args.get(0), (IntVector) out, Math::abs)),
+                new Overload(List.of(BigIntVector.class), BigIntVector.class,
+                        (args, out) -> Kernels.fillUnaryLong(
+                                (BigIntVector) args.get(0), (BigIntVector) out, Math::abs)),
+                new Overload(List.of(Float8Vector.class), Float8Vector.class,
                         (args, out) -> Kernels.fillUnaryDouble(
                                 (Float8Vector) args.get(0), (Float8Vector) out, Math::abs))));
     }
 
-    /**
-     * ABS 的 [BigIntVector] 重载核。整数字面量经 {@code RexInterpreter.literalVector} 恒产
-     * BigIntVector(坑 #23),但 {@code call.getType()} 仍按字面量的 Calcite 类型推导:INTEGER
-     * 字面量 → INTEGER 结果、BIGINT 列 → BIGINT 结果。两者**输入**都是 BigIntVector,仅按输入
-     * 类型分发无法区分,而 {@link Function#evaluate} 按结果类型分配的 out 却分别是 IntVector
-     * (INTEGER)与 BigIntVector(BIGINT)。故核内必须按 out 的实际类型分支写入:IntVector 分支对应
-     * INTEGER 字面量(值恒在 int 范围内)、BigIntVector 分支对应 BIGINT 列。
-     */
-    private static void absBigInt(List<ValueVector> args, FieldVector out) {
-        BigIntVector in = (BigIntVector) args.get(0);
-        if (out instanceof IntVector iv) {
-            for (int i = 0; i < in.getValueCount(); i++) {
-                if (in.isNull(i)) { iv.setNull(i); continue; }
-                iv.setSafe(i, (int) Math.abs(in.get(i)));
-            }
-        } else if (out instanceof BigIntVector bv) {
-            for (int i = 0; i < in.getValueCount(); i++) {
-                if (in.isNull(i)) { bv.setNull(i); continue; }
-                bv.setSafe(i, Math.abs(in.get(i)));
-            }
-        } else {
-            throw new IllegalArgumentException(
-                    "ABS[BigIntVector] unexpected output vector: " + out.getClass());
-        }
-    }
-
-    /** 一元双精度函数:Float8Vector → Float8Vector,结果类型由 call.getType() 决定(DOUBLE)。 */
+    /** 一元双精度函数:Float8Vector → Float8Vector。 */
     private static void unaryDouble(FunctionRegistry r, SqlOperator op, ScalarKernels.DoubleUnary fn) {
         r.register(op, new Function(op.getName(), List.of(new Overload(
-                List.of(Float8Vector.class),
+                List.of(Float8Vector.class), Float8Vector.class,
                 (args, out) -> Kernels.fillUnaryDouble(
                         (Float8Vector) args.get(0), (Float8Vector) out, fn)))));
     }
 
     /**
-     * 字符串函数:UPPER/LOWER/TRIM 走一元 String 核(STRICT,null 由 Kernels 内做);LENGTH 走
-     * StringToInt 核(结果 INTEGER);CONCAT 走二元 String 核;SUBSTRING 是 3 参,单独 Tier-2 核。
-     * LENGTH 在 Calcite 里是 CHAR_LENGTH 的别名(无独立的 SqlStdOperatorTable.LENGTH 单例),只注册
-     * {@link SqlStdOperatorTable#CHAR_LENGTH}。
+     * 字符串函数。UPPER/LOWER 走一元 String 核;CHAR_LENGTH/LENGTH 走 StringToInt 核
+     * (结果 INTEGER);CONCAT 是 `||` 算符、CONCAT_FUNCTION 是 `CONCAT(a,b,...)` 变参函数;
+     * SUBSTRING 是 3 参单独核。TRIM 不在此注册:其 3 参形式带 SYMBOL 标志字面量,由
+     * {@code RexInterpreter} 专特殊 handler 处理。
      */
     private static void stringFunctions(FunctionRegistry r) {
         unaryString(r, SqlStdOperatorTable.UPPER, String::toUpperCase);
         unaryString(r, SqlStdOperatorTable.LOWER, String::toLowerCase);
-        unaryString(r, SqlStdOperatorTable.TRIM, String::trim);
-        r.register(SqlStdOperatorTable.CHAR_LENGTH,
-                new Function(SqlStdOperatorTable.CHAR_LENGTH.getName(), List.of(new Overload(
-                        List.of(VarCharVector.class),
-                        (args, out) -> Kernels.fillStringToInt(
-                                (VarCharVector) args.get(0), (IntVector) out, String::length)))));
+        registerLength(r, SqlStdOperatorTable.CHAR_LENGTH);
+        registerLength(r, SqlLibraryOperators.LENGTH);
         binaryString(r, SqlStdOperatorTable.CONCAT, String::concat);
+        r.register(SqlLibraryOperators.CONCAT_FUNCTION, concatFunction());
         r.register(SqlStdOperatorTable.SUBSTRING, substringFunction());
     }
 
-    /** 一元字符串函数:VarCharVector → VarCharVector,结果类型由 call.getType() 决定(VARCHAR)。 */
+    /** LENGTH / CHAR_LENGTH:VarCharVector → INTEGER(IntVector)。 */
+    private static void registerLength(FunctionRegistry r, SqlOperator op) {
+        r.register(op, new Function(op.getName(), List.of(new Overload(
+                List.of(VarCharVector.class), IntVector.class,
+                (args, out) -> Kernels.fillStringToInt(
+                        (VarCharVector) args.get(0), (IntVector) out, String::length)))));
+    }
+
+    /** 一元字符串函数:VarCharVector → VarCharVector。 */
     private static void unaryString(FunctionRegistry r, SqlOperator op, ScalarKernels.StringUnary fn) {
         r.register(op, new Function(op.getName(), List.of(new Overload(
-                List.of(VarCharVector.class),
+                List.of(VarCharVector.class), VarCharVector.class,
                 (args, out) -> Kernels.fillUnaryString(
                         (VarCharVector) args.get(0), (VarCharVector) out, fn)))));
     }
 
-    /** 二元字符串函数:两 VarCharVector → VarCharVector(如 CONCAT)。 */
+    /** 二元字符串函数(如 `||`):两 VarCharVector → VarCharVector。 */
     private static void binaryString(FunctionRegistry r, SqlOperator op, ScalarKernels.StringBinary fn) {
         r.register(op, new Function(op.getName(), List.of(new Overload(
-                List.of(VarCharVector.class, VarCharVector.class),
+                List.of(VarCharVector.class, VarCharVector.class), VarCharVector.class,
                 (args, out) -> Kernels.fillBinaryString(
                         (VarCharVector) args.get(0), (VarCharVector) args.get(1),
                         (VarCharVector) out, fn)))));
     }
 
     /**
+     * CONCAT(arg, ...) 变参函数(1+ 参):任一参 null → 结果 null(STRICT)。注册 1/2/3 参
+     * 三个常见元数,共用同一个变参核。
+     */
+    private static Function concatFunction() {
+        Kernel kernel = BuiltInFunctions::concat;
+        return new Function(SqlLibraryOperators.CONCAT_FUNCTION.getName(), List.of(
+                new Overload(List.of(VarCharVector.class), VarCharVector.class, kernel),
+                new Overload(List.of(VarCharVector.class, VarCharVector.class), VarCharVector.class, kernel),
+                new Overload(List.of(VarCharVector.class, VarCharVector.class, VarCharVector.class),
+                        VarCharVector.class, kernel)));
+    }
+
+    private static void concat(List<ValueVector> args, FieldVector out) {
+        VarCharVector result = (VarCharVector) out;
+        for (int i = 0; i < args.get(0).getValueCount(); i++) {
+            boolean anyNull = false;
+            StringBuilder sb = new StringBuilder();
+            for (ValueVector arg : args) {
+                if (arg.isNull(i)) { anyNull = true; break; }
+                sb.append(new String(((VarCharVector) arg).get(i), StandardCharsets.UTF_8));
+            }
+            if (anyNull) {
+                result.setNull(i);
+                continue;
+            }
+            result.setSafe(i, sb.toString().getBytes(StandardCharsets.UTF_8));
+        }
+    }
+
+    /**
      * SUBSTRING(s, from, len) 的 3 参核。第二/三参在真实 SQL 里是整型:字面量恒产 BigIntVector
      * (坑 #23),而 INTEGER 列产 IntVector —— 两种类型都要能接,故各组合都注册到同一个核,核内用
-     * {@link #intArg} 类型无关地读取出 int 值。
+     * {@link #intArg} 类型无关地读取出 int 值。结果恒 VARCHAR(VarCharVector)。
      */
     private static Function substringFunction() {
         Kernel substringKernel = BuiltInFunctions::substring;
         return new Function(SqlStdOperatorTable.SUBSTRING.getName(), List.of(
-                new Overload(List.of(VarCharVector.class, IntVector.class, IntVector.class), substringKernel),
-                new Overload(List.of(VarCharVector.class, IntVector.class, BigIntVector.class), substringKernel),
-                new Overload(List.of(VarCharVector.class, BigIntVector.class, IntVector.class), substringKernel),
-                new Overload(List.of(VarCharVector.class, BigIntVector.class, BigIntVector.class), substringKernel)));
+                new Overload(List.of(VarCharVector.class, IntVector.class, IntVector.class),
+                        VarCharVector.class, substringKernel),
+                new Overload(List.of(VarCharVector.class, IntVector.class, BigIntVector.class),
+                        VarCharVector.class, substringKernel),
+                new Overload(List.of(VarCharVector.class, BigIntVector.class, IntVector.class),
+                        VarCharVector.class, substringKernel),
+                new Overload(List.of(VarCharVector.class, BigIntVector.class, BigIntVector.class),
+                        VarCharVector.class, substringKernel)));
     }
 
     private static void substring(List<ValueVector> args, FieldVector out) {
@@ -194,35 +213,34 @@ public final class BuiltInFunctions {
     }
 
     /**
-     * 单个比较运算符的所有重载合成一个 {@link Function}(注册表按 SqlOperator 覆盖,同算术)。
-     * 比较恒在数值域:同型 Int/Long/Double 各走对应核,字符串走 String 核;整数字面量恒产
+     * 单个比较运算符的所有重载合成一个 {@link Function}(注册表按 SqlOperator 覆盖)。结果恒
+     * BOOLEAN(BitVector);同型 Int/Long/Double 各走对应核,字符串走 String 核;整数字面量恒产
      * BigIntVector(坑 #23)而 INTEGER 列是 IntVector,故注册 [Int,BigInt]/[BigInt,Int] 两个跨型
-     * 重载,promote int 到 long 后按 Long 比较。结果类型恒 BOOLEAN(由 Function.evaluate 按
-     * call.getType() 分配 BitVector)。
+     * 重载,promote int 到 long 后按 Long 比较。
      */
     private static Function comparisonFunction(SqlOperator op, SqlKind kind) {
         return new Function(op.getName(), List.of(
-                new Overload(List.of(IntVector.class, IntVector.class),
+                new Overload(List.of(IntVector.class, IntVector.class), BitVector.class,
                         (args, out) -> Kernels.fillCompareInt(
                                 (IntVector) args.get(0), (IntVector) args.get(1),
                                 (BitVector) out, Integer::compare, kind)),
-                new Overload(List.of(BigIntVector.class, BigIntVector.class),
+                new Overload(List.of(BigIntVector.class, BigIntVector.class), BitVector.class,
                         (args, out) -> Kernels.fillCompareLong(
                                 (BigIntVector) args.get(0), (BigIntVector) args.get(1),
                                 (BitVector) out, Long::compare, kind)),
-                new Overload(List.of(Float8Vector.class, Float8Vector.class),
+                new Overload(List.of(Float8Vector.class, Float8Vector.class), BitVector.class,
                         (args, out) -> Kernels.fillCompareDouble(
                                 (Float8Vector) args.get(0), (Float8Vector) args.get(1),
                                 (BitVector) out, Double::compare, kind)),
-                new Overload(List.of(VarCharVector.class, VarCharVector.class),
+                new Overload(List.of(VarCharVector.class, VarCharVector.class), BitVector.class,
                         (args, out) -> Kernels.fillCompareString(
                                 (VarCharVector) args.get(0), (VarCharVector) args.get(1),
                                 (BitVector) out, String::compareTo, kind)),
-                new Overload(List.of(IntVector.class, BigIntVector.class),
+                new Overload(List.of(IntVector.class, BigIntVector.class), BitVector.class,
                         (args, out) -> Kernels.fillCompareIntLong(
                                 (IntVector) args.get(0), (BigIntVector) args.get(1),
                                 (BitVector) out, Long::compare, kind)),
-                new Overload(List.of(BigIntVector.class, IntVector.class),
+                new Overload(List.of(BigIntVector.class, IntVector.class), BitVector.class,
                         (args, out) -> Kernels.fillCompareLongInt(
                                 (BigIntVector) args.get(0), (IntVector) args.get(1),
                                 (BitVector) out, Long::compare, kind))));
@@ -238,32 +256,31 @@ public final class BuiltInFunctions {
     /**
      * 单个算术运算符的所有重载合成一个 {@link Function}。每个 SqlOperator 在注册表里只对应
      * 一个 Function({@code register} 会覆盖),故同型(Int/Long/Double)与跨型重载必须收进同一
-     * 个 overload 列表,而不是逐个 register 成独立 Function。
+     * 个 overload 列表。跨型输出恒 IntVector(整数字面量坑,结果类型 INTEGER)。
      */
     private static Function arithmeticFunction(SqlOperator op) {
         ScalarKernels.IntBinary intOp = intKernel(op);
         ScalarKernels.LongBinary longOp = longKernel(op);
         ScalarKernels.DoubleBinary doubleOp = doubleKernel(op);
         return new Function(op.getName(), List.of(
-                new Overload(List.of(IntVector.class, IntVector.class),
+                new Overload(List.of(IntVector.class, IntVector.class), IntVector.class,
                         (args, out) -> Kernels.fillBinaryInt(
                                 (IntVector) args.get(0), (IntVector) args.get(1), (IntVector) out, intOp)),
-                new Overload(List.of(BigIntVector.class, BigIntVector.class),
+                new Overload(List.of(BigIntVector.class, BigIntVector.class), BigIntVector.class,
                         (args, out) -> Kernels.fillBinaryLong(
                                 (BigIntVector) args.get(0), (BigIntVector) args.get(1), (BigIntVector) out, longOp)),
-                new Overload(List.of(Float8Vector.class, Float8Vector.class),
+                new Overload(List.of(Float8Vector.class, Float8Vector.class), Float8Vector.class,
                         (args, out) -> Kernels.fillBinaryDouble(
                                 (Float8Vector) args.get(0), (Float8Vector) args.get(1), (Float8Vector) out, doubleOp)),
                 // 整数字面量经 RexInterpreter.literalVector 恒产 BigIntVector(坑 #23),而 INTEGER
-                // 列经 RowCopier.copyVector 产 IntVector —— 二者混算(如 `id + 1`、`id * 2`)没有任何
-                // 同型重载匹配,必须注册跨型重载。输出硬编码 IntVector 是安全的:真正混型
-                // INTEGER/BIGINT 的操作数 Calcite 会在算子前 CAST 成 BIGINT,故跨型只由「字面量
-                // 是 BigIntVector 但 Calcite 类型仍是 INTEGER」的坑触发,结果类型恒为 INTEGER。
-                // 两种操作数顺序都注册,且各自按真实操作数顺序计算(非交换的 MINUS/DIVIDE 不能颠倒)。
-                new Overload(List.of(IntVector.class, BigIntVector.class),
+                // 列经 RowCopier.copyVector 产 IntVector —— 二者混算(如 `id + 1`)没有同型重载,
+                // 必须注册跨型重载。输出硬编码 IntVector:真正混型 INTEGER/BIGINT 的操作数
+                // Calcite 会在算子前 CAST 成 BIGINT,故跨型只由「字面量是 BigIntVector 但 Calcite
+                // 类型仍是 INTEGER」的坑触发,结果类型恒 INTEGER。
+                new Overload(List.of(IntVector.class, BigIntVector.class), IntVector.class,
                         (args, out) -> fillIntLongBinary(
                                 (IntVector) args.get(0), (BigIntVector) args.get(1), (IntVector) out, longOp)),
-                new Overload(List.of(BigIntVector.class, IntVector.class),
+                new Overload(List.of(BigIntVector.class, IntVector.class), IntVector.class,
                         (args, out) -> fillLongIntBinary(
                                 (BigIntVector) args.get(0), (IntVector) args.get(1), (IntVector) out, longOp))));
     }

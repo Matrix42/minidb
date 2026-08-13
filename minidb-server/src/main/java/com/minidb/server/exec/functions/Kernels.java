@@ -23,6 +23,13 @@ public final class Kernels {
             out.setSafe(i, op.apply(in.get(i)));
         }
     }
+    /** long 输入、int 输出(如 ABS(INTEGER 字面量)的 BigIntVector → IntVector)。 */
+    public static void fillUnaryLongToInt(BigIntVector in, IntVector out, ScalarKernels.LongUnary op) {
+        for (int i = 0; i < in.getValueCount(); i++) {
+            if (in.isNull(i)) { out.setNull(i); continue; }
+            out.setSafe(i, (int) op.apply(in.get(i)));
+        }
+    }
     public static void fillUnaryDouble(Float8Vector in, Float8Vector out, ScalarKernels.DoubleUnary op) {
         for (int i = 0; i < in.getValueCount(); i++) {
             if (in.isNull(i)) { out.setNull(i); continue; }

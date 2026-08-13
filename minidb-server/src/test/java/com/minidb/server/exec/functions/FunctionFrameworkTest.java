@@ -114,9 +114,9 @@ class FunctionFrameworkTest {
     @Test
     void functionDispatchPicksOverload() {
         Function twiceOrInc = new Function("twiceOrInc", List.of(
-                new Overload(List.of(IntVector.class),
+                new Overload(List.of(IntVector.class), IntVector.class,
                         (args, out) -> Kernels.fillUnaryInt((IntVector) args.get(0), (IntVector) out, v -> v * 2)),
-                new Overload(List.of(BigIntVector.class),
+                new Overload(List.of(BigIntVector.class), BigIntVector.class,
                         (args, out) -> Kernels.fillUnaryLong((BigIntVector) args.get(0), (BigIntVector) out, v -> v + 1))));
 
         IntVector intIn = new IntVector("intIn", allocator);
@@ -151,9 +151,9 @@ class FunctionFrameworkTest {
     @Test
     void unknownOverloadThrows() {
         Function twiceOrInc = new Function("twiceOrInc", List.of(
-                new Overload(List.of(IntVector.class),
+                new Overload(List.of(IntVector.class), IntVector.class,
                         (args, out) -> Kernels.fillUnaryInt((IntVector) args.get(0), (IntVector) out, v -> v * 2)),
-                new Overload(List.of(BigIntVector.class),
+                new Overload(List.of(BigIntVector.class), BigIntVector.class,
                         (args, out) -> Kernels.fillUnaryLong((BigIntVector) args.get(0), (BigIntVector) out, v -> v + 1))));
 
         Float8Vector floatIn = new Float8Vector("floatIn", allocator);

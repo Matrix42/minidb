@@ -1346,6 +1346,42 @@ class QueryExecutorTest {
     }
 
     @Test
+    void scalarFunctionsTrimRoundLengthConcat() {
+        executor.execute("CREATE TABLE t (id INTEGER, name VARCHAR)");
+        executor.execute("INSERT INTO t VALUES (1, ' 张总 '), (2, '李四')");
+        QueryResult r = executor.execute(
+                "SELECT TRIM(name) AS trimmed, LENGTH(name) AS len, CONCAT(name, '!') AS cat "
+              + "FROM t ORDER BY id");
+        VectorSchemaRoot root = ((QueryResult.Rows) r).data();
+        assertEquals(2, root.getRowCount());
+
+        VarCharVector trimmed = (VarCharVector) root.getVector("trimmed");
+        IntVector len = (IntVector) root.getVector("len");
+        VarCharVector cat = (VarCharVector) root.getVector("cat");
+
+        // Row 0: name=' 张总 ' → TRIM 去首尾空格;LENGTH 计 4 个码元(2 空格 + 张 + 总)
+        assertEquals("张总", new String(trimmed.get(0), StandardCharsets.UTF_8));
+        assertEquals(4, len.get(0));
+        assertEquals(" 张总 !", new String(cat.get(0), StandardCharsets.UTF_8));
+
+        // Row 1: name='李四'
+        assertEquals("李四", new String(trimmed.get(1), StandardCharsets.UTF_8));
+        assertEquals(2, len.get(1));
+        assertEquals("李四!", new String(cat.get(1), StandardCharsets.UTF_8));
+        root.close();
+
+        // ROUND 用单列 DOUBLE 表(多列多行含 DOUBLE 会触发坑 23 的 LogicalUnion)。
+        executor.execute("CREATE TABLE d (val DOUBLE)");
+        executor.execute("INSERT INTO d VALUES (2.7), (-1.7)");
+        QueryResult r2 = executor.execute("SELECT ROUND(val) AS rounded FROM d ORDER BY val");
+        VectorSchemaRoot root2 = ((QueryResult.Rows) r2).data();
+        Float8Vector rounded = (Float8Vector) root2.getVector("rounded");
+        assertEquals(-2.0, rounded.get(0), 1e-9);
+        assertEquals(3.0, rounded.get(1), 1e-9);
+        root2.close();
+    }
+
+    @Test
     void explainAnalyzeWindowProjectMeasuresRows() {
         createWindowTable();
         QueryResult r = executor.execute(

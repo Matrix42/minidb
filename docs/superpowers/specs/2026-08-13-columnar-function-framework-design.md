@@ -104,32 +104,28 @@ static void fillCompareString(VarCharVector l, VarCharVector r, BitVector out, S
 ## Function / Overload / FunctionRegistry
 
 ```java
-record Overload(List<Class<? extends ValueVector>> inputTypes, Kernel kernel) {}
+record Overload(List<Class<? extends ValueVector>> inputTypes,
+                Class<? extends FieldVector> outputType, Kernel kernel) {}
 
 final class Function {
     final String name;
     final List<Overload> overloads;
 
     ValueVector evaluate(List<ValueVector> args, RelDataType resultType, BufferAllocator allocator) {
-        Kernel kernel = resolve(args);                    // 按参数向量类型精确匹配,每 batch 一次
+        Class<? extends FieldVector> outputClass = outputVectorClass(resultType);
+        Kernel kernel = resolve(args, outputClass);        // 按输入 + 输出类型匹配
         FieldVector out = ArrowTypes.field(resultType, "expr").createVector(allocator);
         out.setInitialCapacity(args.get(0).getValueCount());
         out.allocateNew();
-        kernel.execute(args, out);
+        try { kernel.execute(args, out); } finally { for (ValueVector a : args) a.close(); }
         out.setValueCount(args.get(0).getValueCount());
         return out;
     }
 }
-
-final class FunctionRegistry {
-    final Map<SqlOperator, Function> byOperator = new HashMap<>();
-    Function lookup(SqlOperator op) { ... }
-    void register(SqlOperator op, Function f) { ... }
-}
 ```
 
 - **分发键是 `SqlOperator`**(`SqlStdOperatorTable.PLUS`、`UPPER`、`EQUALS` 等单例),不是 `SqlKind`——算术、比较、字符串/数学函数统一走这一张表。
-- `resolve` 按输入向量类型**精确匹配**(Calcite 已对操作数插入 CAST,类型天然对齐);输出向量由 `resultType`(即 `call.getType()`)经 `ArrowTypes` 分配,与内核 cast 的预期类型一致(Calcite 类型推导保证)。
+- `resolve` 按**输入向量类型 + 输出向量类型**匹配。输出类型必须参与分发:同一输入类型可能映射多种输出(ABS 的 `[BigIntVector]` 输入对 INTEGER 字面量产 IntVector、对 BIGINT 列产 BigIntVector),仅按输入类型无法区分。输出向量由 `resultType`(即 `call.getType()`)经 `outputVectorClass` 映成箭头向量类、再经 `ArrowTypes` 分配。
 - `BuiltInFunctions` 静态注册全部内置,`FunctionRegistry` 可变——为 UDF 预留。
 
 ## null 语义
@@ -144,7 +140,7 @@ final class FunctionRegistry {
 
 ## 新增函数清单(验收)
 
-- **字符串**:`UPPER(varchar)`、`LOWER(varchar)`(`StringUnary`);`LENGTH(varchar)→int`(`StringToInt`);`CONCAT(varchar, varchar)`(`StringBinary`);`SUBSTRING(varchar, int, int)`(走 **Tier-2 完整核**,顺带验证逃生舱与 3 参场景)。`TRIM(varchar)` **未端到端交付**:只注册了 1 参 `String::trim` 核(对直接构造的 1 参 RexCall 正确,单测保留),但 Calcite 解析期把 `TRIM(s)` 重写为 3 参 `TRIM(Flag,' ',s)`,需要 Symbol 标志字面量处理才能接住,故 `SELECT TRIM(...)` 端到端不通(详见 CLAUDE.md 坑 47)。
+- **字符串**:`UPPER(varchar)`、`LOWER(varchar)`(`StringUnary`);`LENGTH(varchar)→int`、`CHAR_LENGTH(varchar)→int`(`StringToInt`,LENGTH 是库函数、需开 POSTGRESQL 库);`CONCAT(varchar, ...)`(变参 1/2/3 参,Tier-2 核)、`||`(二元 `StringBinary`);`SUBSTRING(varchar, int, int)`(走 **Tier-2 完整核**);`TRIM(varchar)`(专用 handler:Calcite 解析期把 `TRIM(s)` 重写为 3 参 `TRIM(Flag,' ',s)`,Flag 是 SYMBOL 字面量,由 `RexInterpreter` 专 `case TRIM` 从 RexLiteral 取 Flag 后求值)。
 - **数学**:`ABS(int)`、`ABS(bigint)`、`ABS(double)`;`ROUND(double)`、`FLOOR(double)`、`CEIL(double)`(`DoubleUnary`)。
 
 ## 类型边界

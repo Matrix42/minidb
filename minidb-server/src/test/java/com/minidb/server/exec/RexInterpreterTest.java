@@ -22,6 +22,7 @@ import org.apache.calcite.rel.type.RelDataTypeFactory;
 import org.apache.calcite.rex.RexBuilder;
 import org.apache.calcite.rex.RexNode;
 import org.apache.calcite.sql.fun.SqlStdOperatorTable;
+import org.apache.calcite.sql.fun.SqlTrimFunction;
 import org.apache.calcite.sql.type.SqlTypeName;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeEach;
@@ -264,10 +265,12 @@ class RexInterpreterTest {
     @Test
     void stringTrim() {
         VectorSchemaRoot root = varcharInput();
-        // TRIM 的返回类型推断是 ARG2(3 参形式),单参 makeCall 会越界;这里显式指定返回类型,
-        // 注册的是单参 String::trim 核(与 brief 一致)。
-        RexNode expr = rex.makeCall(varcharType(), SqlStdOperatorTable.TRIM,
-                List.<RexNode>of(rex.makeInputRef(varcharType(), 0)));
+        // TRIM 是 RexInterpreter 的专用 handler:Calcite 把 `TRIM(s)` 解析期重写为
+        // `TRIM(Flag, ' ', s)`,Flag 是 SYMBOL 字面量。这里直接构造 3 参形式。
+        RexNode expr = rex.makeCall(varcharType(), SqlStdOperatorTable.TRIM, List.of(
+                rex.makeFlag(SqlTrimFunction.Flag.BOTH),
+                rex.makeLiteral(" "),
+                rex.makeInputRef(varcharType(), 0)));
         ValueVector out = interpreter.eval(expr, root);
         VarCharVector v = (VarCharVector) out;
         assertEquals("Ab", varchar(v, 0));

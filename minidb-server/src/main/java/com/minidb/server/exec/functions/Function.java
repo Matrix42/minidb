@@ -4,11 +4,18 @@ import com.minidb.server.catalog.ArrowTypes;
 import java.util.ArrayList;
 import java.util.List;
 import org.apache.arrow.memory.BufferAllocator;
+import org.apache.arrow.vector.BigIntVector;
+import org.apache.arrow.vector.BitVector;
+import org.apache.arrow.vector.DateDayVector;
 import org.apache.arrow.vector.FieldVector;
+import org.apache.arrow.vector.Float8Vector;
+import org.apache.arrow.vector.IntVector;
+import org.apache.arrow.vector.TimeStampMilliVector;
 import org.apache.arrow.vector.ValueVector;
+import org.apache.arrow.vector.VarCharVector;
 import org.apache.calcite.rel.type.RelDataType;
 
-/** 一个函数:若干重载 + 按输入类型分发 + 分配输出向量。 */
+/** 一个函数:若干重载 + 按输入/输出类型分发 + 分配输出向量。 */
 public final class Function {
     private final String name;
     private final List<Overload> overloads;
@@ -20,8 +27,10 @@ public final class Function {
 
     public ValueVector evaluate(List<ValueVector> args, RelDataType resultType,
                                 BufferAllocator allocator) {
-        Kernel kernel = resolve(args);
         int rows = args.get(0).getValueCount();
+        // 先解析(含输出类型)再分配:解析失败不泄漏输出向量。
+        Class<? extends FieldVector> outputClass = outputVectorClass(resultType);
+        Kernel kernel = resolve(args, outputClass);
         FieldVector out = ArrowTypes.field(resultType, "expr").createVector(allocator);
         out.setInitialCapacity(rows);
         out.allocateNew();
@@ -36,14 +45,15 @@ public final class Function {
         return out;
     }
 
-    private Kernel resolve(List<ValueVector> args) {
+    private Kernel resolve(List<ValueVector> args, Class<? extends FieldVector> outputClass) {
         for (Overload o : overloads) {
-            if (matches(o.inputTypes(), args)) {
+            if (o.outputType().equals(outputClass) && matches(o.inputTypes(), args)) {
                 return o.kernel();
             }
         }
         throw new UnsupportedOperationException(
-                "no overload of " + name + " for argument types " + argClasses(args));
+                "no overload of " + name + " for argument types " + argClasses(args)
+                        + " with result " + outputClass.getSimpleName());
     }
 
     private static boolean matches(List<Class<? extends ValueVector>> types, List<ValueVector> args) {
@@ -66,5 +76,20 @@ public final class Function {
             classes.add(a.getClass());
         }
         return classes;
+    }
+
+    /** 把 Calcite 结果类型映射到 Arrow 向量类,与 {@link ArrowTypes} 的映射保持一致。 */
+    private static Class<? extends FieldVector> outputVectorClass(RelDataType type) {
+        return switch (type.getSqlTypeName()) {
+            case INTEGER -> IntVector.class;
+            case BIGINT -> BigIntVector.class;
+            case DOUBLE, FLOAT, REAL, DECIMAL -> Float8Vector.class;
+            case VARCHAR, CHAR -> VarCharVector.class;
+            case BOOLEAN -> BitVector.class;
+            case DATE -> DateDayVector.class;
+            case TIMESTAMP -> TimeStampMilliVector.class;
+            default -> throw new IllegalArgumentException(
+                    "unsupported result type: " + type.getSqlTypeName());
+        };
     }
 }
