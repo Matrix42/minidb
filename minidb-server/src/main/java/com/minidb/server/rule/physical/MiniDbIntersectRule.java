@@ -1,4 +1,4 @@
-package com.minidb.server.rule;
+package com.minidb.server.rule.physical;
 
 import com.minidb.server.plan.physical.MiniDbConvention;
 import com.minidb.server.plan.physical.MiniDbSetOp;
@@ -7,24 +7,24 @@ import java.util.List;
 import org.apache.calcite.plan.Convention;
 import org.apache.calcite.rel.RelNode;
 import org.apache.calcite.rel.convert.ConverterRule;
-import org.apache.calcite.rel.logical.LogicalMinus;
+import org.apache.calcite.rel.logical.LogicalIntersect;
 
-public final class MiniDbExceptRule extends ConverterRule {
+public final class MiniDbIntersectRule extends ConverterRule {
 
-    public MiniDbExceptRule() {
+    public MiniDbIntersectRule() {
         this(ConverterRule.Config.INSTANCE
-                .withConversion(LogicalMinus.class, Convention.NONE,
-                        MiniDbConvention.INSTANCE, "MiniDbExceptRule")
-                .withRuleFactory(MiniDbExceptRule::new));
+                .withConversion(LogicalIntersect.class, Convention.NONE,
+                        MiniDbConvention.INSTANCE, "MiniDbIntersectRule")
+                .withRuleFactory(MiniDbIntersectRule::new));
     }
 
-    private MiniDbExceptRule(ConverterRule.Config config) {
+    private MiniDbIntersectRule(ConverterRule.Config config) {
         super(config);
     }
 
     @Override
     public RelNode convert(RelNode rel) {
-        LogicalMinus op = (LogicalMinus) rel;
+        LogicalIntersect op = (LogicalIntersect) rel;
         List<RelNode> inputs = new ArrayList<>();
         for (RelNode in : op.getInputs()) {
             inputs.add(convert(in, MiniDbConvention.INSTANCE));

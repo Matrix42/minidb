@@ -4,7 +4,7 @@ import com.minidb.server.calcite.CalciteContext;
 import com.minidb.server.catalog.MiniDbCatalog;
 import com.minidb.server.plan.physical.MiniDbConvention;
 import com.minidb.server.plan.physical.MiniDbRel;
-import com.minidb.server.rule.MiniDbRules;
+import com.minidb.server.rule.physical.MiniDbPhysicalRules;
 import org.apache.calcite.plan.ConventionTraitDef;
 import org.apache.calcite.plan.RelOptCluster;
 import org.apache.calcite.plan.volcano.VolcanoPlanner;
@@ -29,7 +29,7 @@ public class Planner {
     public RelNode plan(String sql, String currentSchema) {
         VolcanoPlanner planner = new VolcanoPlanner();
         planner.addRelTraitDef(ConventionTraitDef.INSTANCE);
-        for (org.apache.calcite.plan.RelOptRule rule : MiniDbRules.ALL) {
+        for (org.apache.calcite.plan.RelOptRule rule : MiniDbPhysicalRules.ALL) {
             planner.addRule(rule);
         }
         SqlTypeFactoryImpl typeFactory =

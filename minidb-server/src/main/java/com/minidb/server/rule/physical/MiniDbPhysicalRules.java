@@ -1,9 +1,9 @@
-package com.minidb.server.rule;
+package com.minidb.server.rule.physical;
 
 import java.util.List;
 import org.apache.calcite.plan.RelOptRule;
 
-public final class MiniDbRules {
+public final class MiniDbPhysicalRules {
 
     public static final List<RelOptRule> ALL = List.of(
             new MiniDbScanRule(),
@@ -19,6 +19,6 @@ public final class MiniDbRules {
             new MiniDbCalcRule(),
             new MiniDbJoinRule());
 
-    private MiniDbRules() {
+    private MiniDbPhysicalRules() {
     }
 }

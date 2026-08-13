@@ -1,4 +1,4 @@
-package com.minidb.server.rule;
+package com.minidb.server.rule.physical;
 
 import com.minidb.server.plan.physical.MiniDbConvention;
 import com.minidb.server.plan.physical.MiniDbFilter;
