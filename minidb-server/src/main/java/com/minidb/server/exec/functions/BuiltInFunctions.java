@@ -22,7 +22,45 @@ public final class BuiltInFunctions {
         arithmetic(registry);
         comparison(registry);
         stringFunctions(registry);
+        mathFunctions(registry);
         return registry;
+    }
+
+    /**
+     * 数学函数:ABS 按输入类型注册 int/long/double 三个同型重载({@code Math::abs} 对每种原语
+     * 各自重载,由 ScalarKernels.IntUnary/LongUnary/DoubleUnary 的函数型自动选中对应版本);FLOOR/
+     * CEIL 只对 double 注册(输出恒 double)。ROUND 不注册:其返回类型在 DECIMAL→double 的映射下
+     * 含糊,超出本任务范围。
+     */
+    private static void mathFunctions(FunctionRegistry r) {
+        r.register(SqlStdOperatorTable.ABS, absFunction());
+        unaryDouble(r, SqlStdOperatorTable.FLOOR, Math::floor);
+        unaryDouble(r, SqlStdOperatorTable.CEIL, Math::ceil);
+    }
+
+    /**
+     * ABS 的三个同型重载必须收进同一个 {@link Function}:{@link FunctionRegistry#register} 按
+     * SqlOperator 覆盖,逐个 register 会互相覆盖,只剩最后注册的重载(同算术/比较的合成模式)。
+     */
+    private static Function absFunction() {
+        return new Function(SqlStdOperatorTable.ABS.getName(), List.of(
+                new Overload(List.of(IntVector.class),
+                        (args, out) -> Kernels.fillUnaryInt(
+                                (IntVector) args.get(0), (IntVector) out, Math::abs)),
+                new Overload(List.of(BigIntVector.class),
+                        (args, out) -> Kernels.fillUnaryLong(
+                                (BigIntVector) args.get(0), (BigIntVector) out, Math::abs)),
+                new Overload(List.of(Float8Vector.class),
+                        (args, out) -> Kernels.fillUnaryDouble(
+                                (Float8Vector) args.get(0), (Float8Vector) out, Math::abs))));
+    }
+
+    /** 一元双精度函数:Float8Vector → Float8Vector,结果类型由 call.getType() 决定(DOUBLE)。 */
+    private static void unaryDouble(FunctionRegistry r, SqlOperator op, ScalarKernels.DoubleUnary fn) {
+        r.register(op, new Function(op.getName(), List.of(new Overload(
+                List.of(Float8Vector.class),
+                (args, out) -> Kernels.fillUnaryDouble(
+                        (Float8Vector) args.get(0), (Float8Vector) out, fn)))));
     }
 
     /**

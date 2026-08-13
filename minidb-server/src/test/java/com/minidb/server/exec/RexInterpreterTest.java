@@ -11,6 +11,7 @@ import org.apache.arrow.vector.IntVector;
 import org.apache.arrow.vector.ValueVector;
 import org.apache.arrow.vector.VarCharVector;
 import org.apache.arrow.vector.VectorSchemaRoot;
+import org.apache.arrow.vector.types.FloatingPointPrecision;
 import org.apache.arrow.vector.types.pojo.ArrowType;
 import org.apache.arrow.vector.types.pojo.Field;
 import org.apache.arrow.vector.types.pojo.FieldType;
@@ -327,6 +328,81 @@ class RexInterpreterTest {
         assertEquals("ab", varchar(v, 2));
         assertTrue(v.isNull(3));
         out.close();
+        root.close();
+    }
+
+    private RelDataType doubleType() {
+        return typeFactory.createSqlType(SqlTypeName.DOUBLE);
+    }
+
+    /** 单列 Float8Vector 输入:[-2.5, 2.7, null],供数学函数测试含 null 的 STRICT 语义。 */
+    private VectorSchemaRoot doubleInput() {
+        Field d = new Field("d", FieldType.nullable(
+                new ArrowType.FloatingPoint(FloatingPointPrecision.DOUBLE)), List.of());
+        VectorSchemaRoot root = VectorSchemaRoot.create(new Schema(List.of(d)), allocator);
+        root.allocateNew();
+        Float8Vector v = (Float8Vector) root.getVector("d");
+        v.setSafe(0, -2.5);
+        v.setSafe(1, 2.7);
+        v.setNull(2);
+        root.setRowCount(3);
+        return root;
+    }
+
+    @Test
+    void absInteger() {
+        // 单列 IntVector:[-3, 7, null],ABS 逐行取绝对值,null 行 STRICT 传播。
+        Field f = new Field("a", FieldType.nullable(new ArrowType.Int(32, true)), List.of());
+        VectorSchemaRoot root = VectorSchemaRoot.create(new Schema(List.of(f)), allocator);
+        root.allocateNew();
+        IntVector v = (IntVector) root.getVector("a");
+        v.setSafe(0, -3);
+        v.setSafe(1, 7);
+        v.setNull(2);
+        root.setRowCount(3);
+
+        RexNode expr = rex.makeCall(SqlStdOperatorTable.ABS, rex.makeInputRef(intType(), 0));
+        ValueVector out = interpreter.eval(expr, root);
+        IntVector result = (IntVector) out;
+        assertEquals(3, result.get(0));
+        assertEquals(7, result.get(1));
+        assertTrue(result.isNull(2));
+        out.close();
+        root.close();
+    }
+
+    @Test
+    void absDouble() {
+        VectorSchemaRoot root = doubleInput();
+        RexNode expr = rex.makeCall(SqlStdOperatorTable.ABS, rex.makeInputRef(doubleType(), 0));
+        ValueVector out = interpreter.eval(expr, root);
+        Float8Vector result = (Float8Vector) out;
+        assertEquals(2.5, result.get(0), 1e-9);
+        assertEquals(2.7, result.get(1), 1e-9);
+        assertTrue(result.isNull(2));
+        out.close();
+        root.close();
+    }
+
+    @Test
+    void floorCeil() {
+        VectorSchemaRoot root = doubleInput();
+        // FLOOR(2.7)→2.0、CEIL(-2.5)→-2.0,Math.floor/ceil 返回 double,fillUnaryDouble 原样写入。
+        RexNode floor = rex.makeCall(SqlStdOperatorTable.FLOOR, rex.makeInputRef(doubleType(), 0));
+        ValueVector floorOut = interpreter.eval(floor, root);
+        Float8Vector f = (Float8Vector) floorOut;
+        assertEquals(2.0, f.get(1), 1e-9);
+        assertEquals(-3.0, f.get(0), 1e-9);
+        assertTrue(f.isNull(2));
+        floorOut.close();
+
+        RexNode ceil = rex.makeCall(SqlStdOperatorTable.CEIL, rex.makeInputRef(doubleType(), 0));
+        ValueVector ceilOut = interpreter.eval(ceil, root);
+        Float8Vector c = (Float8Vector) ceilOut;
+        assertEquals(-2.0, c.get(0), 1e-9);
+        assertEquals(3.0, c.get(1), 1e-9);
+        assertTrue(c.isNull(2));
+        ceilOut.close();
         root.close();
     }
 }
