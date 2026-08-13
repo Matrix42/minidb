@@ -1,4 +1,4 @@
-package com.minidb.server.plan;
+package com.minidb.server.plan.physical;
 
 import org.apache.calcite.plan.Convention;
 import org.apache.calcite.rel.RelNode;

@@ -1,9 +1,9 @@
 package com.minidb.server.exec;
 
 import com.minidb.server.catalog.MiniDbCatalog;
-import com.minidb.server.plan.MiniDbCalc;
-import com.minidb.server.plan.MiniDbConvention;
-import com.minidb.server.plan.MiniDbScan;
+import com.minidb.server.plan.physical.MiniDbCalc;
+import com.minidb.server.plan.physical.MiniDbConvention;
+import com.minidb.server.plan.physical.MiniDbScan;
 import com.minidb.server.plan.Planner;
 import com.minidb.server.storage.StorageManager;
 import com.minidb.server.stats.StatsManager;

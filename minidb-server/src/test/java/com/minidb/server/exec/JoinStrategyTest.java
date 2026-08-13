@@ -1,7 +1,7 @@
 package com.minidb.server.exec;
 
 import com.minidb.server.catalog.MiniDbCatalog;
-import com.minidb.server.plan.MiniDbJoin;
+import com.minidb.server.plan.physical.MiniDbJoin;
 import com.minidb.server.plan.Planner;
 import com.minidb.server.storage.StorageManager;
 import com.minidb.server.stats.StatsManager;

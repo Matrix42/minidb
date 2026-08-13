@@ -1,7 +1,7 @@
 package com.minidb.server.rule;
 
-import com.minidb.server.plan.MiniDbAggregate;
-import com.minidb.server.plan.MiniDbConvention;
+import com.minidb.server.plan.physical.MiniDbAggregate;
+import com.minidb.server.plan.physical.MiniDbConvention;
 import org.apache.calcite.plan.Convention;
 import org.apache.calcite.rel.RelNode;
 import org.apache.calcite.rel.convert.ConverterRule;

@@ -1,16 +1,16 @@
 package com.minidb.server.exec;
 
-import com.minidb.server.plan.MiniDbAggregate;
-import com.minidb.server.plan.MiniDbCalc;
-import com.minidb.server.plan.MiniDbFilter;
-import com.minidb.server.plan.MiniDbJoin;
-import com.minidb.server.plan.MiniDbProject;
-import com.minidb.server.plan.MiniDbRel;
-import com.minidb.server.plan.MiniDbScan;
-import com.minidb.server.plan.MiniDbSetOp;
-import com.minidb.server.plan.MiniDbSort;
-import com.minidb.server.plan.MiniDbUnion;
-import com.minidb.server.plan.MiniDbValues;
+import com.minidb.server.plan.physical.MiniDbAggregate;
+import com.minidb.server.plan.physical.MiniDbCalc;
+import com.minidb.server.plan.physical.MiniDbFilter;
+import com.minidb.server.plan.physical.MiniDbJoin;
+import com.minidb.server.plan.physical.MiniDbProject;
+import com.minidb.server.plan.physical.MiniDbRel;
+import com.minidb.server.plan.physical.MiniDbScan;
+import com.minidb.server.plan.physical.MiniDbSetOp;
+import com.minidb.server.plan.physical.MiniDbSort;
+import com.minidb.server.plan.physical.MiniDbUnion;
+import com.minidb.server.plan.physical.MiniDbValues;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Map;

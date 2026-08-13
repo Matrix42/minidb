@@ -1,7 +1,7 @@
 package com.minidb.server.rule;
 
-import com.minidb.server.plan.MiniDbConvention;
-import com.minidb.server.plan.MiniDbSetOp;
+import com.minidb.server.plan.physical.MiniDbConvention;
+import com.minidb.server.plan.physical.MiniDbSetOp;
 import java.util.ArrayList;
 import java.util.List;
 import org.apache.calcite.plan.Convention;

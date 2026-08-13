@@ -1,4 +1,4 @@
-package com.minidb.server.plan;
+package com.minidb.server.plan.physical;
 
 import com.minidb.server.catalog.ArrowTypes;
 import com.minidb.server.exec.BatchIterator;
