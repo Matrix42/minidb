@@ -3,17 +3,18 @@ package com.minidb.server.rule.logical;
 import java.util.List;
 import org.apache.calcite.plan.RelOptRule;
 import org.apache.calcite.rel.core.RelFactories;
-import org.apache.calcite.rel.rules.CalcMergeRule;
-import org.apache.calcite.rel.rules.FilterCalcMergeRule;
+import org.apache.calcite.rel.rules.AggregateProjectMergeRule;
+import org.apache.calcite.rel.rules.AggregateRemoveRule;
+import org.apache.calcite.rel.rules.FilterAggregateTransposeRule;
 import org.apache.calcite.rel.rules.FilterJoinRule;
 import org.apache.calcite.rel.rules.FilterMergeRule;
 import org.apache.calcite.rel.rules.FilterProjectTransposeRule;
 import org.apache.calcite.rel.rules.FilterSetOpTransposeRule;
-import org.apache.calcite.rel.rules.FilterToCalcRule;
-import org.apache.calcite.rel.rules.ProjectCalcMergeRule;
+import org.apache.calcite.rel.rules.FilterSortTransposeRule;
+import org.apache.calcite.rel.rules.ProjectAggregateMergeRule;
 import org.apache.calcite.rel.rules.ProjectMergeRule;
 import org.apache.calcite.rel.rules.ProjectSetOpTransposeRule;
-import org.apache.calcite.rel.rules.ProjectToCalcRule;
+import org.apache.calcite.rel.rules.SortProjectTransposeRule;
 import org.apache.calcite.rel.rules.SortRemoveConstantKeysRule;
 import org.apache.calcite.rel.rules.SortRemoveDuplicateKeysRule;
 import org.apache.calcite.rel.rules.SortRemoveRedundantRule;
@@ -22,14 +23,11 @@ import org.apache.calcite.rel.rules.UnionEliminatorRule;
 
 public final class MiniDbLogicalRules {
 
-    /** HepPlanner 阶段规则(不依赖 RelCollationTraitDef)。
-     *  注意:
-     *  <ul>
-     *    <li>不含 ProjectRemoveRule / CalcRemoveRule —— 两者按「索引恒等」判 trivial,会删掉改名节点(SELECT a.id AS aid),丢失列别名。</li>
-     *    <li>换位规则(FilterSetOpTranspose/ProjectSetOpTranspose)放在 ToCalc 之前,先在 Filter/Project 节点上触发再转 Calc。</li>
-     *  </ul> */
+    /** HepPlanner 阶段规则(不依赖 RelCollationTraitDef),Calcite 标准 Filter/Project 路径。
+     *  注意:不含 ProjectRemoveRule / CalcRemoveRule —— 两者按「索引恒等」判 trivial,会删掉改名节点
+     *  (SELECT a.id AS aid),丢失 JDBC 可见的列别名。 */
     public static final List<RelOptRule> HEP = List.of(
-            // 投影/过滤化简与换位(先于 Calc 转换,作用于 Filter/Project 节点)
+            // 投影/过滤化简与换位
             ProjectMergeRule.Config.DEFAULT.toRule(),
             FilterMergeRule.Config.DEFAULT.toRule(),
             FilterProjectTransposeRule.Config.DEFAULT.toRule(),
@@ -37,18 +35,19 @@ public final class MiniDbLogicalRules {
                     FilterJoinRule.TRUE_PREDICATE),
             FilterSetOpTransposeRule.Config.DEFAULT.toRule(),
             ProjectSetOpTransposeRule.Config.DEFAULT.toRule(),
-            // Calc 转换与合并(Project+Filter → 单个 Calc)
-            ProjectToCalcRule.Config.DEFAULT.toRule(),
-            FilterToCalcRule.Config.DEFAULT.toRule(),
-            CalcMergeRule.Config.DEFAULT.toRule(),
-            FilterCalcMergeRule.Config.DEFAULT.toRule(),
-            ProjectCalcMergeRule.Config.DEFAULT.toRule(),
-            // set op 化简
-            UnionEliminatorRule.Config.DEFAULT.toRule(),
-            // 排序化简(常量/重复/冗余键,不依赖 trait)
+            // 聚合:过滤下推 + 与相邻 Project 合并 + 移除无用聚合
+            FilterAggregateTransposeRule.Config.DEFAULT.toRule(),
+            ProjectAggregateMergeRule.Config.DEFAULT.toRule(),
+            AggregateProjectMergeRule.Config.DEFAULT.toRule(),
+            AggregateRemoveRule.Config.DEFAULT.toRule(),
+            // 排序:换位(便于 SortRemove 找到有序输入)+ 化简
+            FilterSortTransposeRule.Config.DEFAULT.toRule(),
+            SortProjectTransposeRule.Config.DEFAULT.toRule(),
             SortRemoveConstantKeysRule.Config.DEFAULT.toRule(),
             SortRemoveDuplicateKeysRule.Config.DEFAULT.toRule(),
-            SortRemoveRedundantRule.Config.DEFAULT.toRule());
+            SortRemoveRedundantRule.Config.DEFAULT.toRule(),
+            // set op 化简
+            UnionEliminatorRule.Config.DEFAULT.toRule());
 
     /** VolcanoPlanner 阶段规则:依赖 RelCollationTraitDef。
      *  SortRemoveRule 在输入已满足 collation 时移除冗余 Sort,只在 trait 注册(VolcanoPlanner)时触发。 */
