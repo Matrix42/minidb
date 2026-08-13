@@ -15,11 +15,41 @@ import org.apache.calcite.rel.RelNode;
 import org.apache.calcite.rel.core.RepeatUnion;
 
 /**
- * Recursive CTE (WITH RECURSIVE). Executes the non-recursive seed once, then
- * repeatedly evaluates the iterative term against the working table until it
- * stops producing new rows (or iterationLimit is reached). The working table
- * lives in ExecContext under the transient table name so the recursive body's
- * scan can read it back.
+ * 递归 CTE(WITH RECURSIVE)的物理算子,对应 Calcite 的 LogicalRepeatUnion
+ * (seed + iterative 两个输入)。SQL 例子:
+ *
+ *   WITH RECURSIVE nums(n) AS (
+ *       VALUES (1)                          -- seed:非递归项,只算一次
+ *     UNION ALL
+ *       SELECT n + 1 FROM nums WHERE n < 5  -- iterative:递归项,反复算
+ *   ) SELECT n FROM nums
+ *
+ * Calcite 把它规划成(注意 nums 只出现 3 处,共享同一个瞬态表):
+ *
+ *   LogicalRepeatUnion(all=true)
+ *     LogicalTableSpool(table=nums)       -- seed 侧
+ *       LogicalValues(1)
+ *     LogicalTableSpool(table=nums)       -- iterative 侧
+ *       LogicalProject(n+1)
+ *         LogicalFilter(n<5)
+ *           LogicalTableScan(nums)        -- 递归自引用,读瞬态表
+ *
+ * 执行原理(对齐 SQL 标准递归 CTE 的 working 表语义):
+ *   1. 算一次 seed,得到初始 working 表;UNION(非 ALL)时先按行去重。
+ *   2. 每轮:把当前 working 表注册进 ExecContext 的瞬态表,再执行 iterative
+ *      项——它内部的 TableScan(nums) 读到 working 行,算出下一层 produced。
+ *   3. produced 去重后 append 进结果,working 表替换成这些新行。
+ *   4. produced 为空、或全是已见过的重复行(不动点)、或达到 iterationLimit
+ *      时停止。
+ *
+ * working 表每轮必须「替换」而不是累积:递归项只应对上一轮新产生的行计算;
+ * 累积会让同一行被反复重新推导——UNION ALL 下会重复输出(结果错误),UNION
+ * 下虽去重不改变结果但白算。
+ *
+ * 瞬态表如何共享:working 行以 ExecContext 的 Map<String,List<Object[]>> 传递,
+ * key 是 transientTable 限定名的最后一段(即 CTE 名)。MiniDbScan 对单段限定名
+ * 走该注册表读取(见 MiniDbScan.execute)。ExecContext 是 per-query 单线程,普通
+ * HashMap 足够,无需并发保护。
  */
 public class MiniDbRepeatUnion extends RepeatUnion implements MiniDbRel {
 
