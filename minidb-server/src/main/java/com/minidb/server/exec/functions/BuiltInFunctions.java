@@ -2,8 +2,11 @@ package com.minidb.server.exec.functions;
 
 import java.util.List;
 import org.apache.arrow.vector.BigIntVector;
+import org.apache.arrow.vector.BitVector;
 import org.apache.arrow.vector.Float8Vector;
 import org.apache.arrow.vector.IntVector;
+import org.apache.arrow.vector.VarCharVector;
+import org.apache.calcite.sql.SqlKind;
 import org.apache.calcite.sql.SqlOperator;
 import org.apache.calcite.sql.fun.SqlStdOperatorTable;
 
@@ -14,7 +17,58 @@ public final class BuiltInFunctions {
     public static FunctionRegistry newRegistry() {
         FunctionRegistry registry = new FunctionRegistry();
         arithmetic(registry);
+        comparison(registry);
         return registry;
+    }
+
+    private static void comparison(FunctionRegistry r) {
+        r.register(SqlStdOperatorTable.EQUALS,
+                comparisonFunction(SqlStdOperatorTable.EQUALS, SqlKind.EQUALS));
+        r.register(SqlStdOperatorTable.NOT_EQUALS,
+                comparisonFunction(SqlStdOperatorTable.NOT_EQUALS, SqlKind.NOT_EQUALS));
+        r.register(SqlStdOperatorTable.LESS_THAN,
+                comparisonFunction(SqlStdOperatorTable.LESS_THAN, SqlKind.LESS_THAN));
+        r.register(SqlStdOperatorTable.LESS_THAN_OR_EQUAL,
+                comparisonFunction(SqlStdOperatorTable.LESS_THAN_OR_EQUAL, SqlKind.LESS_THAN_OR_EQUAL));
+        r.register(SqlStdOperatorTable.GREATER_THAN,
+                comparisonFunction(SqlStdOperatorTable.GREATER_THAN, SqlKind.GREATER_THAN));
+        r.register(SqlStdOperatorTable.GREATER_THAN_OR_EQUAL,
+                comparisonFunction(SqlStdOperatorTable.GREATER_THAN_OR_EQUAL, SqlKind.GREATER_THAN_OR_EQUAL));
+    }
+
+    /**
+     * 单个比较运算符的所有重载合成一个 {@link Function}(注册表按 SqlOperator 覆盖,同算术)。
+     * 比较恒在数值域:同型 Int/Long/Double 各走对应核,字符串走 String 核;整数字面量恒产
+     * BigIntVector(坑 #23)而 INTEGER 列是 IntVector,故注册 [Int,BigInt]/[BigInt,Int] 两个跨型
+     * 重载,promote int 到 long 后按 Long 比较。结果类型恒 BOOLEAN(由 Function.evaluate 按
+     * call.getType() 分配 BitVector)。
+     */
+    private static Function comparisonFunction(SqlOperator op, SqlKind kind) {
+        return new Function(op.getName(), List.of(
+                new Overload(List.of(IntVector.class, IntVector.class),
+                        (args, out) -> Kernels.fillCompareInt(
+                                (IntVector) args.get(0), (IntVector) args.get(1),
+                                (BitVector) out, Integer::compare, kind)),
+                new Overload(List.of(BigIntVector.class, BigIntVector.class),
+                        (args, out) -> Kernels.fillCompareLong(
+                                (BigIntVector) args.get(0), (BigIntVector) args.get(1),
+                                (BitVector) out, Long::compare, kind)),
+                new Overload(List.of(Float8Vector.class, Float8Vector.class),
+                        (args, out) -> Kernels.fillCompareDouble(
+                                (Float8Vector) args.get(0), (Float8Vector) args.get(1),
+                                (BitVector) out, Double::compare, kind)),
+                new Overload(List.of(VarCharVector.class, VarCharVector.class),
+                        (args, out) -> Kernels.fillCompareString(
+                                (VarCharVector) args.get(0), (VarCharVector) args.get(1),
+                                (BitVector) out, String::compareTo, kind)),
+                new Overload(List.of(IntVector.class, BigIntVector.class),
+                        (args, out) -> Kernels.fillCompareIntLong(
+                                (IntVector) args.get(0), (BigIntVector) args.get(1),
+                                (BitVector) out, Long::compare, kind)),
+                new Overload(List.of(BigIntVector.class, IntVector.class),
+                        (args, out) -> Kernels.fillCompareLongInt(
+                                (BigIntVector) args.get(0), (IntVector) args.get(1),
+                                (BitVector) out, Long::compare, kind))));
     }
 
     private static void arithmetic(FunctionRegistry r) {

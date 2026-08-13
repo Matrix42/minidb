@@ -100,6 +100,20 @@ public final class Kernels {
             out.setSafe(i, compareToBool(cmp.apply(a, b), kind) ? 1 : 0);
         }
     }
+    public static void fillCompareIntLong(IntVector l, BigIntVector r, BitVector out,
+                                          ScalarKernels.LongCompare cmp, SqlKind kind) {
+        for (int i = 0; i < l.getValueCount(); i++) {
+            if (l.isNull(i) || r.isNull(i)) { out.setNull(i); continue; }
+            out.setSafe(i, compareToBool(cmp.apply((long) l.get(i), r.get(i)), kind) ? 1 : 0);
+        }
+    }
+    public static void fillCompareLongInt(BigIntVector l, IntVector r, BitVector out,
+                                          ScalarKernels.LongCompare cmp, SqlKind kind) {
+        for (int i = 0; i < l.getValueCount(); i++) {
+            if (l.isNull(i) || r.isNull(i)) { out.setNull(i); continue; }
+            out.setSafe(i, compareToBool(cmp.apply(l.get(i), (long) r.get(i)), kind) ? 1 : 0);
+        }
+    }
 
     /** 把 -1/0/1 比较结果按 SqlKind 转 bool。 */
     private static boolean compareToBool(int cmp, SqlKind kind) {

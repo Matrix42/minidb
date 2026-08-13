@@ -67,13 +67,6 @@ public class RexInterpreter {
                 return evalCast(call, input);
             case CASE:
                 return caseExpr(call, input);
-            case EQUALS:
-            case NOT_EQUALS:
-            case LESS_THAN:
-            case LESS_THAN_OR_EQUAL:
-            case GREATER_THAN:
-            case GREATER_THAN_OR_EQUAL:
-                return comparison(kind, call.getOperands(), input);
             default: {
                 List<ValueVector> args = new ArrayList<>();
                 for (RexNode operand : call.getOperands()) {
@@ -88,58 +81,6 @@ public class RexInterpreter {
                 }
                 return f.evaluate(args, call.getType(), allocator);
             }
-        }
-    }
-
-    private ValueVector comparison(SqlKind kind, List<RexNode> operands,
-                                   VectorSchemaRoot input) {
-        int rows = input.getRowCount();
-        ValueVector left = eval(operands.get(0), input);
-        ValueVector right = eval(operands.get(1), input);
-        try {
-            boolean doubleDomain = isDouble(left) || isDouble(right);
-            boolean stringDomain = left instanceof VarCharVector
-                    || right instanceof VarCharVector;
-            BitVector out = new BitVector("cmp", allocator);
-            out.allocateNew(rows);
-            for (int i = 0; i < rows; i++) {
-                if (left.isNull(i) || right.isNull(i)) {
-                    out.setNull(i);
-                    continue;
-                }
-                int c = stringDomain
-                        ? stringCompare(left, right, i)
-                        : doubleDomain
-                        ? Double.compare(asDouble(left, i), asDouble(right, i))
-                        : Long.compare(asLong(left, i), asLong(right, i));
-                boolean result;
-                switch (kind) {
-                    case EQUALS:
-                        result = c == 0;
-                        break;
-                    case NOT_EQUALS:
-                        result = c != 0;
-                        break;
-                    case LESS_THAN:
-                        result = c < 0;
-                        break;
-                    case LESS_THAN_OR_EQUAL:
-                        result = c <= 0;
-                        break;
-                    case GREATER_THAN:
-                        result = c > 0;
-                        break;
-                    default:
-                        result = c >= 0;
-                        break;
-                }
-                out.setSafe(i, result ? 1 : 0);
-            }
-            out.setValueCount(rows);
-            return out;
-        } finally {
-            left.close();
-            right.close();
         }
     }
 
@@ -450,10 +391,6 @@ public class RexInterpreter {
         return out;
     }
 
-    static boolean isDouble(ValueVector v) {
-        return v instanceof Float8Vector;
-    }
-
     static long asLong(ValueVector v, int i) {
         if (v instanceof IntVector iv) {
             return iv.get(i);
@@ -478,11 +415,5 @@ public class RexInterpreter {
             return fv.get(i);
         }
         throw new IllegalArgumentException("not a numeric vector: " + v.getClass());
-    }
-
-    private static int stringCompare(ValueVector left, ValueVector right, int i) {
-        Object l = left.getObject(i);
-        Object r = right.getObject(i);
-        return l.toString().compareTo(r.toString());
     }
 }

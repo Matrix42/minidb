@@ -1,5 +1,6 @@
 package com.minidb.server.exec;
 
+import java.nio.charset.StandardCharsets;
 import java.util.List;
 import org.apache.arrow.memory.BufferAllocator;
 import org.apache.arrow.memory.RootAllocator;
@@ -8,6 +9,7 @@ import org.apache.arrow.vector.BitVector;
 import org.apache.arrow.vector.Float8Vector;
 import org.apache.arrow.vector.IntVector;
 import org.apache.arrow.vector.ValueVector;
+import org.apache.arrow.vector.VarCharVector;
 import org.apache.arrow.vector.VectorSchemaRoot;
 import org.apache.arrow.vector.types.pojo.ArrowType;
 import org.apache.arrow.vector.types.pojo.Field;
@@ -166,6 +168,34 @@ class RexInterpreterTest {
         assertEquals(95, ((IntVector) out).get(1));
         assertTrue(out.isNull(2));
         out.close();
+    }
+
+    @Test
+    void stringComparison() {
+        RelDataType varchar = typeFactory.createSqlType(SqlTypeName.VARCHAR);
+        Field sa = new Field("sa", FieldType.nullable(ArrowType.Utf8.INSTANCE), List.of());
+        Field sb = new Field("sb", FieldType.nullable(ArrowType.Utf8.INSTANCE), List.of());
+        VectorSchemaRoot strInput = VectorSchemaRoot.create(new Schema(List.of(sa, sb)), allocator);
+        strInput.allocateNew();
+        VarCharVector vsa = (VarCharVector) strInput.getVector("sa");
+        VarCharVector vsb = (VarCharVector) strInput.getVector("sb");
+        vsa.setSafe(0, "foo".getBytes(StandardCharsets.UTF_8));
+        vsb.setSafe(0, "foo".getBytes(StandardCharsets.UTF_8));
+        vsa.setSafe(1, "bar".getBytes(StandardCharsets.UTF_8));
+        vsb.setSafe(1, "baz".getBytes(StandardCharsets.UTF_8));
+        vsa.setNull(2);
+        vsb.setSafe(2, "foo".getBytes(StandardCharsets.UTF_8));
+        strInput.setRowCount(3);
+
+        RexNode expr = rex.makeCall(SqlStdOperatorTable.EQUALS,
+                rex.makeInputRef(varchar, 0), rex.makeInputRef(varchar, 1));
+        ValueVector out = interpreter.eval(expr, strInput);
+        BitVector bits = (BitVector) out;
+        assertEquals(1, bits.get(0));
+        assertEquals(0, bits.get(1));
+        assertTrue(bits.isNull(2));
+        out.close();
+        strInput.close();
     }
 
     @Test
