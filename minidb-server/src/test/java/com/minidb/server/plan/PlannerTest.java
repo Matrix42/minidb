@@ -34,8 +34,8 @@ class PlannerTest {
     @Test
     void filterProjectPlansToPhysical() {
         String plan = planText("SELECT name FROM t WHERE id > 1");
-        assertTrue(plan.contains("MiniDbFilter"));
-        assertTrue(plan.contains("MiniDbProject"));
+        // Filter+Project are merged into a single Calc by the logical rules.
+        assertTrue(plan.contains("MiniDbCalc"));
         assertTrue(plan.contains("MiniDbScan"));
     }
 

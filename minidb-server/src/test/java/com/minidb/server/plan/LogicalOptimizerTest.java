@@ -3,6 +3,7 @@ package com.minidb.server.plan;
 import com.minidb.server.catalog.MiniDbCatalog;
 import com.minidb.server.exec.QueryExecutor;
 import com.minidb.server.exec.QueryResult;
+import com.minidb.server.plan.physical.MiniDbCalc;
 import com.minidb.server.plan.physical.MiniDbFilter;
 import com.minidb.server.plan.physical.MiniDbJoin;
 import com.minidb.server.plan.physical.MiniDbSort;
@@ -44,8 +45,8 @@ class LogicalOptimizerTest {
                 RelNode plan = new Planner(catalog).plan(sql);
                 MiniDbJoin join = findJoin(plan);
                 assertTrue(join != null, "plan has no join: " + plan);
-                // FilterPushDown: join 的直接输入应是 MiniDbFilter(或含之),而非 join 之上
-                assertTrue(isDirectInput(join, MiniDbFilter.class),
+                // FilterPushDown: join 的直接输入应是过滤节点(Filter 或带 condition 的 Calc),而非 join 之上
+                assertTrue(hasFilterDirectInput(join),
                         "filter should be pushed into join inputs, plan=" + plan);
 
                 List<String> rows = rows(executor, sql);
@@ -108,10 +109,13 @@ class LogicalOptimizerTest {
         return null;
     }
 
-    /** True if any direct input of the join is an instance of clazz. */
-    private static boolean isDirectInput(MiniDbJoin join, Class<?> clazz) {
-        for (RelNode in : join.getInputs()) {
-            if (clazz.isInstance(in)) {
+    /** True if any direct input of the join filters rows (MiniDbFilter or a Calc with a condition). */
+    private static boolean hasFilterDirectInput(MiniDbJoin join) {
+        for (RelNode input : join.getInputs()) {
+            if (input instanceof MiniDbFilter) {
+                return true;
+            }
+            if (input instanceof MiniDbCalc calc && calc.getProgram().getCondition() != null) {
                 return true;
             }
         }

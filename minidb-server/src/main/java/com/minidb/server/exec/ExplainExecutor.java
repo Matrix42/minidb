@@ -37,6 +37,7 @@ import org.apache.calcite.rel.core.TableScan;
 import org.apache.calcite.rex.RexCall;
 import org.apache.calcite.rex.RexInputRef;
 import org.apache.calcite.rex.RexLiteral;
+import org.apache.calcite.rex.RexLocalRef;
 import org.apache.calcite.rex.RexNode;
 
 public class ExplainExecutor {
@@ -137,10 +138,24 @@ public class ExplainExecutor {
     }
 
     private static boolean isTrivialProject(RelNode node) {
-        if (!(node instanceof MiniDbProject p)) {
-            return false;
+        if (node instanceof MiniDbProject p) {
+            return isIdentity(p.getProjects());
         }
-        List<? extends RexNode> projects = p.getProjects();
+        if (node instanceof MiniDbCalc calc) {
+            // A Calc with a condition is a filter, not a trivial projection.
+            if (calc.getProgram().getCondition() != null) {
+                return false;
+            }
+            List<RexNode> projects = new ArrayList<>();
+            for (RexLocalRef ref : calc.getProgram().getProjectList()) {
+                projects.add(calc.getProgram().expandLocalRef(ref));
+            }
+            return isIdentity(projects);
+        }
+        return false;
+    }
+
+    private static boolean isIdentity(List<? extends RexNode> projects) {
         for (int i = 0; i < projects.size(); i++) {
             if (!(projects.get(i) instanceof RexInputRef ref)
                     || ref.getIndex() != i) {
@@ -150,9 +165,18 @@ public class ExplainExecutor {
         return true;
     }
 
-    private String operationName(RelNode node) {        String name = node.getClass().getSimpleName();
-        if (name.startsWith("MiniDb")) {
-            name = name.substring("MiniDb".length());
+    private String operationName(RelNode node) {
+        String name;
+        if (node instanceof MiniDbCalc calc) {
+            // A Calc is a merged Project+Filter; report what it actually does
+            // so EXPLAIN stays readable. With a condition it filters, without
+            // one it only projects.
+            name = calc.getProgram().getCondition() == null ? "Project" : "Filter";
+        } else {
+            name = node.getClass().getSimpleName();
+            if (name.startsWith("MiniDb")) {
+                name = name.substring("MiniDb".length());
+            }
         }
         if (node instanceof TableScan scan) {
             List<String> q = scan.getTable().getQualifiedName();
@@ -171,8 +195,16 @@ public class ExplainExecutor {
         if (node instanceof MiniDbProject) {
             return new Est(childRows(node), null, null);
         }
-        if (node instanceof MiniDbCalc) {
-            return new Est(childRows(node), null, null);
+        if (node instanceof MiniDbCalc calc) {
+            RexLocalRef condRef = calc.getProgram().getCondition();
+            if (condRef == null) {
+                return new Est(childRows(node), null, null);
+            }
+            RexNode condition = calc.getProgram().expandLocalRef(condRef);
+            long in = childRows(node);
+            Sel s = filterSelectivity(condition, calc);
+            long est = Math.max(0, Math.round(in * s.selectivity));
+            return new Est(est, null, s.remarks);
         }
         if (node instanceof MiniDbJoin) {
             long l = childRows(node);
@@ -194,7 +226,7 @@ public class ExplainExecutor {
         }
         if (node instanceof MiniDbFilter filter) {
             long in = childRows(node);
-            Sel s = filterSelectivity(filter);
+            Sel s = filterSelectivity(filter.getCondition(), filter);
             long est = Math.max(0, Math.round(in * s.selectivity));
             return new Est(est, null, s.remarks);
         }
@@ -295,9 +327,8 @@ public class ExplainExecutor {
     private record Sel(double selectivity, String remarks) {
     }
 
-    private Sel filterSelectivity(MiniDbFilter filter) {
-        RexNode cond = filter.getCondition();
-        String table = scanTableOf(filter);
+    private Sel filterSelectivity(RexNode cond, RelNode node) {
+        String table = scanTableOf(node);
         if (table == null) {
             return new Sel(Histogram.DEFAULT_SELECTIVITY, "no stats");
         }
