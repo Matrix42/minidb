@@ -144,7 +144,7 @@ final class FunctionRegistry {
 
 ## 新增函数清单(验收)
 
-- **字符串**:`UPPER(varchar)`、`LOWER(varchar)`、`TRIM(varchar)`(`StringUnary`);`LENGTH(varchar)→int`(`StringToInt`);`CONCAT(varchar, varchar)`(`StringBinary`);`SUBSTRING(varchar, int, int)`(走 **Tier-2 完整核**,顺带验证逃生舱与 3 参场景)。
+- **字符串**:`UPPER(varchar)`、`LOWER(varchar)`(`StringUnary`);`LENGTH(varchar)→int`(`StringToInt`);`CONCAT(varchar, varchar)`(`StringBinary`);`SUBSTRING(varchar, int, int)`(走 **Tier-2 完整核**,顺带验证逃生舱与 3 参场景)。`TRIM(varchar)` **未端到端交付**:只注册了 1 参 `String::trim` 核(对直接构造的 1 参 RexCall 正确,单测保留),但 Calcite 解析期把 `TRIM(s)` 重写为 3 参 `TRIM(Flag,' ',s)`,需要 Symbol 标志字面量处理才能接住,故 `SELECT TRIM(...)` 端到端不通(详见 CLAUDE.md 坑 47)。
 - **数学**:`ABS(int)`、`ABS(bigint)`、`ABS(double)`;`ROUND(double)`、`FLOOR(double)`、`CEIL(double)`(`DoubleUnary`)。
 
 ## 类型边界

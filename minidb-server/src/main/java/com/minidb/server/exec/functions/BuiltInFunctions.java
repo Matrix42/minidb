@@ -47,12 +47,36 @@ public final class BuiltInFunctions {
                 new Overload(List.of(IntVector.class),
                         (args, out) -> Kernels.fillUnaryInt(
                                 (IntVector) args.get(0), (IntVector) out, Math::abs)),
-                new Overload(List.of(BigIntVector.class),
-                        (args, out) -> Kernels.fillUnaryLong(
-                                (BigIntVector) args.get(0), (BigIntVector) out, Math::abs)),
+                new Overload(List.of(BigIntVector.class), BuiltInFunctions::absBigInt),
                 new Overload(List.of(Float8Vector.class),
                         (args, out) -> Kernels.fillUnaryDouble(
                                 (Float8Vector) args.get(0), (Float8Vector) out, Math::abs))));
+    }
+
+    /**
+     * ABS 的 [BigIntVector] 重载核。整数字面量经 {@code RexInterpreter.literalVector} 恒产
+     * BigIntVector(坑 #23),但 {@code call.getType()} 仍按字面量的 Calcite 类型推导:INTEGER
+     * 字面量 → INTEGER 结果、BIGINT 列 → BIGINT 结果。两者**输入**都是 BigIntVector,仅按输入
+     * 类型分发无法区分,而 {@link Function#evaluate} 按结果类型分配的 out 却分别是 IntVector
+     * (INTEGER)与 BigIntVector(BIGINT)。故核内必须按 out 的实际类型分支写入:IntVector 分支对应
+     * INTEGER 字面量(值恒在 int 范围内)、BigIntVector 分支对应 BIGINT 列。
+     */
+    private static void absBigInt(List<ValueVector> args, FieldVector out) {
+        BigIntVector in = (BigIntVector) args.get(0);
+        if (out instanceof IntVector iv) {
+            for (int i = 0; i < in.getValueCount(); i++) {
+                if (in.isNull(i)) { iv.setNull(i); continue; }
+                iv.setSafe(i, (int) Math.abs(in.get(i)));
+            }
+        } else if (out instanceof BigIntVector bv) {
+            for (int i = 0; i < in.getValueCount(); i++) {
+                if (in.isNull(i)) { bv.setNull(i); continue; }
+                bv.setSafe(i, Math.abs(in.get(i)));
+            }
+        } else {
+            throw new IllegalArgumentException(
+                    "ABS[BigIntVector] unexpected output vector: " + out.getClass());
+        }
     }
 
     /** 一元双精度函数:Float8Vector → Float8Vector,结果类型由 call.getType() 决定(DOUBLE)。 */

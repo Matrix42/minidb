@@ -372,6 +372,32 @@ class RexInterpreterTest {
     }
 
     @Test
+    void absIntegerLiteral() {
+        // INTEGER 字面量经 literalVector 恒产 BigIntVector(坑 #23),命中 ABS 的 [BigIntVector]
+        // 重载;但 call.getType() 仍为 INTEGER,Function.evaluate 分配 IntVector 输出。核内必须按
+        // out 实际类型写入(IntVector 分支),否则 (BigIntVector) out 强转失败。
+        RexNode expr = rex.makeCall(SqlStdOperatorTable.ABS,
+                rex.makeExactLiteral(java.math.BigDecimal.valueOf(-3), intType()));
+        ValueVector out = interpreter.eval(expr, input);
+        assertTrue(out instanceof IntVector, "ABS(<int literal>) 结果类型是 INTEGER,输出应为 IntVector");
+        IntVector result = (IntVector) out;
+        assertEquals(3, result.getValueCount());
+        assertEquals(3, result.get(0));
+        assertEquals(3, result.get(1));
+        assertEquals(3, result.get(2));
+        out.close();
+
+        // null 字面量同样产 BigIntVector(全 null),STRICT 应传播为 IntVector 全 null。
+        RexNode nullExpr = rex.makeCall(SqlStdOperatorTable.ABS, rex.makeNullLiteral(intType()));
+        ValueVector nullOut = interpreter.eval(nullExpr, input);
+        IntVector nullResult = (IntVector) nullOut;
+        assertTrue(nullResult.isNull(0));
+        assertTrue(nullResult.isNull(1));
+        assertTrue(nullResult.isNull(2));
+        nullOut.close();
+    }
+
+    @Test
     void absDouble() {
         VectorSchemaRoot root = doubleInput();
         RexNode expr = rex.makeCall(SqlStdOperatorTable.ABS, rex.makeInputRef(doubleType(), 0));
