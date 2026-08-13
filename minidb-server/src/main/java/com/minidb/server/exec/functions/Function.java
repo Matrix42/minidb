@@ -7,11 +7,16 @@ import org.apache.arrow.memory.BufferAllocator;
 import org.apache.arrow.vector.BigIntVector;
 import org.apache.arrow.vector.BitVector;
 import org.apache.arrow.vector.DateDayVector;
+import org.apache.arrow.vector.DecimalVector;
 import org.apache.arrow.vector.FieldVector;
+import org.apache.arrow.vector.Float4Vector;
 import org.apache.arrow.vector.Float8Vector;
 import org.apache.arrow.vector.IntVector;
+import org.apache.arrow.vector.SmallIntVector;
+import org.apache.arrow.vector.TimeMilliVector;
 import org.apache.arrow.vector.TimeStampMilliVector;
 import org.apache.arrow.vector.ValueVector;
+import org.apache.arrow.vector.VarBinaryVector;
 import org.apache.arrow.vector.VarCharVector;
 import org.apache.calcite.rel.type.RelDataType;
 
@@ -81,13 +86,18 @@ public final class Function {
     /** 把 Calcite 结果类型映射到 Arrow 向量类,与 {@link ArrowTypes} 的映射保持一致。 */
     private static Class<? extends FieldVector> outputVectorClass(RelDataType type) {
         return switch (type.getSqlTypeName()) {
+            case SMALLINT -> SmallIntVector.class;
             case INTEGER -> IntVector.class;
             case BIGINT -> BigIntVector.class;
-            case DOUBLE, FLOAT, REAL, DECIMAL -> Float8Vector.class;
+            case REAL, FLOAT -> Float4Vector.class;
+            case DOUBLE -> Float8Vector.class;
+            case DECIMAL -> DecimalVector.class;
             case VARCHAR, CHAR -> VarCharVector.class;
             case BOOLEAN -> BitVector.class;
             case DATE -> DateDayVector.class;
+            case TIME -> TimeMilliVector.class;
             case TIMESTAMP -> TimeStampMilliVector.class;
+            case BINARY, VARBINARY -> VarBinaryVector.class;
             default -> throw new IllegalArgumentException(
                     "unsupported result type: " + type.getSqlTypeName());
         };

@@ -1,13 +1,21 @@
 package com.minidb.server.exec.functions;
 
+import java.math.BigDecimal;
+import java.math.RoundingMode;
 import java.nio.charset.StandardCharsets;
+import java.util.Arrays;
 import java.util.List;
 import org.apache.arrow.vector.BigIntVector;
 import org.apache.arrow.vector.BitVector;
+import org.apache.arrow.vector.DecimalVector;
 import org.apache.arrow.vector.FieldVector;
+import org.apache.arrow.vector.Float4Vector;
 import org.apache.arrow.vector.Float8Vector;
 import org.apache.arrow.vector.IntVector;
+import org.apache.arrow.vector.SmallIntVector;
+import org.apache.arrow.vector.TimeMilliVector;
 import org.apache.arrow.vector.ValueVector;
+import org.apache.arrow.vector.VarBinaryVector;
 import org.apache.arrow.vector.VarCharVector;
 import org.apache.calcite.sql.SqlKind;
 import org.apache.calcite.sql.SqlOperator;
@@ -27,37 +35,59 @@ public final class BuiltInFunctions {
         return registry;
     }
 
-    /** 数学函数:ABS 按输入/输出类型注册;FLOOR/CEIL/ROUND 只对 double 注册。 */
+    /** 数学函数:ABS 按输入/输出类型注册;FLOOR/CEIL/ROUND 对 double 与 decimal 注册。 */
     private static void mathFunctions(FunctionRegistry r) {
         r.register(SqlStdOperatorTable.ABS, absFunction());
-        unaryDouble(r, SqlStdOperatorTable.FLOOR, Math::floor);
-        unaryDouble(r, SqlStdOperatorTable.CEIL, Math::ceil);
         // ROUND(double) → double,就近取整、0.5 远离零(SQL 标准语义,非 Math.rint 的 tie-to-even)。
-        unaryDouble(r, SqlStdOperatorTable.ROUND, BuiltInFunctions::roundHalfAwayFromZero);
+        unaryDoubleOrDecimal(r, SqlStdOperatorTable.FLOOR, Math::floor,
+                d -> d.setScale(0, RoundingMode.FLOOR));
+        unaryDoubleOrDecimal(r, SqlStdOperatorTable.CEIL, Math::ceil,
+                d -> d.setScale(0, RoundingMode.CEILING));
+        unaryDoubleOrDecimal(r, SqlStdOperatorTable.ROUND, BuiltInFunctions::roundHalfAwayFromZero,
+                d -> d.setScale(0, RoundingMode.HALF_UP));
     }
 
     /**
-     * ABS 的三个同型重载收进同一个 {@link Function}(注册表按 SqlOperator 覆盖)。
+     * ABS 的同型重载收进同一个 {@link Function}(注册表按 SqlOperator 覆盖)。整数/浮点/定点
+     * 各走对应域:short/int/long/float/double 用原语 Math.abs,BigDecimal 用 {@link BigDecimal#abs}。
      */
     private static Function absFunction() {
         return new Function(SqlStdOperatorTable.ABS.getName(), List.of(
+                new Overload(List.of(SmallIntVector.class), SmallIntVector.class,
+                        (args, out) -> Kernels.fillUnaryShort(
+                                (SmallIntVector) args.get(0), (SmallIntVector) out,
+                                v -> (short) Math.abs(v))),
                 new Overload(List.of(IntVector.class), IntVector.class,
                         (args, out) -> Kernels.fillUnaryInt(
                                 (IntVector) args.get(0), (IntVector) out, Math::abs)),
                 new Overload(List.of(BigIntVector.class), BigIntVector.class,
                         (args, out) -> Kernels.fillUnaryLong(
                                 (BigIntVector) args.get(0), (BigIntVector) out, Math::abs)),
+                new Overload(List.of(Float4Vector.class), Float4Vector.class,
+                        (args, out) -> Kernels.fillUnaryFloat(
+                                (Float4Vector) args.get(0), (Float4Vector) out, Math::abs)),
                 new Overload(List.of(Float8Vector.class), Float8Vector.class,
                         (args, out) -> Kernels.fillUnaryDouble(
-                                (Float8Vector) args.get(0), (Float8Vector) out, Math::abs))));
+                                (Float8Vector) args.get(0), (Float8Vector) out, Math::abs)),
+                new Overload(List.of(DecimalVector.class), DecimalVector.class,
+                        (args, out) -> Kernels.fillUnaryDecimal(
+                                (DecimalVector) args.get(0), (DecimalVector) out, BigDecimal::abs))));
     }
 
-    /** 一元双精度函数:Float8Vector → Float8Vector。 */
-    private static void unaryDouble(FunctionRegistry r, SqlOperator op, ScalarKernels.DoubleUnary fn) {
-        r.register(op, new Function(op.getName(), List.of(new Overload(
-                List.of(Float8Vector.class), Float8Vector.class,
-                (args, out) -> Kernels.fillUnaryDouble(
-                        (Float8Vector) args.get(0), (Float8Vector) out, fn)))));
+    /**
+     * 双精度 + 定点两种重载合成一个 {@link Function}(注册表按 SqlOperator 覆盖,不能分开 register)。
+     * double 走 Math 域、DECIMAL 走 BigDecimal 域,输出类型随输入类型。
+     */
+    private static void unaryDoubleOrDecimal(FunctionRegistry r, SqlOperator op,
+                                             ScalarKernels.DoubleUnary doubleFn,
+                                             ScalarKernels.DecimalUnary decimalFn) {
+        r.register(op, new Function(op.getName(), List.of(
+                new Overload(List.of(Float8Vector.class), Float8Vector.class,
+                        (args, out) -> Kernels.fillUnaryDouble(
+                                (Float8Vector) args.get(0), (Float8Vector) out, doubleFn)),
+                new Overload(List.of(DecimalVector.class), DecimalVector.class,
+                        (args, out) -> Kernels.fillUnaryDecimal(
+                                (DecimalVector) args.get(0), (DecimalVector) out, decimalFn)))));
     }
 
     /** 就近取整、0.5 远离零(SQL ROUND 语义):sign(x) * floor(|x| + 0.5)。 */
@@ -225,6 +255,10 @@ public final class BuiltInFunctions {
      */
     private static Function comparisonFunction(SqlOperator op, SqlKind kind) {
         return new Function(op.getName(), List.of(
+                new Overload(List.of(SmallIntVector.class, SmallIntVector.class), BitVector.class,
+                        (args, out) -> Kernels.fillCompareShort(
+                                (SmallIntVector) args.get(0), (SmallIntVector) args.get(1),
+                                (BitVector) out, Short::compare, kind)),
                 new Overload(List.of(IntVector.class, IntVector.class), BitVector.class,
                         (args, out) -> Kernels.fillCompareInt(
                                 (IntVector) args.get(0), (IntVector) args.get(1),
@@ -233,14 +267,30 @@ public final class BuiltInFunctions {
                         (args, out) -> Kernels.fillCompareLong(
                                 (BigIntVector) args.get(0), (BigIntVector) args.get(1),
                                 (BitVector) out, Long::compare, kind)),
+                new Overload(List.of(Float4Vector.class, Float4Vector.class), BitVector.class,
+                        (args, out) -> Kernels.fillCompareFloat(
+                                (Float4Vector) args.get(0), (Float4Vector) args.get(1),
+                                (BitVector) out, Float::compare, kind)),
                 new Overload(List.of(Float8Vector.class, Float8Vector.class), BitVector.class,
                         (args, out) -> Kernels.fillCompareDouble(
                                 (Float8Vector) args.get(0), (Float8Vector) args.get(1),
                                 (BitVector) out, Double::compare, kind)),
+                new Overload(List.of(DecimalVector.class, DecimalVector.class), BitVector.class,
+                        (args, out) -> Kernels.fillCompareDecimal(
+                                (DecimalVector) args.get(0), (DecimalVector) args.get(1),
+                                (BitVector) out, BigDecimal::compareTo, kind)),
                 new Overload(List.of(VarCharVector.class, VarCharVector.class), BitVector.class,
                         (args, out) -> Kernels.fillCompareString(
                                 (VarCharVector) args.get(0), (VarCharVector) args.get(1),
                                 (BitVector) out, String::compareTo, kind)),
+                new Overload(List.of(TimeMilliVector.class, TimeMilliVector.class), BitVector.class,
+                        (args, out) -> Kernels.fillCompareTime(
+                                (TimeMilliVector) args.get(0), (TimeMilliVector) args.get(1),
+                                (BitVector) out, Integer::compare, kind)),
+                new Overload(List.of(VarBinaryVector.class, VarBinaryVector.class), BitVector.class,
+                        (args, out) -> Kernels.fillCompareBytes(
+                                (VarBinaryVector) args.get(0), (VarBinaryVector) args.get(1),
+                                (BitVector) out, Arrays::compareUnsigned, kind)),
                 new Overload(List.of(IntVector.class, BigIntVector.class), BitVector.class,
                         (args, out) -> Kernels.fillCompareIntLong(
                                 (IntVector) args.get(0), (BigIntVector) args.get(1),
@@ -266,25 +316,85 @@ public final class BuiltInFunctions {
      * 产 BigIntVector),故不再有「字面量坑」的 Int 结果跨型。
      */
     private static Function arithmeticFunction(SqlOperator op) {
+        ScalarKernels.ShortBinary shortOp = shortKernel(op);
         ScalarKernels.IntBinary intOp = intKernel(op);
         ScalarKernels.LongBinary longOp = longKernel(op);
+        ScalarKernels.FloatBinary floatOp = floatKernel(op);
         ScalarKernels.DoubleBinary doubleOp = doubleKernel(op);
+        ScalarKernels.DecimalBinary decimalOp = decimalKernel(op);
         return new Function(op.getName(), List.of(
+                new Overload(List.of(SmallIntVector.class, SmallIntVector.class), SmallIntVector.class,
+                        (args, out) -> Kernels.fillBinaryShort(
+                                (SmallIntVector) args.get(0), (SmallIntVector) args.get(1),
+                                (SmallIntVector) out, shortOp)),
                 new Overload(List.of(IntVector.class, IntVector.class), IntVector.class,
                         (args, out) -> Kernels.fillBinaryInt(
                                 (IntVector) args.get(0), (IntVector) args.get(1), (IntVector) out, intOp)),
                 new Overload(List.of(BigIntVector.class, BigIntVector.class), BigIntVector.class,
                         (args, out) -> Kernels.fillBinaryLong(
                                 (BigIntVector) args.get(0), (BigIntVector) args.get(1), (BigIntVector) out, longOp)),
+                new Overload(List.of(Float4Vector.class, Float4Vector.class), Float4Vector.class,
+                        (args, out) -> Kernels.fillBinaryFloat(
+                                (Float4Vector) args.get(0), (Float4Vector) args.get(1),
+                                (Float4Vector) out, floatOp)),
                 new Overload(List.of(Float8Vector.class, Float8Vector.class), Float8Vector.class,
                         (args, out) -> Kernels.fillBinaryDouble(
                                 (Float8Vector) args.get(0), (Float8Vector) args.get(1), (Float8Vector) out, doubleOp)),
+                new Overload(List.of(DecimalVector.class, DecimalVector.class), DecimalVector.class,
+                        (args, out) -> Kernels.fillBinaryDecimal(
+                                (DecimalVector) args.get(0), (DecimalVector) args.get(1),
+                                (DecimalVector) out, decimalOp)),
                 new Overload(List.of(IntVector.class, BigIntVector.class), BigIntVector.class,
                         (args, out) -> fillIntLongBinary(
                                 (IntVector) args.get(0), (BigIntVector) args.get(1), (BigIntVector) out, longOp)),
                 new Overload(List.of(BigIntVector.class, IntVector.class), BigIntVector.class,
                         (args, out) -> fillLongIntBinary(
                                 (BigIntVector) args.get(0), (IntVector) args.get(1), (BigIntVector) out, longOp))));
+    }
+
+    private static ScalarKernels.ShortBinary shortKernel(SqlOperator op) {
+        if (op == SqlStdOperatorTable.PLUS) {
+            return (a, b) -> (short) (a + b);
+        }
+        if (op == SqlStdOperatorTable.MINUS) {
+            return (a, b) -> (short) (a - b);
+        }
+        if (op == SqlStdOperatorTable.MULTIPLY) {
+            return (a, b) -> (short) (a * b);
+        }
+        return (a, b) -> { if (b == 0) throw new ArithmeticException("division by zero"); return (short) (a / b); };
+    }
+
+    private static ScalarKernels.FloatBinary floatKernel(SqlOperator op) {
+        if (op == SqlStdOperatorTable.PLUS) {
+            return (a, b) -> a + b;
+        }
+        if (op == SqlStdOperatorTable.MINUS) {
+            return (a, b) -> a - b;
+        }
+        if (op == SqlStdOperatorTable.MULTIPLY) {
+            return (a, b) -> a * b;
+        }
+        return (a, b) -> { if (b == 0) throw new ArithmeticException("division by zero"); return a / b; };
+    }
+
+    /** DECIMAL 算术在 BigDecimal 域执行,保精确。除法按 SQL 标准:除零抛错,否则半入保留足够精度。 */
+    private static ScalarKernels.DecimalBinary decimalKernel(SqlOperator op) {
+        if (op == SqlStdOperatorTable.PLUS) {
+            return BigDecimal::add;
+        }
+        if (op == SqlStdOperatorTable.MINUS) {
+            return BigDecimal::subtract;
+        }
+        if (op == SqlStdOperatorTable.MULTIPLY) {
+            return BigDecimal::multiply;
+        }
+        return (a, b) -> {
+            if (b.signum() == 0) {
+                throw new ArithmeticException("division by zero");
+            }
+            return a.divide(b, Math.max(a.scale(), b.scale()) + 6, RoundingMode.HALF_UP);
+        };
     }
 
     private static ScalarKernels.IntBinary intKernel(SqlOperator op) {
