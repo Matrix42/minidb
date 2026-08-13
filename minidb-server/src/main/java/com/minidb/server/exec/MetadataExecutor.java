@@ -245,6 +245,7 @@ public class MetadataExecutor {
             case BOOLEAN -> Types.BOOLEAN;
             case DATE -> Types.DATE;
             case TIMESTAMP -> Types.TIMESTAMP;
+            default -> Types.OTHER;
         };
     }
 

@@ -55,6 +55,7 @@ public final class HistogramBuilder {
             case BOOLEAN -> ((BitVector) v).get(i) == 1;
             case DATE -> ((DateDayVector) v).get(i);
             case TIMESTAMP -> ((TimeStampMilliVector) v).get(i);
+            default -> throw new IllegalArgumentException("histogram: unsupported type " + type);
         };
     }
 
