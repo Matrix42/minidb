@@ -3,3 +3,5 @@ data/
 .idea/
 *.iml
 .vscode/
+logs/
+dependency-reduced-pom.xml
