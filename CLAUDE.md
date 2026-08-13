@@ -64,7 +64,7 @@ QueryExecutor.execute(sql, currentSchema)
 
 **规划与算子(`plan/` + `rule/` 四包子结构):**
 - `plan/Planner` — 编排,**两阶段规划**:先 `LogicalOptimizer.optimize(logical)`(HepPlanner 逻辑优化)→ 再 VolcanoPlanner 物理转换。`plan(sql)` 委托 `plan(sql, "public")`,透传 currentSchema 给 `CalciteContext.planInCluster`。物理阶段注册 `ConventionTraitDef` + `RelCollationTraitDef`(先于 `RelOptCluster.create`)+ `MiniDbPhysicalRules.ALL`(12 个 ConverterRule),`changeTraits(MiniDbConvention.INSTANCE)` → `findBestExp()` 产出 MiniDbRel。
-- `plan/logical/LogicalOptimizer` — 逻辑阶段:HepPlanner 直接优化 Calcite Logical* 树(不自建逻辑节点),跑 `rule/logical` 规则集,返回 `findBest()`。
+- `plan/logical/LogicalOptimizer` — 逻辑阶段:HepPlanner 直接优化 Calcite Logical* 树(不自建逻辑节点),跑 `rule/logical` 规则集,返回 `findBestExp()`。
 - `rule/logical/MiniDbLogicalRules` — 逻辑规则集(Calcite 内置,`Config.DEFAULT.toRule()` 构造):`FilterJoinRule.FilterIntoJoinRule`(FilterPushDown 进 join)/`FilterProjectTransposeRule`/`ProjectMergeRule`/`FilterMergeRule`。
 - `plan/physical/`(`com.minidb.server.plan.physical`)——MiniDb* 物理算子,均 `implements MiniDbRel`:
   - `MiniDbRel` — 接口:`BatchIterator execute(ExecContext)`。每个算子自己 `execute()` 内部调子算子 `execute()`(拉模式)。
