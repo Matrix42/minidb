@@ -4,6 +4,8 @@ import com.minidb.server.exec.ExecContext;
 import java.util.ArrayList;
 import java.util.List;
 import org.apache.calcite.plan.RelOptCluster;
+import org.apache.calcite.plan.RelOptCost;
+import org.apache.calcite.plan.RelOptPlanner;
 import org.apache.calcite.plan.RelTraitSet;
 import org.apache.calcite.rel.RelNode;
 import org.apache.calcite.rel.core.Join;
@@ -33,6 +35,23 @@ public class MiniDbSortMergeJoin extends MiniDbJoin {
         RelMetadataQuery mq = RelMetadataQuery.instance();
         this.leftSorted = coversKeys(mq.collations(left), info.leftKeys);
         this.rightSorted = coversKeys(mq.collations(right), info.rightKeys);
+    }
+
+    @Override
+    public RelOptCost computeSelfCost(RelOptPlanner planner, RelMetadataQuery mq) {
+        double leftRows = mq.getRowCount(getLeft());
+        double rightRows = mq.getRowCount(getRight());
+        double sort = (leftSorted ? 0 : leftRows * Math.log(leftRows + 1))
+                    + (rightSorted ? 0 : rightRows * Math.log(rightRows + 1));
+        // Calcite 1.42's VolcanoCost.isLt compares ONLY the rowCount component
+        // (cpu/io are ignored — see VolcanoCost.isLt). Encode the estimated
+        // work there: the merge pass is linear, and any side not already sorted
+        // on the join keys pays an internal sort. When both sides arrive
+        // pre-sorted this ties the hash join's build+probe cost, so the
+        // sort-merge rule is registered before the hash rule (see
+        // MiniDbPhysicalRules) to win that tie — the old deterministic rule's
+        // "pre-sorted -> sort-merge" preference.
+        return planner.getCostFactory().makeCost(leftRows + rightRows + sort, 0, 0);
     }
 
     public boolean leftInputSorted() {

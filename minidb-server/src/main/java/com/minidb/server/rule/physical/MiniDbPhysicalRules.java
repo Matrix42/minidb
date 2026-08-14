@@ -17,7 +17,15 @@ public final class MiniDbPhysicalRules {
             new MiniDbIntersectRule(),
             new MiniDbExceptRule(),
             new MiniDbCalcRule(),
-            new MiniDbJoinRule(),
+            // Registration order matters for equal-cost joins: VolcanoPlanner's
+            // VolcanoCost.isLt compares only the rowCount component, so a
+            // pre-sorted equi join (sort-merge and hash both cost left+right)
+            // is won by whichever rule fires first. Put sort-merge first to
+            // keep the "pre-sorted inputs -> sort-merge" preference that the
+            // old MiniDbJoinRule encoded deterministically.
+            new MiniDbSortMergeJoinRule(),
+            new MiniDbHashJoinRule(),
+            new MiniDbNestedLoopJoinRule(),
             new MiniDbTableSpoolRule(),
             new MiniDbRepeatUnionRule());
 

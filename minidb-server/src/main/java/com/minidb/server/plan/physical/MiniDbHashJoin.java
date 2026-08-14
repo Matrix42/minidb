@@ -6,11 +6,14 @@ import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
 import org.apache.calcite.plan.RelOptCluster;
+import org.apache.calcite.plan.RelOptCost;
+import org.apache.calcite.plan.RelOptPlanner;
 import org.apache.calcite.plan.RelTraitSet;
 import org.apache.calcite.rel.RelNode;
 import org.apache.calcite.rel.core.Join;
 import org.apache.calcite.rel.core.JoinInfo;
 import org.apache.calcite.rel.core.JoinRelType;
+import org.apache.calcite.rel.metadata.RelMetadataQuery;
 import org.apache.calcite.rex.RexNode;
 
 /**
@@ -25,6 +28,18 @@ public class MiniDbHashJoin extends MiniDbJoin {
                           RelNode left, RelNode right, RexNode condition,
                           JoinRelType joinType) {
         super(cluster, traitSet, left, right, condition, joinType);
+    }
+
+    @Override
+    public RelOptCost computeSelfCost(RelOptPlanner planner, RelMetadataQuery mq) {
+        double leftRows = mq.getRowCount(getLeft());
+        double rightRows = mq.getRowCount(getRight());
+        // Calcite 1.42's VolcanoCost.isLt compares ONLY the rowCount component
+        // (cpu/io are ignored — see VolcanoCost.isLt). Encode the estimated
+        // work there so the planner can rank the three join strategies: hash
+        // join builds a table on the left and probes with the right, linear in
+        // both inputs.
+        return planner.getCostFactory().makeCost(leftRows + rightRows, 0, 0);
     }
 
     @Override
