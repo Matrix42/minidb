@@ -67,6 +67,11 @@ SMALLINT、INTEGER、BIGINT、REAL、FLOAT、DOUBLE、DECIMAL、NUMERIC、VARCHA
 - NCHAR 暂不能经 SQL DDL 创建(Calcite 解析器将 NCHAR 视为保留字,不在类型名语法内);程序化建表与元数据保真已通。
 - 限制:BINARY/VARBINARY 参与 JOIN/聚合/窗口/去重时结果未定义(byte[] 无值语义);TIME 无算术,仅比较与 CAST。
 
+## 元数据与 information_schema
+
+- 表元数据(schema/表/列名 + 类型 + DECIMAL/NUMERIC 的 precision/scale)持久化在 `data/catalog.json`,独立于数据文件;空表(从未插入)重启后仍存活。
+- 提供只读系统表 `information_schema.schemata` / `information_schema.tables` / `information_schema.columns`,可 `SELECT` 查询。`information_schema` 是保留名,不可作为用户 schema 创建。
+
 ## 限制
 
 - 无事务（autoCommit 恒为 true）
