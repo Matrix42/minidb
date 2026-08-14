@@ -53,7 +53,7 @@
 
 统计归 `MiniDbCatalog` 统一持有(单一事实来源),`StatsManager` 退化为薄分析器:
 
-- `MiniDbCatalog` 新增 `ConcurrentHashMap<String, TableStats> stats`(key 为 `schema.table` 小写)+ `getStats`/`setStats`/`markStatsStale`/`dropStats`。`markStatsStale`/`setStats`/`dropStats` 是 catalog 变更,自然触发 `notifyChange` → persistCatalog(顺带让 stale 标记持久化,修复现 `.stats` 方案里重启后 stale 丢失的隐患)。
+- `MiniDbCatalog` 新增 `ConcurrentHashMap<String, TableStats> stats`(key 为 `schema.table` 小写)+ `getStats`/`setStats`/`markStatsStale`/`dropStats`。仅 `setStats`(analyze)触发 `notifyChange` → persistCatalog;`markStatsStale`(DML)只改内存不触发(否则每次 INSERT/UPDATE/DELETE 都写 catalog.json,是回归,且现 `.stats` 方案里 stale 本就随重启丢失);`dropStats` 不触发(紧随其后的 `dropTable`/`dropSchema` 已触发 notifyChange)。
 - `CatalogSnapshot` 新增 `Map<String, TableStats> stats` 字段(key 为 `schema.table`);`snapshot()`/`restore()` 含统计;`restore()` 仍不触发 notifyChange(坑 49)。
 - `StatsManager`:
   - `analyze(table)` 从 `storage` 读 ArrowTable、`HistogramBuilder` 建列直方图,组装 `TableStats`,调 `catalog.setStats(...)`(触发 listener → persistCatalog)。
