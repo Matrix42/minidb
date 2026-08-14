@@ -39,6 +39,7 @@ public class StorageManager implements AutoCloseable {
     private final MiniDbCatalog catalog;
     private final BufferAllocator allocator;
     private final Path dataDir;
+    private final CatalogStore catalogStore;
     private final Map<String, ArrowTable> tables = new ConcurrentHashMap<>();
     private final Set<String> dirty = ConcurrentHashMap.newKeySet();
     private volatile StatsManager statsManager;
@@ -47,6 +48,16 @@ public class StorageManager implements AutoCloseable {
         this.catalog = catalog;
         this.allocator = allocator;
         this.dataDir = dataDir;
+        this.catalogStore = new JsonCatalogStore(dataDir.resolve("catalog.json"));
+        catalog.addListener(this::persistCatalog);
+    }
+
+    private void persistCatalog() {
+        try {
+            catalogStore.save(catalog.snapshot());
+        } catch (IOException e) {
+            throw new UncheckedIOException("failed to persist catalog", e);
+        }
     }
 
     public void setStatsManager(StatsManager statsManager) {
@@ -58,6 +69,7 @@ public class StorageManager implements AutoCloseable {
     }
 
     public void loadAll() {
+        boolean restored = restoreCatalog();
         if (!Files.exists(dataDir)) {
             LOG.info("loaded 0 table(s) (data dir absent)");
             return;
@@ -72,7 +84,7 @@ public class StorageManager implements AutoCloseable {
                 try (DirectoryStream<Path> files =
                              Files.newDirectoryStream(schemaDir, "*.arrow")) {
                     for (Path file : files) {
-                        loadFile(schemaName, file);
+                        loadFile(schemaName, file, restored);
                         count++;
                     }
                 }
@@ -83,13 +95,31 @@ public class StorageManager implements AutoCloseable {
         LOG.info("loaded {} table(s)", count);
     }
 
-    private void loadFile(String schemaName, Path file) throws IOException {
+    /** 恢复元数据。有 catalog.json → 恢复并返回 true;否则回退 .arrow 推断(返回 false)。 */
+    private boolean restoreCatalog() {
+        try {
+            if (Files.exists(dataDir.resolve("catalog.json"))) {
+                catalog.restore(catalogStore.load());
+                return true;
+            }
+        } catch (IOException e) {
+            throw new UncheckedIOException(e);
+        }
+        return false;
+    }
+
+    private void loadFile(String schemaName, Path file, boolean restored) throws IOException {
         try (SeekableByteChannel channel =
                      Files.newByteChannel(file, StandardOpenOption.READ);
              ArrowFileReader reader = new ArrowFileReader(channel, allocator)) {
             VectorSchemaRoot root = reader.getVectorSchemaRoot();
             String tableName = stripExtension(file.getFileName().toString());
-            TableSchema schema = toTableSchema(root.getSchema(), schemaName, tableName);
+            TableSchema schema;
+            if (restored) {
+                schema = catalog.getTable(schemaName, tableName);
+            } else {
+                schema = toTableSchema(root.getSchema(), schemaName, tableName);
+            }
             ArrowTable table = new ArrowTable(schema, allocator);
             while (reader.loadNextBatch()) {
                 VectorSchemaRoot copy = table.newBatchRoot();
@@ -100,7 +130,9 @@ public class StorageManager implements AutoCloseable {
                 table.appendBatch(copy);
             }
             tables.put(storageKey(schema.schemaName(), schema.name()), table);
-            catalog.createTable(schema);
+            if (!restored) {
+                catalog.createTable(schema);
+            }
         }
     }
 

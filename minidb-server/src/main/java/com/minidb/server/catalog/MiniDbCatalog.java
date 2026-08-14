@@ -114,6 +114,26 @@ public class MiniDbCatalog {
         listeners.add(listener);
     }
 
+    public CatalogSnapshot snapshot() {
+        List<TableSchema> tables = new ArrayList<>();
+        for (Map<String, TableSchema> t : schemas.values()) {
+            tables.addAll(t.values());
+        }
+        return new CatalogSnapshot(schemaNames(), tables);
+    }
+
+    /** 批量恢复(启动时用),不触发 notifyChange —— 避免加载时把刚读到的文件写回。 */
+    public void restore(CatalogSnapshot snapshot) {
+        for (String schemaName : snapshot.schemas()) {
+            schemas.putIfAbsent(key(schemaName), new ConcurrentHashMap<>());
+        }
+        for (TableSchema table : snapshot.tables()) {
+            String sk = key(table.schemaName());
+            Map<String, TableSchema> t = schemas.computeIfAbsent(sk, k -> new ConcurrentHashMap<>());
+            t.putIfAbsent(key(table.name()), table);
+        }
+    }
+
     private void notifyChange() {
         for (Runnable listener : listeners) {
             listener.run();

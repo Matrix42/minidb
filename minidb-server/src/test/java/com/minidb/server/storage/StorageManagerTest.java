@@ -119,6 +119,33 @@ class StorageManagerTest {
     }
 
     @Test
+    void emptyTableSurvivesRestart(@TempDir Path dir) {
+        MiniDbCatalog catalog = new MiniDbCatalog();
+        try (BufferAllocator allocator = new RootAllocator()) {
+            StorageManager storage = new StorageManager(catalog, allocator, dir);
+            storage.createTable(new TableSchema("t", List.of(
+                    new ColumnMeta("id", ColumnType.INTEGER),
+                    new ColumnMeta("price", ColumnType.DECIMAL, 10, 2))));
+            // 不插任何行 → 无 .arrow 文件,但 catalog.json 应已落盘
+            storage.close();
+        }
+        assertTrue(Files.exists(dir.resolve("catalog.json")));
+
+        MiniDbCatalog catalog2 = new MiniDbCatalog();
+        try (BufferAllocator allocator = new RootAllocator()) {
+            StorageManager storage2 = new StorageManager(catalog2, allocator, dir);
+            storage2.loadAll();
+            assertTrue(catalog2.hasTable("t"));
+            List<ColumnMeta> cols = catalog2.getTable("t").columns();
+            assertEquals(ColumnType.INTEGER, cols.get(0).type());
+            assertEquals(ColumnType.DECIMAL, cols.get(1).type());
+            assertEquals(10, cols.get(1).precision());
+            assertEquals(2, cols.get(1).scale());
+            storage2.close();
+        }
+    }
+
+    @Test
     void reloadPreservesNewColumnTypesAndDecimalScale(@TempDir Path dir) {
         TableSchema schema = new TableSchema("t", List.of(
                 new ColumnMeta("s", ColumnType.SMALLINT),
