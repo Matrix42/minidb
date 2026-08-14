@@ -3,8 +3,10 @@ package com.minidb.jdbc;
 import java.sql.ResultSetMetaData;
 import java.sql.SQLException;
 import java.util.Map;
-import org.apache.arrow.vector.FieldVector;
 import org.apache.arrow.vector.VectorSchemaRoot;
+import org.apache.arrow.vector.types.FloatingPointPrecision;
+import org.apache.arrow.vector.types.pojo.ArrowType;
+import org.apache.arrow.vector.types.pojo.Field;
 
 public class MiniDbResultSetMetaData implements ResultSetMetaData {
 
@@ -31,45 +33,62 @@ public class MiniDbResultSetMetaData implements ResultSetMetaData {
 
     @Override
     public String getColumnTypeName(int column) {
-        FieldVector v = root.getFieldVectors().get(column - 1);
-        switch (v.getMinorType()) {
-            case INT:
-                return "INTEGER";
-            case BIGINT:
-                return "BIGINT";
-            case FLOAT8:
+        Field f = root.getFieldVectors().get(column - 1).getField();
+        Map<String, String> meta = f.getMetadata();
+        if (meta != null && meta.containsKey("minidb.type")) {
+            return meta.get("minidb.type");
+        }
+        switch (f.getType().getTypeID()) {
+            case Int:
+                return ((ArrowType.Int) f.getType()).getBitWidth() == 16 ? "SMALLINT"
+                        : ((ArrowType.Int) f.getType()).getBitWidth() == 32 ? "INTEGER" : "BIGINT";
+            case FloatingPoint:
                 return "DOUBLE";
-            case VARCHAR:
+            case Decimal:
+                return "DECIMAL";
+            case Utf8:
                 return "VARCHAR";
-            case BIT:
+            case Bool:
                 return "BOOLEAN";
-            case DATEDAY:
+            case Date:
                 return "DATE";
-            case TIMESTAMPMILLI:
+            case Time:
+                return "TIME";
+            case Timestamp:
                 return "TIMESTAMP";
+            case Binary:
+                return "VARBINARY";
             default:
-                return v.getMinorType().name();
+                return f.getType().getTypeID().name();
         }
     }
 
     @Override
     public int getColumnType(int column) throws SQLException {
-        FieldVector v = root.getFieldVectors().get(column - 1);
-        switch (v.getMinorType()) {
-            case INT:
-                return java.sql.Types.INTEGER;
-            case BIGINT:
-                return java.sql.Types.BIGINT;
-            case FLOAT8:
-                return java.sql.Types.DOUBLE;
-            case VARCHAR:
+        Field f = root.getFieldVectors().get(column - 1).getField();
+        switch (f.getType().getTypeID()) {
+            case Int: {
+                int bitWidth = ((ArrowType.Int) f.getType()).getBitWidth();
+                return bitWidth == 16 ? java.sql.Types.SMALLINT
+                        : bitWidth == 32 ? java.sql.Types.INTEGER : java.sql.Types.BIGINT;
+            }
+            case FloatingPoint:
+                return ((ArrowType.FloatingPoint) f.getType()).getPrecision()
+                        == FloatingPointPrecision.SINGLE ? java.sql.Types.REAL : java.sql.Types.DOUBLE;
+            case Decimal:
+                return java.sql.Types.DECIMAL;
+            case Utf8:
                 return java.sql.Types.VARCHAR;
-            case BIT:
+            case Bool:
                 return java.sql.Types.BOOLEAN;
-            case DATEDAY:
+            case Date:
                 return java.sql.Types.DATE;
-            case TIMESTAMPMILLI:
+            case Time:
+                return java.sql.Types.TIME;
+            case Timestamp:
                 return java.sql.Types.TIMESTAMP;
+            case Binary:
+                return java.sql.Types.VARBINARY;
             default:
                 return java.sql.Types.OTHER;
         }

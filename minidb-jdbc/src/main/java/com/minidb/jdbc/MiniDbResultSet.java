@@ -26,11 +26,16 @@ import java.util.concurrent.TimeUnit;
 import org.apache.arrow.vector.BigIntVector;
 import org.apache.arrow.vector.BitVector;
 import org.apache.arrow.vector.DateDayVector;
+import org.apache.arrow.vector.DecimalVector;
 import org.apache.arrow.vector.FieldVector;
+import org.apache.arrow.vector.Float4Vector;
 import org.apache.arrow.vector.Float8Vector;
 import org.apache.arrow.vector.IntVector;
+import org.apache.arrow.vector.SmallIntVector;
+import org.apache.arrow.vector.TimeMilliVector;
 import org.apache.arrow.vector.TimeStampMilliVector;
 import org.apache.arrow.vector.ValueVector;
+import org.apache.arrow.vector.VarBinaryVector;
 import org.apache.arrow.vector.VarCharVector;
 import org.apache.arrow.vector.VectorSchemaRoot;
 
@@ -207,6 +212,16 @@ public class MiniDbResultSet implements ResultSet {
                 return getDate(columnIndex);
             case TIMESTAMPMILLI:
                 return getTimestamp(columnIndex);
+            case SMALLINT:
+                return getShort(columnIndex);
+            case FLOAT4:
+                return getFloat(columnIndex);
+            case DECIMAL:
+                return getBigDecimal(columnIndex);
+            case TIMEMILLI:
+                return getTime(columnIndex);
+            case VARBINARY:
+                return getBytes(columnIndex);
             default:
                 throw new SQLException("unsupported type: " + v.getMinorType());
         }
@@ -355,22 +370,29 @@ public class MiniDbResultSet implements ResultSet {
 
     @Override
     public BigDecimal getBigDecimal(int columnIndex) throws SQLException {
-        throw new SQLFeatureNotSupportedException();
+        ValueVector v = vector(columnIndex);
+        if (isNull(v)) return null;
+        if (v instanceof DecimalVector dv) return dv.getObject(cursor);
+        if (v instanceof Float8Vector fv) return BigDecimal.valueOf(fv.get(cursor));
+        throw new SQLException("not a decimal column");
     }
 
     @Override
     public BigDecimal getBigDecimal(String columnLabel) throws SQLException {
-        throw new SQLFeatureNotSupportedException();
+        return getBigDecimal(findColumn(columnLabel));
     }
 
     @Override
     public byte[] getBytes(int columnIndex) throws SQLException {
-        throw new SQLFeatureNotSupportedException();
+        ValueVector v = vector(columnIndex);
+        if (isNull(v)) return null;
+        if (v instanceof VarBinaryVector bv) return bv.get(cursor);
+        throw new SQLException("not a binary column");
     }
 
     @Override
     public byte[] getBytes(String columnLabel) throws SQLException {
-        throw new SQLFeatureNotSupportedException();
+        return getBytes(findColumn(columnLabel));
     }
 
     @Override
@@ -385,32 +407,43 @@ public class MiniDbResultSet implements ResultSet {
 
     @Override
     public short getShort(int columnIndex) throws SQLException {
-        throw new SQLFeatureNotSupportedException();
+        ValueVector v = vector(columnIndex);
+        if (isNull(v)) return 0;
+        if (v instanceof SmallIntVector sv) return sv.get(cursor);
+        if (v instanceof IntVector iv) return (short) iv.get(cursor);
+        throw new SQLException("not a smallint column");
     }
 
     @Override
     public short getShort(String columnLabel) throws SQLException {
-        throw new SQLFeatureNotSupportedException();
+        return getShort(findColumn(columnLabel));
     }
 
     @Override
     public float getFloat(int columnIndex) throws SQLException {
-        throw new SQLFeatureNotSupportedException();
+        ValueVector v = vector(columnIndex);
+        if (isNull(v)) return 0f;
+        if (v instanceof Float4Vector fv) return fv.get(cursor);
+        if (v instanceof Float8Vector fv) return (float) fv.get(cursor);
+        throw new SQLException("not a float column");
     }
 
     @Override
     public float getFloat(String columnLabel) throws SQLException {
-        throw new SQLFeatureNotSupportedException();
+        return getFloat(findColumn(columnLabel));
     }
 
     @Override
     public Time getTime(int columnIndex) throws SQLException {
-        throw new SQLFeatureNotSupportedException();
+        ValueVector v = vector(columnIndex);
+        if (isNull(v)) return null;
+        if (v instanceof TimeMilliVector tv) return new Time(tv.get(cursor));
+        throw new SQLException("not a time column");
     }
 
     @Override
     public Time getTime(String columnLabel) throws SQLException {
-        throw new SQLFeatureNotSupportedException();
+        return getTime(findColumn(columnLabel));
     }
 
     @Override
