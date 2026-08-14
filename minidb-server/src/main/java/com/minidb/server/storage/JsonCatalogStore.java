@@ -33,7 +33,8 @@ public class JsonCatalogStore implements CatalogStore {
     public synchronized void save(CatalogSnapshot snapshot) throws IOException {
         Files.createDirectories(file.getParent());
         Path tmp = file.resolveSibling(file.getFileName() + ".tmp");
-        Files.writeString(tmp, MAPPER.writeValueAsString(snapshot), StandardCharsets.UTF_8);
+        Files.writeString(tmp, MAPPER.writerWithDefaultPrettyPrinter().writeValueAsString(snapshot),
+                StandardCharsets.UTF_8);
         try {
             Files.move(tmp, file, StandardCopyOption.REPLACE_EXISTING, StandardCopyOption.ATOMIC_MOVE);
         } catch (AtomicMoveNotSupportedException e) {
