@@ -61,7 +61,7 @@ public class QueryExecutor {
         }
         if (upper.startsWith("ANALYZE ")) {
             String table = trimmed.substring("ANALYZE ".length()).strip();
-            stats.analyze(table);
+            stats.analyze(table, currentSchema);
             return new QueryResult.Update(0);
         }
         if (upper.startsWith("EXPLAIN ANALYZE ")) {

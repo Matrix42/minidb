@@ -1,6 +1,7 @@
 package com.minidb.server.stats;
 
 import com.minidb.server.catalog.ColumnType;
+import com.minidb.server.catalog.InformationSchemaCatalog;
 import com.minidb.server.catalog.MiniDbCatalog;
 import com.minidb.server.catalog.TableSchema;
 import com.minidb.server.storage.ArrowTable;
@@ -22,7 +23,13 @@ public class StatsManager implements AutoCloseable {
     }
 
     public void analyze(String table) {
-        ArrowTable arrowTable = storage.getTable(MiniDbCatalog.DEFAULT_SCHEMA, table);
+        analyze(table, MiniDbCatalog.DEFAULT_SCHEMA);
+    }
+
+    /** 支持裸名(按 currentSchema 解析)或限定名 `schema.table`。 */
+    public void analyze(String table, String currentSchema) {
+        String[] st = split(table, currentSchema);
+        ArrowTable arrowTable = storage.getTable(st[0], st[1]);
         TableSchema schema = arrowTable.schema();
         Map<String, Histogram> columnHistograms = new HashMap<>();
         for (int col = 0; col < schema.columns().size(); col++) {
@@ -35,19 +42,34 @@ public class StatsManager implements AutoCloseable {
             columnHistograms.put(colName.toLowerCase(Locale.ROOT),
                     HistogramBuilder.build(columnVectors, colType));
         }
-        storage.catalog().setStats(MiniDbCatalog.DEFAULT_SCHEMA, table,
+        storage.catalog().setStats(st[0], st[1],
                 new TableStats(columnHistograms, arrowTable.rowCount(), false));
     }
 
     public void analyzeAll() {
-        for (String name : storage.catalog().tableNames()) {
-            analyze(name);
+        for (String schema : storage.catalog().schemaNames()) {
+            if (InformationSchemaCatalog.isSystemSchema(schema)) {
+                continue;
+            }
+            for (String table : storage.catalog().tableNames(schema)) {
+                analyze(schema + "." + table);
+            }
         }
     }
 
+    /** 支持裸名(默认 public)或限定名 `schema.table`。 */
     public TableStats tableStats(String table) {
-        return storage.catalog().getStats(MiniDbCatalog.DEFAULT_SCHEMA, table);
+        String[] st = split(table, MiniDbCatalog.DEFAULT_SCHEMA);
+        return storage.catalog().getStats(st[0], st[1]);
     }
 
     @Override public void close() {}
+
+    private static String[] split(String table, String defaultSchema) {
+        int dot = table.indexOf('.');
+        if (dot >= 0) {
+            return new String[]{table.substring(0, dot), table.substring(dot + 1)};
+        }
+        return new String[]{defaultSchema, table};
+    }
 }

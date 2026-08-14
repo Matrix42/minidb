@@ -65,7 +65,7 @@ public class ExplainExecutor {
             throw new IllegalArgumentException("EXPLAIN does not support DML");
         }
         List<Row> rows = new ArrayList<>();
-        planRows(plan, null, rows);
+        planRows(plan, null, rows, currentSchema);
         return new QueryResult.Rows(buildRoot(rows));
     }
 
@@ -118,21 +118,21 @@ public class ExplainExecutor {
         }
     }
 
-    private int planRows(RelNode node, Integer parentId, List<Row> out) {
+    private int planRows(RelNode node, Integer parentId, List<Row> out, String currentSchema) {
         // Trivial Project nodes (added by Calcite for column selection) are
         // collapsed into their parent to keep the EXPLAIN tree concise.
         if (isTrivialProject(node)) {
             List<RelNode> inputs = node.getInputs();
             if (!inputs.isEmpty()) {
-                return planRows(inputs.get(0), parentId, out);
+                return planRows(inputs.get(0), parentId, out, currentSchema);
             }
         }
         int id = out.size() + 1;
         String op = operationName(node);
-        Est est = estimate(node);
+        Est est = estimate(node, currentSchema);
         out.add(new Row(id, parentId, op, est.rows, est.batches, null, est.remarks));
         for (RelNode input : node.getInputs()) {
-            planRows(input, id, out);
+            planRows(input, id, out, currentSchema);
         }
         return id;
     }
@@ -186,35 +186,35 @@ public class ExplainExecutor {
         return name;
     }
 
-    private Est estimate(RelNode node) {
+    private Est estimate(RelNode node, String currentSchema) {
         if (node instanceof MiniDbScan scan) {
-            String table = tableName(scan);
-            ArrowTable t = storage.getTable(table);
+            String[] st = resolveTable(scan, currentSchema);
+            ArrowTable t = storage.getTable(st[0], st[1]);
             return new Est((long) t.rowCount(), t.batches().size(), null);
         }
         if (node instanceof MiniDbProject) {
-            return new Est(childRows(node), null, null);
+            return new Est(childRows(node, currentSchema), null, null);
         }
         if (node instanceof MiniDbCalc calc) {
             RexLocalRef condRef = calc.getProgram().getCondition();
             if (condRef == null) {
-                return new Est(childRows(node), null, null);
+                return new Est(childRows(node, currentSchema), null, null);
             }
             RexNode condition = calc.getProgram().expandLocalRef(condRef);
-            long in = childRows(node);
-            Sel s = filterSelectivity(condition, calc);
+            long in = childRows(node, currentSchema);
+            Sel s = filterSelectivity(condition, calc, currentSchema);
             long est = Math.max(0, Math.round(in * s.selectivity));
             return new Est(est, null, s.remarks);
         }
         if (node instanceof MiniDbJoin) {
-            long l = childRows(node);
-            Long r = estimate(node.getInputs().get(1)).rows;
+            long l = childRows(node, currentSchema);
+            Long r = estimate(node.getInputs().get(1), currentSchema).rows;
             long rv = r == null ? 0 : r;
             long est = (long) (l * rv * 0.1); // loose join selectivity
             return new Est(Math.max(0, est), null, "estimated");
         }
         if (node instanceof MiniDbSort sort) {
-            long in = childRows(node);
+            long in = childRows(node, currentSchema);
             int offset = literalInt(sort.offset, 0);
             int fetch = literalInt(sort.fetch, Integer.MAX_VALUE);
             long r = Math.max(0, in - offset);
@@ -225,38 +225,38 @@ public class ExplainExecutor {
             return new Est((long) values.getTuples().size(), 1, null);
         }
         if (node instanceof MiniDbFilter filter) {
-            long in = childRows(node);
-            Sel s = filterSelectivity(filter.getCondition(), filter);
+            long in = childRows(node, currentSchema);
+            Sel s = filterSelectivity(filter.getCondition(), filter, currentSchema);
             long est = Math.max(0, Math.round(in * s.selectivity));
             return new Est(est, null, s.remarks);
         }
         if (node instanceof MiniDbAggregate agg) {
-            long in = childRows(node);
+            long in = childRows(node, currentSchema);
             if (agg.getGroupSet().isEmpty()) {
                 return new Est(1L, 1, "estimated");
             }
-            Long distinct = groupDistinct(agg);
+            Long distinct = groupDistinct(agg, currentSchema);
             long est = distinct == null ? in : Math.min(in, Math.max(1, distinct));
             return new Est(est, 1, "estimated");
         }
         if (node instanceof MiniDbUnion union) {
             long sum = 0;
             for (RelNode in : node.getInputs()) {
-                Long r = estimate(in).rows;
+                Long r = estimate(in, currentSchema).rows;
                 sum += r == null ? 0 : r;
             }
             if (union.all) {
                 return new Est(sum, null, null);
             }
-            Long distinct = firstColumnDistinct(union);
+            Long distinct = firstColumnDistinct(union, currentSchema);
             long est = distinct == null ? Math.max(1, sum / 2)
                     : Math.min(sum, Math.max(1, distinct));
             return new Est(est, null, "estimated");
         }
         if (node instanceof MiniDbSetOp setOp) {
-            long est = childRows(node);
+            long est = childRows(node, currentSchema);
             for (int i = 1; i < node.getInputs().size(); i++) {
-                Long r = estimate(node.getInputs().get(i)).rows;
+                Long r = estimate(node.getInputs().get(i), currentSchema).rows;
                 long c = r == null ? 0 : r;
                 if (setOp.isIntersect()) {
                     est = Math.min(est, c);
@@ -267,23 +267,23 @@ public class ExplainExecutor {
             return new Est(est, null, "estimated");
         }
         // default: passthrough
-        return new Est(childRows(node), null, null);
+        return new Est(childRows(node, currentSchema), null, null);
     }
 
-    private Long groupDistinct(MiniDbAggregate agg) {
+    private Long groupDistinct(MiniDbAggregate agg, String currentSchema) {
         if (agg.getGroupSet().isEmpty()) {
             return null;
         }
         int firstCol = agg.getGroupSet().nextSetBit(0);
-        String table = scanTableOf(agg);
-        if (table == null) {
+        String[] st = scanTableOf(agg, currentSchema);
+        if (st == null) {
             return null;
         }
-        TableStats ts = stats.tableStats(table);
+        TableStats ts = stats.tableStats(st[0] + "." + st[1]);
         if (ts == null || ts.stale()) {
             return null;
         }
-        ArrowTable arrowTable = storage.getTable(table);
+        ArrowTable arrowTable = storage.getTable(st[0], st[1]);
         List<com.minidb.server.catalog.ColumnMeta> columns =
                 arrowTable.schema().columns();
         if (firstCol < 0 || firstCol >= columns.size()) {
@@ -294,16 +294,16 @@ public class ExplainExecutor {
         return h == null ? null : h.distinctCount();
     }
 
-    private Long firstColumnDistinct(RelNode node) {
-        String table = scanTableOf(node);
-        if (table == null) {
+    private Long firstColumnDistinct(RelNode node, String currentSchema) {
+        String[] st = scanTableOf(node, currentSchema);
+        if (st == null) {
             return null;
         }
-        TableStats ts = stats.tableStats(table);
+        TableStats ts = stats.tableStats(st[0] + "." + st[1]);
         if (ts == null || ts.stale()) {
             return null;
         }
-        ArrowTable arrowTable = storage.getTable(table);
+        ArrowTable arrowTable = storage.getTable(st[0], st[1]);
         List<com.minidb.server.catalog.ColumnMeta> columns =
                 arrowTable.schema().columns();
         if (columns.isEmpty()) {
@@ -314,54 +314,58 @@ public class ExplainExecutor {
         return h == null ? null : h.distinctCount();
     }
 
-    private long childRows(RelNode node) {
+    private long childRows(RelNode node, String currentSchema) {
         List<RelNode> inputs = node.getInputs();
         if (inputs.isEmpty()) {
             return 0L;
         }
         RelNode child = inputs.get(0);
-        Long r = estimate(child).rows;
+        Long r = estimate(child, currentSchema).rows;
         return r == null ? 0L : r;
     }
 
     private record Sel(double selectivity, String remarks) {
     }
 
-    private Sel filterSelectivity(RexNode cond, RelNode node) {
-        String table = scanTableOf(node);
-        if (table == null) {
+    private Sel filterSelectivity(RexNode cond, RelNode node, String currentSchema) {
+        String[] st = scanTableOf(node, currentSchema);
+        if (st == null) {
             return new Sel(Histogram.DEFAULT_SELECTIVITY, "no stats");
         }
-        TableStats ts = stats.tableStats(table);
+        TableStats ts = stats.tableStats(st[0] + "." + st[1]);
         if (ts == null) {
             return new Sel(Histogram.DEFAULT_SELECTIVITY, "no stats");
         }
         if (ts.stale()) {
             return new Sel(Histogram.DEFAULT_SELECTIVITY, "stats stale");
         }
-        Histogram h = StatsEstimator.histogramForCondition(cond, storage.getTable(table).schema(), ts);
+        Histogram h = StatsEstimator.histogramForCondition(
+                cond, storage.getTable(st[0], st[1]).schema(), ts);
         if (h == null) {
             return new Sel(Histogram.DEFAULT_SELECTIVITY, "default selectivity");
         }
         return new Sel(h.selectivity(cond, h.totalRows()), "estimated");
     }
 
-    private String scanTableOf(RelNode node) {
-        // walk down to the TableScan
+    /** 从节点的第一个 TableScan 解析出 {schema, table};无 TableScan 返回 null。 */
+    private String[] scanTableOf(RelNode node, String currentSchema) {
         RelNode cur = node;
         while (cur != null && !(cur instanceof TableScan)) {
             List<RelNode> inputs = cur.getInputs();
             cur = inputs.isEmpty() ? null : inputs.get(0);
         }
         if (cur instanceof TableScan scan) {
-            return tableName(scan);
+            return resolveTable(scan, currentSchema);
         }
         return null;
     }
 
-    private String tableName(TableScan scan) {
+    /** 把 TableScan 的限定名解析成 {schema, table}:3 段用倒数第二段作 schema,2 段(裸名)用 currentSchema。 */
+    private static String[] resolveTable(TableScan scan, String currentSchema) {
         List<String> q = scan.getTable().getQualifiedName();
-        return q.get(q.size() - 1);
+        String table = q.get(q.size() - 1);
+        String schema = q.size() >= 3 ? q.get(q.size() - 2) : currentSchema;
+        return new String[]{schema, table};
     }
 
     private static int literalInt(RexNode node, int defaultValue) {
