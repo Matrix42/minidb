@@ -3,6 +3,7 @@ package com.minidb.server.exec;
 import com.minidb.server.catalog.ColumnMeta;
 import com.minidb.server.catalog.ColumnType;
 import com.minidb.server.catalog.MiniDbCatalog;
+import com.minidb.server.catalog.TableSchema;
 import com.minidb.server.storage.StorageManager;
 import com.minidb.server.stats.StatsManager;
 import java.math.BigDecimal;
@@ -26,6 +27,7 @@ import org.junit.jupiter.api.io.TempDir;
 
 import static org.junit.jupiter.api.Assertions.assertArrayEquals;
 import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 /**
@@ -162,6 +164,56 @@ class DataTypeIntegrationTest {
     }
 
     @Test
+    void nvarcharRoundTripKeepsDeclaredName() {
+        // NVARCHAR 与 CHAR 一样变长(Utf8)、不做空格填充;声明名靠 Arrow 元数据保真,
+        // 落 VarCharVector、值精确往返(含中文)。
+        executor.execute("CREATE TABLE t (nv NVARCHAR)");
+        List<ColumnMeta> cols = catalog.getTable("t").columns();
+        assertEquals(ColumnType.NVARCHAR, cols.get(0).type());
+
+        executor.execute("INSERT INTO t VALUES ('字符')");
+        QueryResult r = executor.execute("SELECT nv FROM t");
+        VectorSchemaRoot root = rows(r);
+        assertEquals(1, root.getRowCount());
+        assertTrue(root.getVector("nv") instanceof VarCharVector,
+                "expected VarCharVector for NVARCHAR, got "
+                        + root.getVector("nv").getClass().getSimpleName());
+        assertEquals("字符", new String(
+                ((VarCharVector) root.getVector("nv")).get(0), StandardCharsets.UTF_8));
+        root.close();
+    }
+
+    @Test
+    void ncharIsNotDdlCreatableButMetadataFidelityHolds() {
+        // NCHAR 无法经 SQL DDL 创建:Calcite 1.42 的 DDL 解析器把 NCHAR 当作保留字、不列入
+        // 类型名语法(SqlDdlParserImpl.TypeName() 只认 CHAR/CHARACTER/VARCHAR),`CREATE TABLE
+        // ... NCHAR` 抛 ParseException。这是解析器上限,不是 MiniDB 存储/元数据层的问题:
+        // 程序化建表 → 落盘 → 重载,ColumnType.NCHAR/NVARCHAR/BINARY 声明名经 Arrow
+        // "minidb.type" 元数据仍端到端保真。
+        assertThrows(IllegalArgumentException.class,
+                () -> executor.execute("CREATE TABLE t (n NCHAR)"));
+
+        storage.createTable(new TableSchema("nt", List.of(
+                new ColumnMeta("n", ColumnType.NCHAR),
+                new ColumnMeta("nv", ColumnType.NVARCHAR),
+                new ColumnMeta("b", ColumnType.BINARY))));
+        storage.markDirty("nt");
+        storage.close();
+
+        MiniDbCatalog catalog2 = new MiniDbCatalog();
+        StorageManager storage2 = new StorageManager(catalog2, allocator, dataDir);
+        try {
+            storage2.loadAll();
+            List<ColumnMeta> cols = catalog2.getTable("nt").columns();
+            assertEquals(ColumnType.NCHAR, cols.get(0).type());
+            assertEquals(ColumnType.NVARCHAR, cols.get(1).type());
+            assertEquals(ColumnType.BINARY, cols.get(2).type());
+        } finally {
+            storage2.close();
+        }
+    }
+
+    @Test
     void timeRoundTrip() {
         executor.execute("CREATE TABLE t (tm TIME)");
         executor.execute("INSERT INTO t VALUES (TIME '10:30:00')");
@@ -189,6 +241,24 @@ class DataTypeIntegrationTest {
                         + root.getVector("b").getClass().getSimpleName());
         assertArrayEquals(new byte[]{(byte) 0xCA, (byte) 0xFE},
                 ((VarBinaryVector) root.getVector("b")).get(0));
+        root.close();
+    }
+
+    @Test
+    void binaryRoundTripDoesNotZeroPad() {
+        // BINARY 与 VARBINARY 同为变长 Binary 存储(设计简化),不应像 CHAR 那样补零到声明
+        // 长度;X'CAFE' 必须精确往返 {0xCA, 0xFE},无尾随零字节。
+        executor.execute("CREATE TABLE t (b BINARY)");
+        executor.execute("INSERT INTO t VALUES (X'CAFE')");
+        QueryResult r = executor.execute("SELECT b FROM t");
+        VectorSchemaRoot root = rows(r);
+        assertEquals(1, root.getRowCount());
+        assertTrue(root.getVector("b") instanceof VarBinaryVector,
+                "expected VarBinaryVector for BINARY, got "
+                        + root.getVector("b").getClass().getSimpleName());
+        byte[] value = ((VarBinaryVector) root.getVector("b")).get(0);
+        assertEquals(2, value.length, "BINARY 不应补零到声明长度");
+        assertArrayEquals(new byte[]{(byte) 0xCA, (byte) 0xFE}, value);
         root.close();
     }
 
@@ -307,8 +377,9 @@ class DataTypeIntegrationTest {
 
     @Test
     void restartPreservesColumnTypesAndDecimalScale() {
-        executor.execute("CREATE TABLE t (s SMALLINT, p DECIMAL(10,2), c CHAR)");
-        executor.execute("INSERT INTO t VALUES (1, 1.23, 'x')");
+        executor.execute("CREATE TABLE t "
+                + "(s SMALLINT, p DECIMAL(10,2), c CHAR, b BINARY)");
+        executor.execute("INSERT INTO t VALUES (1, 1.23, 'x', X'CAFE')");
         // close 触发 flushDirty,把表落盘到 data/<schema>/<table>.arrow。
         storage.close();
 
@@ -322,8 +393,10 @@ class DataTypeIntegrationTest {
             assertEquals(10, cols.get(1).precision());
             assertEquals(2, cols.get(1).scale());
             assertEquals(ColumnType.CHAR, cols.get(2).type());
+            assertEquals(ColumnType.BINARY, cols.get(3).type());
 
-            // 数据本身也随持久化往返,证明 DECIMAL 值按 scale 精确落盘(而非退化浮点)。
+            // 数据本身也随持久化往返,证明 DECIMAL 值按 scale 精确落盘(而非退化浮点),
+            // BINARY 不补零、声明名经 Arrow 元数据保真。
             VectorSchemaRoot batch = storage2.getTable("t").batches().get(0);
             assertEquals(1, batch.getRowCount());
             assertEquals(1, ((SmallIntVector) batch.getVector("s")).get(0));
@@ -331,6 +404,8 @@ class DataTypeIntegrationTest {
                     ((DecimalVector) batch.getVector("p")).getObject(0)));
             assertEquals("x", new String(
                     ((VarCharVector) batch.getVector("c")).get(0), StandardCharsets.UTF_8));
+            assertArrayEquals(new byte[]{(byte) 0xCA, (byte) 0xFE},
+                    ((VarBinaryVector) batch.getVector("b")).get(0));
         } finally {
             storage2.close();
         }
