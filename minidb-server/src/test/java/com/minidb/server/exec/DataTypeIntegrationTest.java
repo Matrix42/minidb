@@ -435,4 +435,25 @@ class DataTypeIntegrationTest {
         assertEquals(1, ((Number) root.getVector(2).getObject(0)).intValue());
         root.close();
     }
+
+    /**
+     * Window SUM over a DECIMAL column must accumulate as BigDecimal (exact),
+     * not via doubleValue() — 0.10+0.20 must be exactly 0.30, not a float.
+     */
+    @Test
+    void windowSumDecimalIsExact() {
+        executor.execute("CREATE TABLE t (price DECIMAL(10,2))");
+        executor.execute("INSERT INTO t VALUES (0.10)");
+        executor.execute("INSERT INTO t VALUES (0.20)");
+        QueryResult r = executor.execute("SELECT SUM(price) OVER () FROM t");
+        VectorSchemaRoot root = rows(r);
+        assertEquals(2, root.getRowCount());
+        ValueVector v = root.getVector(0);
+        assertTrue(v instanceof DecimalVector,
+                "expected DecimalVector, got " + v.getClass().getSimpleName());
+        // Both rows share one window (no partition): SUM = 0.30 exactly.
+        assertEquals(0, new BigDecimal("0.30").compareTo((BigDecimal) v.getObject(0)));
+        assertEquals(0, new BigDecimal("0.30").compareTo((BigDecimal) v.getObject(1)));
+        root.close();
+    }
 }

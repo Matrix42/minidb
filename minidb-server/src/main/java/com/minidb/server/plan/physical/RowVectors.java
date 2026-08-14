@@ -4,6 +4,7 @@ import com.minidb.server.catalog.ArrowTypes;
 import com.minidb.server.exec.BatchIterator;
 import com.minidb.server.exec.ExecContext;
 import java.math.BigDecimal;
+import java.math.RoundingMode;
 import java.nio.charset.StandardCharsets;
 import java.util.ArrayList;
 import java.util.List;
@@ -122,7 +123,7 @@ public final class RowVectors {
         } else if (vector instanceof Float8Vector fv) {
             fv.setSafe(row, ((Number) value).doubleValue());
         } else if (vector instanceof DecimalVector dv) {
-            dv.setSafe(row, (BigDecimal) value);
+            dv.setSafe(row, ((BigDecimal) value).setScale(dv.getScale(), RoundingMode.HALF_UP));
         } else if (vector instanceof VarCharVector vv) {
             vv.setSafe(row, value.toString().getBytes(StandardCharsets.UTF_8));
         } else if (vector instanceof BitVector bv) {

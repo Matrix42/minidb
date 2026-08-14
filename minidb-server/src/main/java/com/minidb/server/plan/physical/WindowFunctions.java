@@ -147,9 +147,11 @@ public final class WindowFunctions {
                                         List<Object[]> rows, int inputCols) {
         int[] frame = frameBounds(window, position, orderedRows.size());
         boolean isCountStar = over.getOperands().isEmpty();
+        boolean isDecimal = over.getType().getSqlTypeName() == SqlTypeName.DECIMAL;
         boolean isFloating = isFloating(over.getType().getSqlTypeName());
         double doubleSum = 0;
         long longSum = 0;
+        BigDecimal decimalSum = null;
         long count = 0;
         Object bestValue = null;
         for (int i = frame[0]; i <= frame[1]; i++) {
@@ -161,7 +163,14 @@ public final class WindowFunctions {
             switch (aggKind) {
                 case SUM:
                 case AVG:
-                    if (isFloating) {
+                    // DECIMAL accumulates as BigDecimal (exact); only true floating
+                    // types (DOUBLE/FLOAT/REAL) go through double, and integers go
+                    // through long. Treating DECIMAL as floating here would round
+                    // 0.1+0.2 to a double and lose precision.
+                    if (isDecimal) {
+                        decimalSum = (decimalSum == null ? BigDecimal.ZERO : decimalSum)
+                                .add((BigDecimal) value);
+                    } else if (isFloating) {
                         doubleSum += ((Number) value).doubleValue();
                     } else {
                         longSum += ((Number) value).longValue();
@@ -183,9 +192,15 @@ public final class WindowFunctions {
             case COUNT:
                 return count;
             case SUM:
-                return count == 0 ? null : isFloating ? doubleSum : longSum;
+                return count == 0 ? null : isDecimal ? decimalSum : isFloating ? doubleSum : longSum;
             case AVG:
-                return count == 0 ? null : isFloating ? doubleSum / count : longSum / count;
+                if (count == 0) {
+                    return null;
+                }
+                if (isDecimal) {
+                    return decimalSum.divide(BigDecimal.valueOf(count), java.math.MathContext.DECIMAL128);
+                }
+                return isFloating ? doubleSum / count : longSum / count;
             case MIN:
             case MAX:
                 return bestValue;
@@ -300,7 +315,7 @@ public final class WindowFunctions {
 
     private static boolean isFloating(SqlTypeName typeName) {
         return typeName == SqlTypeName.DOUBLE || typeName == SqlTypeName.FLOAT
-                || typeName == SqlTypeName.REAL || typeName == SqlTypeName.DECIMAL;
+                || typeName == SqlTypeName.REAL;
     }
 
 }
