@@ -71,6 +71,17 @@ public abstract class MiniDbJoin extends Join implements MiniDbRel {
             List<Object[]> left, List<Object[]> right,
             JoinInfo info, JoinRelType type, ExecContext ctx);
 
+    /** Column count of the left input (from its row type, not the data), used to
+     *  size the null-padded row when the other side is empty. */
+    protected final int leftColumnCount() {
+        return getLeft().getRowType().getFieldCount();
+    }
+
+    /** Column count of the right input; see {@link #leftColumnCount()}. */
+    protected final int rightColumnCount() {
+        return getRight().getRowType().getFieldCount();
+    }
+
     // analyzeCondition() inherited from Join (Calcite provides it public).
     // ---- shared helpers (verbatim from original MiniDbJoin.java) ----
 

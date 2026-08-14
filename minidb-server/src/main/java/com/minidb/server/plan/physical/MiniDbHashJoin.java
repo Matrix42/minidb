@@ -53,8 +53,8 @@ public class MiniDbHashJoin extends MiniDbJoin {
         boolean keepUnmatchedLeft = type == JoinRelType.LEFT || type == JoinRelType.FULL;
         boolean keepUnmatchedRight = type == JoinRelType.RIGHT || type == JoinRelType.FULL;
         boolean[] matchedLeft = new boolean[left.size()];
-        Object[] nullRowLeft = new Object[left.get(0).length];
-        Object[] nullRowRight = new Object[right.get(0).length];
+        Object[] nullRowLeft = new Object[leftColumnCount()];
+        Object[] nullRowRight = new Object[rightColumnCount()];
         List<Object[]> outputRows = new ArrayList<>();
         // Probe: for each right row, join with every left row of the same key.
         for (int rightIdx = 0; rightIdx < right.size(); rightIdx++) {

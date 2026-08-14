@@ -33,7 +33,10 @@ public final class MiniDbJoinRule extends ConverterRule {
         RelNode leftInput = convert(join.getLeft(), MiniDbConvention.INSTANCE);
         RelNode rightInput = convert(join.getRight(), MiniDbConvention.INSTANCE);
         JoinInfo joinInfo = JoinInfo.of(join.getLeft(), join.getRight(), join.getCondition());
-        if (!joinInfo.isEqui()) {
+        // Calcite 的 JoinInfo.isEqui() 只看 nonEquiConditions 是否为空:condition=true(交叉
+        // 连接)时两侧 key 都为空却仍返回 true。空 key 的 join 没有可哈希/排序的列,必须走
+        // NestedLoopJoin(任意条件路径),否则 SortMergeJoin 会拿空 key 去跑合并逻辑。
+        if (!joinInfo.isEqui() || joinInfo.leftKeys.isEmpty()) {
             return new MiniDbNestedLoopJoin(join.getCluster(), physicalTraits, leftInput, rightInput,
                     join.getCondition(), join.getJoinType());
         }

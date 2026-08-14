@@ -64,8 +64,8 @@ public class MiniDbSortMergeJoin extends MiniDbJoin {
         // with nulls on the other side.
         boolean keepUnmatchedLeft = type == JoinRelType.LEFT || type == JoinRelType.FULL;
         boolean keepUnmatchedRight = type == JoinRelType.RIGHT || type == JoinRelType.FULL;
-        Object[] nullRowLeft = new Object[left.get(0).length];
-        Object[] nullRowRight = new Object[right.get(0).length];
+        Object[] nullRowLeft = new Object[leftColumnCount()];
+        Object[] nullRowRight = new Object[rightColumnCount()];
         List<Object[]> outputRows = new ArrayList<>();
         int leftPos = 0;
         int rightPos = 0;
