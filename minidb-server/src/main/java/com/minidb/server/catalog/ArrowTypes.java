@@ -257,12 +257,13 @@ public final class ArrowTypes {
                 sqlType = SqlTypeName.DOUBLE;
                 break;
             case VARCHAR:
+            case CHAR:
             case NCHAR:
             case NVARCHAR:
+                // CHAR/NCHAR/NVARCHAR 都变长存储、不做定长空格填充(设计简化,见
+                // data-types-design「CHAR/NCHAR/NVARCHAR 语义」),故 Calcite 侧统一映射为
+                // VARCHAR;若映射为 SqlTypeName.CHAR,Calcite 会把插入值空格填充到声明长度。
                 sqlType = SqlTypeName.VARCHAR;
-                break;
-            case CHAR:
-                sqlType = SqlTypeName.CHAR;
                 break;
             case BOOLEAN:
                 sqlType = SqlTypeName.BOOLEAN;
@@ -285,7 +286,7 @@ public final class ArrowTypes {
             default:
                 throw new IllegalArgumentException("unknown type: " + meta.type());
         }
-        if (sqlType == SqlTypeName.VARCHAR || sqlType == SqlTypeName.CHAR
+        if (sqlType == SqlTypeName.VARCHAR
                 || sqlType == SqlTypeName.BINARY || sqlType == SqlTypeName.VARBINARY) {
             return factory.createSqlType(sqlType, Integer.MAX_VALUE);
         }
