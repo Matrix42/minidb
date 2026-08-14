@@ -1,6 +1,6 @@
 # IN、NOT IN、EXISTS、NOT EXISTS 的优化原理(通用理论)
 
-这是一篇面向零基础的讲解:数据库内部是如何优化 `IN` / `NOT IN` / `EXISTS` / `NOT EXISTS` 这四种常见子查询写法的。读完后你会理解:它们本质在问什么、为什么有的快有的慢、为什么 `NOT IN` 是个「坑」,以及优化器在背后做了什么。
+这是一篇面向零基础的讲解:数据库内部是如何优化 `IN` / `NOT IN` / `EXISTS` / `NOT EXISTS` 这四种常见子查询写法的。读完后你会理解:它们本质在问什么、怎么用、为什么有的快有的慢、为什么 `NOT IN` 是个「坑」,以及优化器在背后做了什么。
 
 ## 一、先弄懂这四种写法在「问什么」
 
@@ -56,7 +56,148 @@ SQL 里的 `NULL` 表示「未知」,这导致逻辑判断有三种结果,而不
 
 而在 `WHERE` 子句里,**只有 TRUE 的行会被保留**;`FALSE` 和 `UNKNOWN` 的行都被丢弃。这个「UNKNOWN 被当成假来过滤」是理解 `NOT IN` 坑的关键。
 
-## 三、核心概念:子查询展开与去相关
+## 三、四种语句的使用方法与例子
+
+先准备一组示例数据,下面所有例子都基于它:
+
+```sql
+-- 部门表
+部门(部门id, 部门名):
+  (1, '研发部')
+  (2, '市场部')
+  (3, '财务部')          -- 没有任何员工
+
+-- 员工表
+员工(员工id, 姓名, 部门id):
+  (101, '张三', 1)
+  (102, '李四', 1)
+  (103, '王五', 2)
+  (104, '赵六', NULL)    -- 待分配,部门id 为 NULL
+```
+
+### 1. EXISTS 的用法
+
+**语法:**
+
+```sql
+SELECT ... FROM 表A [别名]
+WHERE EXISTS (SELECT ... FROM 表B WHERE 关联条件);
+```
+
+子查询里的 `SELECT 1`、`SELECT *` 都行——`EXISTS` 不关心子查询返回什么,只看**有没有行**。相关条件(外层列)写在子查询的 `WHERE` 里。
+
+**例子(相关子查询):**
+
+```sql
+-- 找出「有员工」的部门
+SELECT * FROM 部门 d
+WHERE EXISTS (SELECT 1 FROM 员工 e WHERE e.部门id = d.部门id);
+```
+
+**结果:**
+
+| 部门id | 部门名 |
+|--------|--------|
+| 1 | 研发部 |
+| 2 | 市场部 |
+
+财务部没有任何员工,被排除;`e.部门id = d.部门id` 把外层 `d` 和内层 `e` 关联起来,这就是「相关子查询」。
+
+### 2. NOT EXISTS 的用法
+
+**语法:**
+
+```sql
+SELECT ... FROM 表A [别名]
+WHERE NOT EXISTS (SELECT ... FROM 表B WHERE 关联条件);
+```
+
+**例子:**
+
+```sql
+-- 找出「没有员工」的部门
+SELECT * FROM 部门 d
+WHERE NOT EXISTS (SELECT 1 FROM 员工 e WHERE e.部门id = d.部门id);
+```
+
+**结果:**
+
+| 部门id | 部门名 |
+|--------|--------|
+| 3 | 财务部 |
+
+注意:赵六的 `部门id` 是 NULL,`NULL = d.部门id` 是 UNKNOWN(不匹配),但它**不影响**「是否存在其它匹配」的判断——`NOT EXISTS` 天然不受 NULL 干扰。
+
+### 3. IN 的用法
+
+**语法:**
+
+```sql
+SELECT ... FROM 表A
+WHERE 列 IN (SELECT 列 FROM 表B [WHERE ...]);
+```
+
+`IN` 判断左列的**值**是否出现在子查询返回的集合里。它也能接字面量列表:`WHERE 部门id IN (1, 2, 3)`(此时不是子查询,但语义相同)。
+
+**例子(非相关子查询):**
+
+```sql
+-- 找出「有员工」的部门(按部门id)
+SELECT * FROM 部门 d
+WHERE d.部门id IN (SELECT e.部门id FROM 员工 e);
+```
+
+**结果:**
+
+| 部门id | 部门名 |
+|--------|--------|
+| 1 | 研发部 |
+| 2 | 市场部 |
+
+子查询返回 `{1, 1, 2, NULL}`,去重后是 `{1, 2, NULL}`;`d.部门id` 命中 1 或 2 就返回,`NULL` 不匹配任何值,自然被忽略。
+
+### 4. NOT IN 的用法(含著名陷阱)
+
+**语法:**
+
+```sql
+SELECT ... FROM 表A
+WHERE 列 NOT IN (SELECT 列 FROM 表B [WHERE ...]);
+```
+
+**例子(踩坑版):**
+
+```sql
+-- 想找出「没有员工」的部门
+SELECT * FROM 部门 d
+WHERE d.部门id NOT IN (SELECT e.部门id FROM 员工 e);
+```
+
+**结果:空集!** 虽然财务部确实没有员工,但查询返回 0 行。
+
+**原因:** 员工表里 `部门id` 有 NULL(赵六)。根据三值逻辑,只要子查询结果里出现过 NULL,整个 `NOT IN` 就永远不可能是 TRUE(只能是 FALSE 或 UNKNOWN),而 WHERE 只保留 TRUE,所以结果恒空。
+
+**正确写法:**
+
+```sql
+-- 写法一:改用 NOT EXISTS(推荐)
+SELECT * FROM 部门 d
+WHERE NOT EXISTS (SELECT 1 FROM 员工 e WHERE e.部门id = d.部门id);
+
+-- 写法二:NOT IN 前先把 NULL 滤掉
+SELECT * FROM 部门 d
+WHERE d.部门id NOT IN (SELECT e.部门id FROM 员工 e WHERE e.部门id IS NOT NULL);
+```
+
+两者都返回:
+
+| 部门id | 部门名 |
+|--------|--------|
+| 3 | 财务部 |
+
+> 结论:`NOT IN` 在子查询可能含 NULL 时会「静默地什么都不返回」,这是最常见、最隐蔽的 SQL 坑之一。判断「不存在」优先用 `NOT EXISTS`。
+
+## 四、核心概念:子查询展开与去相关
 
 ### 1. 朴素做法(慢):逐行执行子查询
 
@@ -92,7 +233,7 @@ JOIN 部门 d ON e.部门id = d.部门id;  -- 概念上的等价
 
 - **相关子查询**:内层引用了外层列(`e.部门id`),必须和外层一起处理。优化器的核心工作就是**去相关(Decorrelation)**——把「外层行 → 内层行」的引用关系,改写成 join 条件。
 
-## 四、半连接(Semi Join)与反连接(Anti Join)
+## 五、半连接(Semi Join)与反连接(Anti Join)
 
 展开子查询时,优化器不会用普通的 INNER JOIN / LEFT JOIN,而是用两个专用逻辑算子:
 
@@ -127,7 +268,7 @@ WHERE NOT EXISTS (SELECT 1 FROM 员工 e WHERE e.部门id = d.部门id);
 
 反连接可以用「LEFT JOIN + 右表列为 NULL」来模拟(右表没匹配上的行,连接后右表列是 NULL),但真正的反连接算子在连接时就判断「有没有匹配」,通常更快、更省内存。
 
-## 五、逐个看四种谓词怎么优化
+## 六、逐个看四种谓词怎么优化
 
 ### 1. EXISTS → 半连接
 
@@ -185,7 +326,7 @@ d.部门id = NULL → NULL 是否等于集合里的 NULL? 结果 UNKNOWN
 
 因此优化器要正确处理 `NOT IN`,必须**显式检测子查询里有没有 NULL**,计划会多出「计数」之类的步骤(比如统计子查询总行数和非 NULL 行数,两者不等就说明有 NULL)。这也是 `NOT IN` 通常比 `NOT EXISTS` 更慢、更难优化的原因。
 
-## 六、EXISTS vs IN:谁快?怎么写?
+## 七、EXISTS vs IN:谁快?怎么写?
 
 ### 语义上
 
@@ -214,7 +355,7 @@ d.部门id = NULL → NULL 是否等于集合里的 NULL? 结果 UNKNOWN
   ```
   如果确实要用 `NOT IN`,得先确保子查询列 `IS NOT NULL`,或写成 `NOT IN (SELECT ... WHERE 列 IS NOT NULL)`。
 
-## 七、相关子查询的去相关手法(通用)
+## 八、相关子查询的去相关手法(通用)
 
 相关子查询(内层引用外层列)是优化器最要下功夫的地方。通用思路是**把「外层列引用」提升为 join 条件**:
 
@@ -239,7 +380,7 @@ WHERE EXISTS (SELECT 1 FROM 部门 d WHERE d.部门id = e.部门id);
 
 如果优化器**没能**去相关(比如遇到太复杂的子查询),就会退化为「逐行执行子查询」的相关执行,性能骤降——这就是「相关子查询慢」的由来。
 
-## 八、一句话总结
+## 九、一句话总结
 
 | 谓词 | 本质 | 优化成 | NULL 影响 |
 |------|------|--------|-----------|
