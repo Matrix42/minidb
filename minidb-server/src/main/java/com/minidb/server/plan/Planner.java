@@ -15,6 +15,8 @@ import org.apache.calcite.plan.volcano.VolcanoPlanner;
 import org.apache.calcite.rel.RelCollationTraitDef;
 import org.apache.calcite.rel.RelNode;
 import org.apache.calcite.rel.RelRoot;
+import org.apache.calcite.rel.rules.JoinAssociateRule;
+import org.apache.calcite.rel.rules.JoinCommuteRule;
 import org.apache.calcite.rel.type.RelDataTypeSystem;
 import org.apache.calcite.rex.RexBuilder;
 import org.apache.calcite.sql.type.SqlTypeFactoryImpl;
@@ -44,6 +46,10 @@ public class Planner {
         for (RelOptRule rule : MiniDbLogicalRules.SORT) {
             volcanoPlanner.addRule(rule);
         }
+        // Join reordering: commute/associate multi-table joins by row-count cost
+        // (RelMetadataQuery.getRowCount supplies the table sizes from Phase 1).
+        volcanoPlanner.addRule(JoinCommuteRule.Config.DEFAULT.toRule());
+        volcanoPlanner.addRule(JoinAssociateRule.Config.DEFAULT.toRule());
         SqlTypeFactoryImpl typeFactory =
                 new Utf8SqlTypeFactory(RelDataTypeSystem.DEFAULT);
         RelOptCluster cluster = RelOptCluster.create(volcanoPlanner, new RexBuilder(typeFactory));
