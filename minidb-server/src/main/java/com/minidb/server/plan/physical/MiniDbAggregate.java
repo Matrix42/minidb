@@ -7,25 +7,18 @@ import com.minidb.server.exec.RowCopier;
 import java.math.BigDecimal;
 import java.math.MathContext;
 import java.math.RoundingMode;
-import java.nio.charset.StandardCharsets;
 import java.util.ArrayList;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 import org.apache.arrow.vector.BigIntVector;
-import org.apache.arrow.vector.BitVector;
-import org.apache.arrow.vector.DateDayVector;
 import org.apache.arrow.vector.DecimalVector;
 import org.apache.arrow.vector.FieldVector;
 import org.apache.arrow.vector.Float4Vector;
 import org.apache.arrow.vector.Float8Vector;
 import org.apache.arrow.vector.IntVector;
 import org.apache.arrow.vector.SmallIntVector;
-import org.apache.arrow.vector.TimeMilliVector;
-import org.apache.arrow.vector.TimeStampMilliVector;
 import org.apache.arrow.vector.ValueVector;
-import org.apache.arrow.vector.VarBinaryVector;
-import org.apache.arrow.vector.VarCharVector;
 import org.apache.arrow.vector.VectorSchemaRoot;
 import org.apache.calcite.plan.RelOptCluster;
 import org.apache.calcite.plan.RelTraitSet;
@@ -142,7 +135,7 @@ public class MiniDbAggregate extends Aggregate implements MiniDbRel {
         }
         List<Object> key = new ArrayList<>(groupSet.cardinality());
         for (Integer idx : groupSet) {
-            key.add(readObject(batch.getVector(idx), row));
+            key.add(RowVectors.readObject(batch.getVector(idx), row));
         }
         return key;
     }
@@ -162,7 +155,7 @@ public class MiniDbAggregate extends Aggregate implements MiniDbRel {
             for (Map.Entry<List<Object>, GroupState> e : groups.entrySet()) {
                 List<Object> key = e.getKey();
                 for (int g = 0; g < key.size(); g++) {
-                    writeObject(vectors.get(g), row, key.get(g));
+                    RowVectors.writeObject(vectors.get(g), row, key.get(g));
                 }
                 int col = key.size();
                 List<Accumulator> accs = e.getValue().accs;
@@ -288,7 +281,7 @@ public class MiniDbAggregate extends Aggregate implements MiniDbRel {
             if (v == null || v.isNull(row)) {
                 return; // DISTINCT aggregates ignore NULLs
             }
-            set.add(readObject(v, row));
+            set.add(RowVectors.readObject(v, row));
         }
 
         @Override
@@ -372,7 +365,7 @@ public class MiniDbAggregate extends Aggregate implements MiniDbRel {
                             best = o;
                         }
                     }
-                    writeObject(out, row, best);
+                    RowVectors.writeObject(out, row, best);
                     return;
                 }
                 default:
@@ -515,7 +508,7 @@ public class MiniDbAggregate extends Aggregate implements MiniDbRel {
             if (v == null || v.isNull(row)) {
                 return;
             }
-            Object o = readObject(v, row);
+            Object o = RowVectors.readObject(v, row);
             if (!has) {
                 best = o;
                 has = true;
@@ -533,52 +526,8 @@ public class MiniDbAggregate extends Aggregate implements MiniDbRel {
                 out.setNull(row);
                 return;
             }
-            writeObject(out, row, best);
+            RowVectors.writeObject(out, row, best);
         }
-    }
-
-    private static Object readObject(ValueVector v, int row) {
-        if (v.isNull(row)) {
-            return null;
-        }
-        if (v instanceof SmallIntVector sv) {
-            return sv.get(row);
-        }
-        if (v instanceof IntVector iv) {
-            return iv.get(row);
-        }
-        if (v instanceof BigIntVector bv) {
-            return bv.get(row);
-        }
-        if (v instanceof Float4Vector fv) {
-            return fv.get(row);
-        }
-        if (v instanceof Float8Vector fv) {
-            return fv.get(row);
-        }
-        if (v instanceof DecimalVector dv) {
-            return dv.getObject(row);
-        }
-        if (v instanceof VarCharVector vv) {
-            return new String(vv.get(row), StandardCharsets.UTF_8);
-        }
-        if (v instanceof BitVector bv) {
-            return bv.get(row);
-        }
-        if (v instanceof DateDayVector dv) {
-            return dv.get(row);
-        }
-        if (v instanceof TimeMilliVector tv) {
-            return tv.get(row);
-        }
-        if (v instanceof TimeStampMilliVector tv) {
-            return tv.get(row);
-        }
-        if (v instanceof VarBinaryVector bv) {
-            return bv.get(row);
-        }
-        throw new UnsupportedOperationException(
-                "cannot aggregate column type: " + v.getMinorType());
     }
 
     private static long readLong(ValueVector v, int row) {
@@ -665,38 +614,4 @@ public class MiniDbAggregate extends Aggregate implements MiniDbRel {
         }
     }
 
-    private static void writeObject(FieldVector out, int row, Object o) {
-        if (o == null) {
-            out.setNull(row);
-            return;
-        }
-        if (out instanceof SmallIntVector sv) {
-            sv.setSafe(row, ((Number) o).shortValue());
-        } else if (out instanceof IntVector iv) {
-            iv.setSafe(row, ((Number) o).intValue());
-        } else if (out instanceof BigIntVector bv) {
-            bv.setSafe(row, ((Number) o).longValue());
-        } else if (out instanceof Float4Vector fv) {
-            fv.setSafe(row, ((Number) o).floatValue());
-        } else if (out instanceof Float8Vector fv) {
-            fv.setSafe(row, ((Number) o).doubleValue());
-        } else if (out instanceof DecimalVector dv) {
-            dv.setSafe(row, (BigDecimal) o);
-        } else if (out instanceof VarCharVector vv) {
-            vv.setSafe(row, o.toString().getBytes(StandardCharsets.UTF_8));
-        } else if (out instanceof BitVector bv) {
-            bv.setSafe(row, ((Number) o).intValue());
-        } else if (out instanceof DateDayVector dv) {
-            dv.setSafe(row, ((Number) o).intValue());
-        } else if (out instanceof TimeMilliVector tv) {
-            tv.setSafe(row, ((Number) o).intValue());
-        } else if (out instanceof TimeStampMilliVector tv) {
-            tv.setSafe(row, ((Number) o).longValue());
-        } else if (out instanceof VarBinaryVector bv) {
-            bv.setSafe(row, (byte[]) o);
-        } else {
-            throw new UnsupportedOperationException(
-                    "cannot write value to " + out.getMinorType());
-        }
-    }
 }

@@ -3,26 +3,11 @@ package com.minidb.server.plan.physical;
 import com.minidb.server.catalog.ArrowTypes;
 import com.minidb.server.exec.BatchIterator;
 import com.minidb.server.exec.ExecContext;
-import java.math.BigDecimal;
-import java.nio.charset.StandardCharsets;
 import java.util.ArrayList;
 import java.util.Comparator;
 import java.util.List;
 import java.util.Set;
-import org.apache.arrow.vector.BigIntVector;
-import org.apache.arrow.vector.BitVector;
-import org.apache.arrow.vector.DateDayVector;
-import org.apache.arrow.vector.DecimalVector;
 import org.apache.arrow.vector.FieldVector;
-import org.apache.arrow.vector.Float4Vector;
-import org.apache.arrow.vector.Float8Vector;
-import org.apache.arrow.vector.IntVector;
-import org.apache.arrow.vector.SmallIntVector;
-import org.apache.arrow.vector.TimeMilliVector;
-import org.apache.arrow.vector.TimeStampMilliVector;
-import org.apache.arrow.vector.ValueVector;
-import org.apache.arrow.vector.VarBinaryVector;
-import org.apache.arrow.vector.VarCharVector;
 import org.apache.arrow.vector.VectorSchemaRoot;
 import org.apache.calcite.plan.RelOptCluster;
 import org.apache.calcite.plan.RelTraitSet;
@@ -98,7 +83,7 @@ public abstract class MiniDbJoin extends Join implements MiniDbRel {
                 for (int r = 0; r < batch.getRowCount(); r++) {
                     Object[] row = new Object[batch.getFieldVectors().size()];
                     for (int c = 0; c < row.length; c++) {
-                        row[c] = readObject(batch.getVector(c), r);
+                        row[c] = RowVectors.readObject(batch.getVector(c), r);
                     }
                     rows.add(row);
                 }
@@ -107,50 +92,6 @@ public abstract class MiniDbJoin extends Join implements MiniDbRel {
             it.close();
         }
         return rows;
-    }
-
-    protected static Object readObject(ValueVector vector, int row) {
-        if (vector.isNull(row)) {
-            return null;
-        }
-        if (vector instanceof SmallIntVector sv) {
-            return sv.get(row);
-        }
-        if (vector instanceof IntVector iv) {
-            return iv.get(row);
-        }
-        if (vector instanceof BigIntVector bv) {
-            return bv.get(row);
-        }
-        if (vector instanceof Float4Vector fv) {
-            return fv.get(row);
-        }
-        if (vector instanceof Float8Vector fv) {
-            return fv.get(row);
-        }
-        if (vector instanceof DecimalVector dv) {
-            return dv.getObject(row);
-        }
-        if (vector instanceof VarCharVector vv) {
-            return new String(vv.get(row), StandardCharsets.UTF_8);
-        }
-        if (vector instanceof BitVector bv) {
-            return bv.get(row);
-        }
-        if (vector instanceof DateDayVector dv) {
-            return dv.get(row);
-        }
-        if (vector instanceof TimeMilliVector tv) {
-            return tv.get(row);
-        }
-        if (vector instanceof TimeStampMilliVector tv) {
-            return tv.get(row);
-        }
-        if (vector instanceof VarBinaryVector bv) {
-            return bv.get(row);
-        }
-        throw new UnsupportedOperationException(
-                "cannot join column type: " + vector.getMinorType());
     }
 
     protected VectorSchemaRoot buildOutput(List<Object[]> rows, ExecContext ctx) {
@@ -165,7 +106,7 @@ public abstract class MiniDbJoin extends Join implements MiniDbRel {
         for (int r = 0; r < rows.size(); r++) {
             Object[] row = rows.get(r);
             for (int c = 0; c < row.length; c++) {
-                writeObject(vectors.get(c), r, row[c]);
+                RowVectors.writeObject(vectors.get(c), r, row[c]);
             }
         }
         for (FieldVector v : vectors) {
@@ -173,41 +114,6 @@ public abstract class MiniDbJoin extends Join implements MiniDbRel {
         }
         // of() after setValueCount: rowCount derives from first vector's valueCount
         return VectorSchemaRoot.of(vectors.toArray(new FieldVector[0]));
-    }
-
-    protected static void writeObject(FieldVector out, int row, Object o) {
-        if (o == null) {
-            out.setNull(row);
-            return;
-        }
-        if (out instanceof SmallIntVector sv) {
-            sv.setSafe(row, ((Number) o).shortValue());
-        } else if (out instanceof IntVector iv) {
-            iv.setSafe(row, ((Number) o).intValue());
-        } else if (out instanceof BigIntVector bv) {
-            bv.setSafe(row, ((Number) o).longValue());
-        } else if (out instanceof Float4Vector fv) {
-            fv.setSafe(row, ((Number) o).floatValue());
-        } else if (out instanceof Float8Vector fv) {
-            fv.setSafe(row, ((Number) o).doubleValue());
-        } else if (out instanceof DecimalVector dv) {
-            dv.setSafe(row, (BigDecimal) o);
-        } else if (out instanceof VarCharVector vv) {
-            vv.setSafe(row, o.toString().getBytes(StandardCharsets.UTF_8));
-        } else if (out instanceof BitVector bv) {
-            bv.setSafe(row, ((Number) o).intValue());
-        } else if (out instanceof DateDayVector dv) {
-            dv.setSafe(row, ((Number) o).intValue());
-        } else if (out instanceof TimeMilliVector tv) {
-            tv.setSafe(row, ((Number) o).intValue());
-        } else if (out instanceof TimeStampMilliVector tv) {
-            tv.setSafe(row, ((Number) o).longValue());
-        } else if (out instanceof VarBinaryVector bv) {
-            bv.setSafe(row, (byte[]) o);
-        } else {
-            throw new UnsupportedOperationException(
-                    "cannot write value to " + out.getMinorType());
-        }
     }
 
     /** True if any of the join-key columns in {@code row} is null. */

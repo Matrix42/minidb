@@ -104,10 +104,10 @@ public class MiniDbNestedLoopJoin extends MiniDbJoin {
     private void writeProbeRow(VectorSchemaRoot probeRoot, Object[] leftRow, Object[] rightRow) {
         List<FieldVector> vectors = probeRoot.getFieldVectors();
         for (int c = 0; c < leftRow.length; c++) {
-            writeObject(vectors.get(c), 0, leftRow[c]);
+            RowVectors.writeObject(vectors.get(c), 0, leftRow[c]);
         }
         for (int c = 0; c < rightRow.length; c++) {
-            writeObject(vectors.get(leftRow.length + c), 0, rightRow[c]);
+            RowVectors.writeObject(vectors.get(leftRow.length + c), 0, rightRow[c]);
         }
         probeRoot.setRowCount(1);
     }

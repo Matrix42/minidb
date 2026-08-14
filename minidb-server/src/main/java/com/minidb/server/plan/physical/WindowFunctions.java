@@ -3,26 +3,12 @@ package com.minidb.server.plan.physical;
 import com.minidb.server.exec.BatchIterator;
 import com.minidb.server.exec.ExecContext;
 import java.math.BigDecimal;
-import java.nio.charset.StandardCharsets;
 import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.Comparator;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
-import org.apache.arrow.vector.BigIntVector;
-import org.apache.arrow.vector.BitVector;
-import org.apache.arrow.vector.DateDayVector;
-import org.apache.arrow.vector.DecimalVector;
-import org.apache.arrow.vector.Float4Vector;
-import org.apache.arrow.vector.Float8Vector;
-import org.apache.arrow.vector.IntVector;
-import org.apache.arrow.vector.SmallIntVector;
-import org.apache.arrow.vector.TimeMilliVector;
-import org.apache.arrow.vector.TimeStampMilliVector;
-import org.apache.arrow.vector.ValueVector;
-import org.apache.arrow.vector.VarBinaryVector;
-import org.apache.arrow.vector.VarCharVector;
 import org.apache.arrow.vector.VectorSchemaRoot;
 import org.apache.calcite.rel.RelFieldCollation;
 import org.apache.calcite.rel.RelNode;
@@ -58,7 +44,7 @@ public final class WindowFunctions {
                 for (int rowIdx = 0; rowIdx < batch.getRowCount(); rowIdx++) {
                     Object[] row = new Object[batch.getFieldVectors().size()];
                     for (int colIdx = 0; colIdx < row.length; colIdx++) {
-                        row[colIdx] = readObject(batch.getVector(colIdx), rowIdx);
+                        row[colIdx] = RowVectors.readObject(batch.getVector(colIdx), rowIdx);
                     }
                     rows.add(row);
                 }
@@ -317,47 +303,4 @@ public final class WindowFunctions {
                 || typeName == SqlTypeName.REAL || typeName == SqlTypeName.DECIMAL;
     }
 
-    private static Object readObject(ValueVector vector, int row) {
-        if (vector.isNull(row)) {
-            return null;
-        }
-        if (vector instanceof SmallIntVector sv) {
-            return sv.get(row);
-        }
-        if (vector instanceof IntVector iv) {
-            return iv.get(row);
-        }
-        if (vector instanceof BigIntVector bv) {
-            return bv.get(row);
-        }
-        if (vector instanceof Float4Vector fv) {
-            return fv.get(row);
-        }
-        if (vector instanceof Float8Vector fv) {
-            return fv.get(row);
-        }
-        if (vector instanceof DecimalVector dv) {
-            return dv.getObject(row);
-        }
-        if (vector instanceof VarCharVector vv) {
-            return new String(vv.get(row), StandardCharsets.UTF_8);
-        }
-        if (vector instanceof BitVector bv) {
-            return bv.get(row);
-        }
-        if (vector instanceof DateDayVector dv) {
-            return dv.get(row);
-        }
-        if (vector instanceof TimeMilliVector tv) {
-            return tv.get(row);
-        }
-        if (vector instanceof TimeStampMilliVector tv) {
-            return tv.get(row);
-        }
-        if (vector instanceof VarBinaryVector bv) {
-            return bv.get(row);
-        }
-        throw new UnsupportedOperationException(
-                "cannot window column type: " + vector.getMinorType());
-    }
 }
