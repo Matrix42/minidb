@@ -31,7 +31,7 @@ public class MiniDbRootCalciteSchema extends AbstractSchema {
         Map<String, Table> tables = new HashMap<>();
         for (String name : catalog.tableNames(currentSchema)) {
             TableSchema ts = catalog.getTable(currentSchema, name);
-            tables.put(name, new MiniDbCalciteTable(ts));
+            tables.put(name, new MiniDbCalciteTable(ts, catalog));
         }
         return tables;
     }

@@ -15,6 +15,7 @@ import com.minidb.server.plan.physical.MiniDbValues;
 import com.minidb.server.plan.Planner;
 import com.minidb.server.catalog.MiniDbCatalog;
 import com.minidb.server.stats.Histogram;
+import com.minidb.server.stats.StatsEstimator;
 import com.minidb.server.stats.StatsManager;
 import com.minidb.server.stats.TableStats;
 import com.minidb.server.storage.ArrowTable;
@@ -34,7 +35,6 @@ import org.apache.arrow.vector.VarCharVector;
 import org.apache.arrow.vector.VectorSchemaRoot;
 import org.apache.calcite.rel.RelNode;
 import org.apache.calcite.rel.core.TableScan;
-import org.apache.calcite.rex.RexCall;
 import org.apache.calcite.rex.RexInputRef;
 import org.apache.calcite.rex.RexLiteral;
 import org.apache.calcite.rex.RexLocalRef;
@@ -339,50 +339,11 @@ public class ExplainExecutor {
         if (ts.stale()) {
             return new Sel(Histogram.DEFAULT_SELECTIVITY, "stats stale");
         }
-        Histogram h = histogramForCondition(cond, table, ts);
+        Histogram h = StatsEstimator.histogramForCondition(cond, storage.getTable(table).schema(), ts);
         if (h == null) {
             return new Sel(Histogram.DEFAULT_SELECTIVITY, "default selectivity");
         }
         return new Sel(h.selectivity(cond, h.totalRows()), "estimated");
-    }
-
-    /**
-     * Resolve the histogram for the column referenced by the filter condition.
-     * For a Scan->Filter the RexInputRef index maps directly to the table
-     * column index; resolve the column name from the table schema, lowercase
-     * it, and look up the histogram in TableStats.
-     */
-    private Histogram histogramForCondition(RexNode cond, String table, TableStats ts) {
-        if (ts.columnHistograms().isEmpty()) {
-            return null;
-        }
-        Integer colIndex = findFirstInputRef(cond);
-        if (colIndex == null) {
-            return null;
-        }
-        ArrowTable arrowTable = storage.getTable(table);
-        List<com.minidb.server.catalog.ColumnMeta> columns =
-                arrowTable.schema().columns();
-        if (colIndex < 0 || colIndex >= columns.size()) {
-            return null;
-        }
-        String colName = columns.get(colIndex).name().toLowerCase(Locale.ROOT);
-        return ts.columnHistograms().get(colName);
-    }
-
-    private static Integer findFirstInputRef(RexNode node) {
-        if (node instanceof RexInputRef ref) {
-            return ref.getIndex();
-        }
-        if (node instanceof RexCall call) {
-            for (RexNode operand : call.getOperands()) {
-                Integer idx = findFirstInputRef(operand);
-                if (idx != null) {
-                    return idx;
-                }
-            }
-        }
-        return null;
     }
 
     private String scanTableOf(RelNode node) {
