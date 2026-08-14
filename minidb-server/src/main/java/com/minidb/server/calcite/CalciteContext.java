@@ -7,6 +7,7 @@ import java.util.Properties;
 import org.apache.calcite.avatica.util.Casing;
 import org.apache.calcite.avatica.util.Quoting;
 import org.apache.calcite.config.CalciteConnectionConfigImpl;
+import org.apache.calcite.config.CalciteConnectionProperty;
 import org.apache.calcite.config.Lex;
 import org.apache.calcite.jdbc.CalciteSchema;
 import org.apache.calcite.plan.RelOptCluster;
@@ -100,10 +101,15 @@ public class CalciteContext {
 
     private CalciteCatalogReader buildCatalogReader(
             SqlTypeFactoryImpl typeFactory, String currentSchema) {
+        Properties props = new Properties();
+        // 列名大小写不敏感(与 parserConfig 的 caseSensitive=false 一致):默认 Lex.ORACLE
+        // 是大小写敏感的,不设此属性会让 information_schema 的 TABLE_NAME 等大写列无法用
+        // 小写 table_name 查询。
+        props.setProperty(CalciteConnectionProperty.CASE_SENSITIVE.camelName(), "false");
         return new CalciteCatalogReader(
                 CalciteSchema.from(createRootSchema(currentSchema)),
                 List.of(SCHEMA_NAME),
                 typeFactory,
-                new CalciteConnectionConfigImpl(new Properties()));
+                new CalciteConnectionConfigImpl(props));
     }
 }
