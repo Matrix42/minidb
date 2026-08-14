@@ -4,6 +4,7 @@ import com.minidb.server.catalog.ArrowTypes;
 import com.minidb.server.exec.BatchIterator;
 import com.minidb.server.exec.ExecContext;
 
+import java.math.BigDecimal;
 import java.nio.charset.StandardCharsets;
 import java.util.ArrayDeque;
 import java.util.ArrayList;
@@ -13,11 +14,16 @@ import java.util.List;
 import org.apache.arrow.vector.BigIntVector;
 import org.apache.arrow.vector.BitVector;
 import org.apache.arrow.vector.DateDayVector;
+import org.apache.arrow.vector.DecimalVector;
 import org.apache.arrow.vector.FieldVector;
+import org.apache.arrow.vector.Float4Vector;
 import org.apache.arrow.vector.Float8Vector;
 import org.apache.arrow.vector.IntVector;
+import org.apache.arrow.vector.SmallIntVector;
+import org.apache.arrow.vector.TimeMilliVector;
 import org.apache.arrow.vector.TimeStampMilliVector;
 import org.apache.arrow.vector.ValueVector;
+import org.apache.arrow.vector.VarBinaryVector;
 import org.apache.arrow.vector.VarCharVector;
 import org.apache.arrow.vector.VectorSchemaRoot;
 import org.apache.arrow.vector.types.pojo.Field;
@@ -236,20 +242,30 @@ public class MiniDbProject extends Project implements MiniDbRel {
             vector.setNull(row);
             return;
         }
-        if (vector instanceof IntVector iv) {
+        if (vector instanceof SmallIntVector sv) {
+            sv.setSafe(row, ((Number) value).shortValue());
+        } else if (vector instanceof IntVector iv) {
             iv.setSafe(row, ((Number) value).intValue());
         } else if (vector instanceof BigIntVector bv) {
             bv.setSafe(row, ((Number) value).longValue());
+        } else if (vector instanceof Float4Vector fv) {
+            fv.setSafe(row, ((Number) value).floatValue());
         } else if (vector instanceof Float8Vector fv) {
             fv.setSafe(row, ((Number) value).doubleValue());
+        } else if (vector instanceof DecimalVector dv) {
+            dv.setSafe(row, (BigDecimal) value);
         } else if (vector instanceof VarCharVector vv) {
             vv.setSafe(row, value.toString().getBytes(StandardCharsets.UTF_8));
         } else if (vector instanceof BitVector bv) {
             bv.setSafe(row, ((Number) value).intValue());
         } else if (vector instanceof DateDayVector dv) {
             dv.setSafe(row, ((Number) value).intValue());
+        } else if (vector instanceof TimeMilliVector tv) {
+            tv.setSafe(row, ((Number) value).intValue());
         } else if (vector instanceof TimeStampMilliVector tv) {
             tv.setSafe(row, ((Number) value).longValue());
+        } else if (vector instanceof VarBinaryVector bv) {
+            bv.setSafe(row, (byte[]) value);
         } else {
             throw new UnsupportedOperationException(
                     "cannot write value to " + vector.getMinorType());

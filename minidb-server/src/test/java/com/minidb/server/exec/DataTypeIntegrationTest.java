@@ -410,4 +410,29 @@ class DataTypeIntegrationTest {
             storage2.close();
         }
     }
+
+    /**
+     * Regression test for the window-function eager path: a SELECT with a window
+     * function (ROW_NUMBER) over a table containing SMALLINT and DECIMAL columns
+     * must not throw "cannot write value to <MinorType>" from MiniDbProject's
+     * writeObject, which previously only handled the 7 original types.
+     */
+    @Test
+    void windowFunctionOverNewTypes() {
+        executor.execute("CREATE TABLE t (s SMALLINT, price DECIMAL(10,2))");
+        executor.execute("INSERT INTO t VALUES (42, 123.45)");
+        QueryResult r = executor.execute("SELECT s, price, ROW_NUMBER() OVER () FROM t");
+        VectorSchemaRoot root = rows(r);
+        assertEquals(1, root.getRowCount());
+        assertTrue(root.getVector("s") instanceof SmallIntVector,
+                "expected SmallIntVector, got " + root.getVector("s").getClass().getSimpleName());
+        assertEquals(42, ((SmallIntVector) root.getVector("s")).get(0));
+        assertTrue(root.getVector("price") instanceof DecimalVector,
+                "expected DecimalVector, got " + root.getVector("price").getClass().getSimpleName());
+        assertEquals(0, new BigDecimal("123.45").compareTo(
+                (BigDecimal) root.getVector("price").getObject(0)));
+        // ROW_NUMBER over empty window with a single row must be 1
+        assertEquals(1, ((Number) root.getVector(2).getObject(0)).intValue());
+        root.close();
+    }
 }
