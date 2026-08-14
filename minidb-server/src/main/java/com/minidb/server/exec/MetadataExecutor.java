@@ -277,17 +277,28 @@ public class MetadataExecutor {
     static Pattern compileLike(String pattern) {
         if (pattern == null) return null;
         StringBuilder sb = new StringBuilder();
-        for (char c : pattern.toCharArray()) {
-            if (c == '%') {
+        for (int i = 0; i < pattern.length(); i++) {
+            char c = pattern.charAt(i);
+            if (c == '\\' && i + 1 < pattern.length()) {
+                // JDBC 转义(getSearchStringEscape()="\"):\X 表示字面量 X。
+                // DataGrip 等工具会把 schema 名里的 _ 转义为 \_ 以匹配字面下划线。
+                appendLiteral(sb, pattern.charAt(i + 1));
+                i++;
+            } else if (c == '%') {
                 sb.append(".*");
             } else if (c == '_') {
                 sb.append('.');
-            } else if ("\\.[]{}()*+?^$|".indexOf(c) >= 0) {
-                sb.append('\\').append(c);
             } else {
-                sb.append(c);
+                appendLiteral(sb, c);
             }
         }
         return Pattern.compile(sb.toString(), Pattern.DOTALL);
+    }
+
+    private static void appendLiteral(StringBuilder sb, char c) {
+        if ("\\.[]{}()*+?^$|".indexOf(c) >= 0) {
+            sb.append('\\');
+        }
+        sb.append(c);
     }
 }

@@ -185,4 +185,29 @@ class MetadataExecutorTest {
         assertTrue(MetadataExecutor.compileLike("t_%").matcher("t12").matches(), "t12 should match t_%");
         assertFalse(MetadataExecutor.compileLike("t_%").matcher("t").matches(), "t should not match t_%");
     }
+
+    @Test
+    void compileLikeHonorsEscapeCharacter() {
+        // getSearchStringEscape() = "\";DataGrip 会把 _ 转义为 \_ 以匹配字面下划线
+        assertTrue(MetadataExecutor.compileLike("information\\_schema")
+                .matcher("information_schema").matches());
+        assertFalse(MetadataExecutor.compileLike("information\\_schema")
+                .matcher("informationXschema").matches());
+        // \% 匹配字面 %, \\ 匹配字面 \
+        assertTrue(MetadataExecutor.compileLike("a\\%b").matcher("a%b").matches());
+        assertTrue(MetadataExecutor.compileLike("a\\\\b").matcher("a\\b").matches());
+    }
+
+    @Test
+    void tablesMatchesEscapedUnderscoreSchema() {
+        try (RootAllocator alloc = new RootAllocator()) {
+            MiniDbCatalog cat = new MiniDbCatalog();
+            MetadataExecutor exec = new MetadataExecutor(cat, alloc);
+            try (VectorSchemaRoot root = exec.tables("information\\_schema", null, null)) {
+                assertEquals(3, root.getRowCount()); // schemata/tables/columns
+                VarCharVector name = (VarCharVector) root.getVector("TABLE_NAME");
+                assertEquals("columns", new String(name.get(0)));
+            }
+        }
+    }
 }
