@@ -109,23 +109,13 @@ public final class HistogramBuilder {
 
     @SuppressWarnings({"unchecked", "rawtypes"})
     private static Comparable<Object> normalize(Comparable<?> c, ColumnType type) {
-        if (c instanceof String s) {
-            return switch (type) {
-                case INTEGER, BIGINT, SMALLINT, DOUBLE, REAL, FLOAT, DECIMAL, NUMERIC,
-                     DATE, TIME, TIMESTAMP -> (Comparable<Object>) (Comparable) Double.valueOf(Double.parseDouble(s));
-                case BOOLEAN -> (Comparable<Object>) (Comparable) Boolean.valueOf(s);
-                default -> (Comparable<Object>) (Comparable) s;
-            };
-        }
-        if (c instanceof java.math.BigDecimal bd) {
-            return (Comparable<Object>) (Comparable) Double.valueOf(bd.doubleValue());
-        }
-        if (c instanceof Integer i) {
-            return (Comparable<Object>) (Comparable) Double.valueOf(i.doubleValue());
-        }
-        if (c instanceof Long l) {
-            return (Comparable<Object>) (Comparable) Double.valueOf(l.doubleValue());
-        }
-        return (Comparable<Object>) c;
+        // read() 产出的值恒为 String,按列类型解析为可比较值。
+        String s = (String) c;
+        return switch (type) {
+            case INTEGER, BIGINT, SMALLINT, DOUBLE, REAL, FLOAT, DECIMAL, NUMERIC,
+                 DATE, TIME, TIMESTAMP -> (Comparable<Object>) (Comparable) Double.valueOf(Double.parseDouble(s));
+            case BOOLEAN -> (Comparable<Object>) (Comparable) Boolean.valueOf(s);
+            default -> (Comparable<Object>) (Comparable) s;
+        };
     }
 }
