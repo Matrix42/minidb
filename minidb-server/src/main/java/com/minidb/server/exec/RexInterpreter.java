@@ -78,6 +78,10 @@ public class RexInterpreter {
                 return caseExpr(call, input);
             case TRIM:
                 return evalTrim(call, input);
+            case IS_NULL:
+                return nullTest(call.getOperands().get(0), input, true);
+            case IS_NOT_NULL:
+                return nullTest(call.getOperands().get(0), input, false);
             default: {
                 List<ValueVector> args = new ArrayList<>();
                 for (RexNode operand : call.getOperands()) {
@@ -216,6 +220,28 @@ public class RexInterpreter {
                 } else {
                     out.setSafe(i, ((BitVector) v).get(i) == 1 ? 0 : 1);
                 }
+            }
+            out.setValueCount(rows);
+            return out;
+        } finally {
+            v.close();
+        }
+    }
+
+    /**
+     * IS NULL / IS NOT NULL:非 STRICT 谓词 —— 操作数为 null 时仍产出 true/false(而非 null),
+     * 且类型无关(任意向量)。逐行读 isNull 位写 BitVector。去相关后的 NOT EXISTS(IS NULL)与
+     * 相关 EXISTS(IS NOT NULL)都依赖它。
+     */
+    private ValueVector nullTest(RexNode operand, VectorSchemaRoot input, boolean isNull) {
+        int rows = input.getRowCount();
+        ValueVector v = eval(operand, input);
+        try {
+            BitVector out = new BitVector(isNull ? "is_null" : "is_not_null", allocator);
+            out.allocateNew(rows);
+            for (int i = 0; i < rows; i++) {
+                boolean nullResult = isNull ? v.isNull(i) : !v.isNull(i);
+                out.setSafe(i, nullResult ? 1 : 0);
             }
             out.setValueCount(rows);
             return out;
