@@ -10,4 +10,10 @@ public record CatalogSnapshot(List<String> schemas, List<TableSchema> tables,
     public CatalogSnapshot(List<String> schemas, List<TableSchema> tables) {
         this(schemas, tables, Map.of());
     }
+
+    public CatalogSnapshot {
+        // 旧 catalog.json(本次改动之前写的)无 stats 字段,Jackson 走 canonical 构造器
+        // 会把 stats 反序列化为 null;这里归一化为空 Map,避免 restore() 里 NPE。
+        stats = stats == null ? Map.of() : stats;
+    }
 }

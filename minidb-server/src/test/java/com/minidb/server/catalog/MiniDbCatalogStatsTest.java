@@ -1,5 +1,6 @@
 package com.minidb.server.catalog;
 
+import com.fasterxml.jackson.databind.ObjectMapper;
 import com.minidb.server.stats.Histogram;
 import com.minidb.server.stats.TableStats;
 import java.util.List;
@@ -50,5 +51,15 @@ class MiniDbCatalogStatsTest {
         MiniDbCatalog dst = new MiniDbCatalog();
         dst.restore(src.snapshot());
         assertEquals(42, dst.getStats("public", "t").rowCount());
+    }
+
+    @Test
+    void legacySnapshotWithoutStatsRestoresCleanly() throws Exception {
+        // 旧 catalog.json(改动前写的)无 stats 字段,Jackson 反序列化 stats 为 null,
+        // compact 构造器归一化为空 Map,restore 不应抛 NPE。
+        CatalogSnapshot legacy = new ObjectMapper()
+                .readValue("{\"schemas\":[],\"tables\":[]}", CatalogSnapshot.class);
+        assertEquals(Map.of(), legacy.stats());
+        new MiniDbCatalog().restore(legacy);
     }
 }
