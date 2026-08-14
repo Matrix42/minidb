@@ -36,33 +36,33 @@ public final class HistogramBuilder {
             }
         }
         if (values.isEmpty()) {
-            return Histogram.empty();
+            return Histogram.empty(type);
         }
-        values.sort(Comparator.comparing(HistogramBuilder::normalize));
+        values.sort(Comparator.comparing(v -> normalize(v, type)));
         long totalRows = values.size();
-        long distinctCount = distinctCount(values);
+        long distinctCount = distinctCount(values, type);
         List<Histogram.McValue> mcv = topMcv(values);
         List<Histogram.Bucket> buckets = equiDepth(values, totalRows);
-        return new Histogram(buckets, mcv, distinctCount, nullCount, totalRows);
+        return new Histogram(type, buckets, mcv, distinctCount, nullCount, totalRows);
     }
 
     private static Comparable<?> read(ValueVector v, int i, ColumnType type) {
         return switch (type) {
-            case INTEGER -> ((IntVector) v).get(i);
-            case BIGINT -> ((BigIntVector) v).get(i);
-            case DOUBLE -> ((Float8Vector) v).get(i);
+            case INTEGER -> Integer.toString(((IntVector) v).get(i));
+            case BIGINT -> Long.toString(((BigIntVector) v).get(i));
+            case DOUBLE -> Double.toString(((Float8Vector) v).get(i));
             case VARCHAR -> new String(((VarCharVector) v).get(i));
-            case BOOLEAN -> ((BitVector) v).get(i) == 1;
-            case DATE -> ((DateDayVector) v).get(i);
-            case TIMESTAMP -> ((TimeStampMilliVector) v).get(i);
+            case BOOLEAN -> Boolean.toString(((BitVector) v).get(i) == 1);
+            case DATE -> Integer.toString(((DateDayVector) v).get(i));
+            case TIMESTAMP -> Long.toString(((TimeStampMilliVector) v).get(i));
             default -> throw new IllegalArgumentException("histogram: unsupported type " + type);
         };
     }
 
-    private static long distinctCount(List<Comparable<?>> sorted) {
+    private static long distinctCount(List<Comparable<?>> sorted, ColumnType type) {
         long d = 1;
         for (int i = 1; i < sorted.size(); i++) {
-            if (normalize(sorted.get(i)).compareTo(normalize(sorted.get(i - 1))) != 0) {
+            if (normalize(sorted.get(i), type).compareTo(normalize(sorted.get(i - 1), type)) != 0) {
                 d++;
             }
         }
@@ -70,18 +70,17 @@ public final class HistogramBuilder {
     }
 
     private static List<Histogram.McValue> topMcv(List<Comparable<?>> values) {
-        // Group by the value itself (not normalized) so that McValue stores the
-        // ORIGINAL value. Within a single column all values share one type, so
-        // identity grouping is equivalent to normalize-based grouping for
-        // counting purposes, while preserving Integer/String in the McValue.
-        // Histogram.equalitySelectivity normalizes both sides via compareValue,
-        // so storing the original type is correct and preserves display fidelity.
+        // Group by the canonical String value itself (not normalized) so that
+        // McValue stores the string as read from the column. Within a single
+        // column all values share one type, so identity grouping is equivalent
+        // to normalize-based grouping for counting purposes. Histogram
+        // equalitySelectivity parses both sides via histValue/normalizeLiteral.
         Map<Comparable<?>, Long> freq = values.stream().collect(
                 Collectors.groupingBy(v -> v, Collectors.counting()));
         return freq.entrySet().stream()
                 .sorted(Map.Entry.<Comparable<?>, Long>comparingByValue().reversed())
                 .limit(MCV_CAP)
-                .map(e -> new Histogram.McValue(e.getKey(), e.getValue()))
+                .map(e -> new Histogram.McValue((String) e.getKey(), e.getValue()))
                 .toList();
     }
 
@@ -102,14 +101,22 @@ public final class HistogramBuilder {
             }
             Comparable<?> lower = sorted.get(idx);
             Comparable<?> upper = sorted.get(idx + size - 1);
-            buckets.add(new Histogram.Bucket(lower, upper, size));
+            buckets.add(new Histogram.Bucket((String) lower, (String) upper, size));
             idx += size;
         }
         return buckets;
     }
 
     @SuppressWarnings({"unchecked", "rawtypes"})
-    private static Comparable<Object> normalize(Comparable<?> c) {
+    private static Comparable<Object> normalize(Comparable<?> c, ColumnType type) {
+        if (c instanceof String s) {
+            return switch (type) {
+                case INTEGER, BIGINT, SMALLINT, DOUBLE, REAL, FLOAT, DECIMAL, NUMERIC,
+                     DATE, TIME, TIMESTAMP -> (Comparable<Object>) (Comparable) Double.valueOf(Double.parseDouble(s));
+                case BOOLEAN -> (Comparable<Object>) (Comparable) Boolean.valueOf(s);
+                default -> (Comparable<Object>) (Comparable) s;
+            };
+        }
         if (c instanceof java.math.BigDecimal bd) {
             return (Comparable<Object>) (Comparable) Double.valueOf(bd.doubleValue());
         }
