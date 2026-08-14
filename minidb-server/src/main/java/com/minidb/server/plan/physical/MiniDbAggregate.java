@@ -5,6 +5,8 @@ import com.minidb.server.exec.BatchIterator;
 import com.minidb.server.exec.ExecContext;
 import com.minidb.server.exec.RowCopier;
 import java.math.BigDecimal;
+import java.math.MathContext;
+import java.math.RoundingMode;
 import java.nio.charset.StandardCharsets;
 import java.util.ArrayList;
 import java.util.LinkedHashMap;
@@ -183,48 +185,70 @@ public class MiniDbAggregate extends Aggregate implements MiniDbRel {
 
     private static AccumulatorFactory factoryFor(AggregateCall call, RelDataType inputRowType) {
         SqlKind kind = call.getAggregation().kind;
-        RelDataType outType = call.getType();
-        boolean floatingOut = isFloating(outType.getSqlTypeName());
-        boolean floatingArg = isFloatingArg(call, inputRowType);
         boolean distinct = call.isDistinct();
         switch (kind) {
             case COUNT:
-                return distinct
-                        ? () -> new DistinctAcc(kind, false, false, false)
-                        : CountAcc::new;
+                return distinct ? () -> new DistinctAcc(kind, false) : CountAcc::new;
             case SUM:
                 return distinct
-                        ? () -> new DistinctAcc(kind, floatingArg, floatingOut, false)
-                        : () -> new SumAcc(floatingArg, floatingOut);
+                        ? () -> new DistinctAcc(kind, false)
+                        : () -> new SumAcc(argDomain(call, inputRowType));
             case AVG:
                 return distinct
-                        ? () -> new DistinctAcc(kind, floatingArg, floatingOut, false)
-                        : () -> new AvgAcc(floatingOut);
+                        ? () -> new DistinctAcc(kind, false)
+                        : () -> new AvgAcc(argDomain(call, inputRowType));
             case MIN:
             case MAX:
                 return distinct
-                        ? () -> new DistinctAcc(kind, floatingArg, floatingOut, kind == SqlKind.MIN)
+                        ? () -> new DistinctAcc(kind, kind == SqlKind.MIN)
                         : () -> new MinMaxAcc(kind == SqlKind.MIN);
             default:
                 throw new UnsupportedOperationException("aggregate not supported: " + kind);
         }
     }
 
-    private static boolean isFloatingArg(AggregateCall call, RelDataType inputRowType) {
+    /**
+     * The numeric domain an aggregate runs over. It selects which running value the
+     * accumulator keeps (long vs BigDecimal vs double) so DECIMAL stays exact and
+     * integral/approximate types keep their natural arithmetic.
+     */
+    private enum NumericDomain {
+        /** SMALLINT/INTEGER/BIGINT accumulate a long. */
+        INTEGRAL,
+        /** DECIMAL accumulates a BigDecimal (exact). */
+        DECIMAL,
+        /** REAL/FLOAT/DOUBLE accumulate a double. */
+        FLOATING
+    }
+
+    private static NumericDomain argDomain(AggregateCall call, RelDataType inputRowType) {
         if (!call.rexList.isEmpty()) {
-            return isFloating(call.rexList.get(0).getType().getSqlTypeName());
+            return domainOf(call.rexList.get(0).getType().getSqlTypeName());
         }
         if (!call.getArgList().isEmpty()) {
             int idx = call.getArgList().get(0);
-            return isFloating(inputRowType.getFieldList().get(idx)
+            return domainOf(inputRowType.getFieldList().get(idx)
                     .getType().getSqlTypeName());
         }
-        return false; // COUNT(*)
+        throw new UnsupportedOperationException("aggregate has no argument: " + call);
     }
 
-    private static boolean isFloating(SqlTypeName t) {
-        return t == SqlTypeName.DOUBLE || t == SqlTypeName.FLOAT
-                || t == SqlTypeName.REAL || t == SqlTypeName.DECIMAL;
+    private static NumericDomain domainOf(SqlTypeName t) {
+        switch (t) {
+            case SMALLINT:
+            case INTEGER:
+            case BIGINT:
+                return NumericDomain.INTEGRAL;
+            case DECIMAL:
+                return NumericDomain.DECIMAL;
+            case REAL:
+            case FLOAT:
+            case DOUBLE:
+                return NumericDomain.FLOATING;
+            default:
+                throw new UnsupportedOperationException(
+                        "unsupported aggregate argument type: " + t);
+        }
     }
 
     private interface Accumulator {
@@ -251,13 +275,11 @@ public class MiniDbAggregate extends Aggregate implements MiniDbRel {
 
     private static final class DistinctAcc implements Accumulator {
         private final SqlKind kind;
-        private final boolean floatingOut;
         private final boolean min;
         private final java.util.LinkedHashSet<Object> set = new java.util.LinkedHashSet<>();
 
-        DistinctAcc(SqlKind kind, boolean floating, boolean floatingOut, boolean min) {
+        DistinctAcc(SqlKind kind, boolean min) {
             this.kind = kind;
-            this.floatingOut = floatingOut;
             this.min = min;
         }
 
@@ -280,7 +302,17 @@ public class MiniDbAggregate extends Aggregate implements MiniDbRel {
                         out.setNull(row);
                         return;
                     }
-                    if (floatingOut) {
+                    // The running set holds boxed values from a single column, so its
+                    // element type tells us which numeric domain to sum in (BigDecimal
+                    // for DECIMAL, double for REAL/FLOAT/DOUBLE, long otherwise).
+                    Object first = set.iterator().next();
+                    if (first instanceof BigDecimal) {
+                        BigDecimal s = BigDecimal.ZERO;
+                        for (Object o : set) {
+                            s = s.add((BigDecimal) o);
+                        }
+                        writeDecimal(out, row, s);
+                    } else if (first instanceof Float || first instanceof Double) {
                         double s = 0;
                         for (Object o : set) {
                             s += ((Number) o).doubleValue();
@@ -300,14 +332,26 @@ public class MiniDbAggregate extends Aggregate implements MiniDbRel {
                         out.setNull(row);
                         return;
                     }
-                    double s = 0;
-                    for (Object o : set) {
-                        s += ((Number) o).doubleValue();
-                    }
-                    if (floatingOut) {
+                    Object first = set.iterator().next();
+                    if (first instanceof BigDecimal) {
+                        BigDecimal s = BigDecimal.ZERO;
+                        for (Object o : set) {
+                            s = s.add((BigDecimal) o);
+                        }
+                        writeDecimal(out, row,
+                                s.divide(BigDecimal.valueOf(set.size()), MathContext.DECIMAL128));
+                    } else if (first instanceof Float || first instanceof Double) {
+                        double s = 0;
+                        for (Object o : set) {
+                            s += ((Number) o).doubleValue();
+                        }
                         writeDouble(out, row, s / set.size());
                     } else {
-                        writeLong(out, row, (long) (s / set.size()));
+                        long s = 0;
+                        for (Object o : set) {
+                            s += ((Number) o).longValue();
+                        }
+                        writeLong(out, row, s / set.size());
                     }
                     return;
                 }
@@ -355,15 +399,14 @@ public class MiniDbAggregate extends Aggregate implements MiniDbRel {
     }
 
     private static final class SumAcc implements Accumulator {
-        private final boolean floating;
-        private final boolean floatingOut;
+        private final NumericDomain domain;
         private long lsum;
-        private double dsum;
+        private BigDecimal dsum = BigDecimal.ZERO;
+        private double fsum;
         private boolean has;
 
-        SumAcc(boolean floating, boolean floatingOut) {
-            this.floating = floating;
-            this.floatingOut = floatingOut;
+        SumAcc(NumericDomain domain) {
+            this.domain = domain;
         }
 
         @Override
@@ -372,10 +415,16 @@ public class MiniDbAggregate extends Aggregate implements MiniDbRel {
                 return;
             }
             has = true;
-            if (floating) {
-                dsum += readDouble(v, row);
-            } else {
-                lsum += readLong(v, row);
+            switch (domain) {
+                case INTEGRAL:
+                    lsum += readLong(v, row);
+                    break;
+                case DECIMAL:
+                    dsum = dsum.add(readDecimal(v, row));
+                    break;
+                case FLOATING:
+                    fsum += readDouble(v, row);
+                    break;
             }
         }
 
@@ -385,21 +434,29 @@ public class MiniDbAggregate extends Aggregate implements MiniDbRel {
                 out.setNull(row);
                 return;
             }
-            if (floatingOut) {
-                writeDouble(out, row, dsum);
-            } else {
-                writeLong(out, row, lsum);
+            switch (domain) {
+                case INTEGRAL:
+                    writeLong(out, row, lsum);
+                    break;
+                case DECIMAL:
+                    writeDecimal(out, row, dsum);
+                    break;
+                case FLOATING:
+                    writeDouble(out, row, fsum);
+                    break;
             }
         }
     }
 
     private static final class AvgAcc implements Accumulator {
-        private final boolean floatingOut;
-        private double sum;
+        private final NumericDomain domain;
+        private long lsum;
+        private BigDecimal dsum = BigDecimal.ZERO;
+        private double fsum;
         private long cnt;
 
-        AvgAcc(boolean floatingOut) {
-            this.floatingOut = floatingOut;
+        AvgAcc(NumericDomain domain) {
+            this.domain = domain;
         }
 
         @Override
@@ -407,7 +464,17 @@ public class MiniDbAggregate extends Aggregate implements MiniDbRel {
             if (v == null || v.isNull(row)) {
                 return;
             }
-            sum += readDouble(v, row);
+            switch (domain) {
+                case INTEGRAL:
+                    lsum += readLong(v, row);
+                    break;
+                case DECIMAL:
+                    dsum = dsum.add(readDecimal(v, row));
+                    break;
+                case FLOATING:
+                    fsum += readDouble(v, row);
+                    break;
+            }
             cnt++;
         }
 
@@ -417,10 +484,19 @@ public class MiniDbAggregate extends Aggregate implements MiniDbRel {
                 out.setNull(row);
                 return;
             }
-            if (floatingOut) {
-                writeDouble(out, row, sum / cnt);
-            } else {
-                writeLong(out, row, (long) (sum / cnt));
+            switch (domain) {
+                case INTEGRAL:
+                    writeLong(out, row, lsum / cnt);
+                    break;
+                case DECIMAL:
+                    // AVG(DECIMAL) 输出仍是 DECIMAL;除到足够精度后由 writeDecimal
+                    // 按输出向量 scale 舍入(见 writeDecimal 注释)。
+                    writeDecimal(out, row,
+                            dsum.divide(BigDecimal.valueOf(cnt), MathContext.DECIMAL128));
+                    break;
+                case FLOATING:
+                    writeDouble(out, row, fsum / cnt);
+                    break;
             }
         }
     }
@@ -526,9 +602,6 @@ public class MiniDbAggregate extends Aggregate implements MiniDbRel {
         if (v instanceof Float4Vector fv) {
             return fv.get(row);
         }
-        if (v instanceof DecimalVector dv) {
-            return dv.getObject(row).doubleValue();
-        }
         if (v instanceof IntVector iv) {
             return iv.get(row);
         }
@@ -542,6 +615,14 @@ public class MiniDbAggregate extends Aggregate implements MiniDbRel {
                 "not a numeric vector: " + v.getMinorType());
     }
 
+    private static BigDecimal readDecimal(ValueVector v, int row) {
+        if (v instanceof DecimalVector dv) {
+            return dv.getObject(row);
+        }
+        throw new UnsupportedOperationException(
+                "not a decimal vector: " + v.getMinorType());
+    }
+
     @SuppressWarnings({"rawtypes", "unchecked"})
     private static int compareObjects(Object a, Object b) {
         return ((Comparable) a).compareTo(b);
@@ -552,6 +633,8 @@ public class MiniDbAggregate extends Aggregate implements MiniDbRel {
             bv.setSafe(row, v);
         } else if (out instanceof IntVector iv) {
             iv.setSafe(row, (int) v);
+        } else if (out instanceof SmallIntVector sv) {
+            sv.setSafe(row, (short) v);
         } else {
             throw new UnsupportedOperationException(
                     "no long writer for " + out.getMinorType());
@@ -561,9 +644,24 @@ public class MiniDbAggregate extends Aggregate implements MiniDbRel {
     private static void writeDouble(FieldVector out, int row, double v) {
         if (out instanceof Float8Vector fv) {
             fv.setSafe(row, v);
+        } else if (out instanceof Float4Vector fv) {
+            fv.setSafe(row, (float) v);
         } else {
             throw new UnsupportedOperationException(
                     "no double writer for " + out.getMinorType());
+        }
+    }
+
+    private static void writeDecimal(FieldVector out, int row, BigDecimal v) {
+        if (out instanceof DecimalVector dv) {
+            // DecimalVector.set(BigDecimal) 要求 value 的 scale 与向量 scale 精确相等,
+            // 否则抛 UnsupportedOperationException(见 Arrow DecimalUtility.checkPrecisionAndScale)。
+            // AVG(DECIMAL) 的商通常不是有限小数,先按向量 scale HALF_UP 舍入再写,既满足
+            // Arrow 不变量又把非终止小数确定地落到输出 scale。
+            dv.setSafe(row, v.setScale(dv.getScale(), RoundingMode.HALF_UP));
+        } else {
+            throw new UnsupportedOperationException(
+                    "no decimal writer for " + out.getMinorType());
         }
     }
 
