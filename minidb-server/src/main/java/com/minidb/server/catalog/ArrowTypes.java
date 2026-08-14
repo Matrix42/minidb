@@ -278,16 +278,16 @@ public final class ArrowTypes {
                 sqlType = SqlTypeName.TIMESTAMP;
                 break;
             case BINARY:
-                sqlType = SqlTypeName.BINARY;
-                break;
             case VARBINARY:
+                // BINARY 与 VARBINARY 同为变长 Binary 存储(设计简化,落 VarBinaryVector);
+                // Calcite 侧统一映射为 VARBINARY,若映射 SqlTypeName.BINARY 会触发定长零填充
+                // 且其 CAST 路径对 VarBinaryVector 源抛异常。声明名靠 Arrow 元数据保真。
                 sqlType = SqlTypeName.VARBINARY;
                 break;
             default:
                 throw new IllegalArgumentException("unknown type: " + meta.type());
         }
-        if (sqlType == SqlTypeName.VARCHAR
-                || sqlType == SqlTypeName.BINARY || sqlType == SqlTypeName.VARBINARY) {
+        if (sqlType == SqlTypeName.VARCHAR || sqlType == SqlTypeName.VARBINARY) {
             return factory.createSqlType(sqlType, Integer.MAX_VALUE);
         }
         return factory.createSqlType(sqlType);
