@@ -133,6 +133,49 @@ class MetadataExecutorTest {
     }
 
     @Test
+    void columnsReportsNewTypesWithDecimalPrecisionAndScale() throws Exception {
+        try (RootAllocator alloc = new RootAllocator()) {
+            MiniDbCatalog cat = new MiniDbCatalog();
+            cat.createTable(new com.minidb.server.catalog.TableSchema("public", "t",
+                    java.util.List.of(
+                            new com.minidb.server.catalog.ColumnMeta("s", com.minidb.server.catalog.ColumnType.SMALLINT),
+                            new com.minidb.server.catalog.ColumnMeta("p", com.minidb.server.catalog.ColumnType.DECIMAL, 10, 2),
+                            new com.minidb.server.catalog.ColumnMeta("t", com.minidb.server.catalog.ColumnType.TIME),
+                            new com.minidb.server.catalog.ColumnMeta("b", com.minidb.server.catalog.ColumnType.VARBINARY))));
+            MetadataExecutor exec = new MetadataExecutor(cat, alloc);
+            try (VectorSchemaRoot root = exec.columns(null, null, null)) {
+                assertEquals(4, root.getRowCount());
+                VarCharVector col = (VarCharVector) root.getVector("COLUMN_NAME");
+                VarCharVector typeName = (VarCharVector) root.getVector("TYPE_NAME");
+                org.apache.arrow.vector.IntVector dataType =
+                        (org.apache.arrow.vector.IntVector) root.getVector("DATA_TYPE");
+                org.apache.arrow.vector.IntVector colSize =
+                        (org.apache.arrow.vector.IntVector) root.getVector("COLUMN_SIZE");
+                org.apache.arrow.vector.IntVector decDigits =
+                        (org.apache.arrow.vector.IntVector) root.getVector("DECIMAL_DIGITS");
+
+                assertEquals("s", new String(col.get(0)));
+                assertEquals("SMALLINT", new String(typeName.get(0)));
+                assertEquals(java.sql.Types.SMALLINT, dataType.get(0));
+
+                assertEquals("p", new String(col.get(1)));
+                assertEquals("DECIMAL", new String(typeName.get(1)));
+                assertEquals(java.sql.Types.DECIMAL, dataType.get(1));
+                assertEquals(10, colSize.get(1));
+                assertEquals(2, decDigits.get(1));
+
+                assertEquals("t", new String(col.get(2)));
+                assertEquals("TIME", new String(typeName.get(2)));
+                assertEquals(java.sql.Types.TIME, dataType.get(2));
+
+                assertEquals("b", new String(col.get(3)));
+                assertEquals("VARBINARY", new String(typeName.get(3)));
+                assertEquals(java.sql.Types.VARBINARY, dataType.get(3));
+            }
+        }
+    }
+
+    @Test
     void compileLikeMatchesSingleCharWildcard() {
         assertTrue(MetadataExecutor.compileLike("t_%").matcher("t1").matches(), "t1 should match t_%");
         assertTrue(MetadataExecutor.compileLike("t_%").matcher("t12").matches(), "t12 should match t_%");

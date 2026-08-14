@@ -197,9 +197,16 @@ public class MetadataExecutor {
             colName.setSafe(i, r.column().name().getBytes(java.nio.charset.StandardCharsets.UTF_8));
             dataType.setSafe(i, sqlType(r.column().type()));
             typeName.setSafe(i, ArrowTypes.toSqlTypeName(r.column().type()).getBytes(java.nio.charset.StandardCharsets.UTF_8));
-            colSize.setSafe(i, 0);
+            // DECIMAL/NUMERIC 报精度/小数位(JDBC COLUMN_SIZE/DECIMAL_DIGITS 语义),
+            // 其余类型恒 0(ColumnMeta.precision/scale 对非 decimal 类型恒 UNSET=-1)。
+            if (isDecimalType(r.column().type())) {
+                colSize.setSafe(i, Math.max(r.column().precision(), 0));
+                decDigits.setSafe(i, Math.max(r.column().scale(), 0));
+            } else {
+                colSize.setSafe(i, 0);
+                decDigits.setSafe(i, 0);
+            }
             bufLen.setSafe(i, 0);
-            decDigits.setSafe(i, 0);
             if (isIntegerType(r.column().type())) numPrecRadix.setSafe(i, 10);
             nullable.setSafe(i, 1); // columnNullable
             ordinal.setSafe(i, r.ordinal());
@@ -238,19 +245,33 @@ public class MetadataExecutor {
 
     private static int sqlType(ColumnType type) {
         return switch (type) {
+            case SMALLINT -> Types.SMALLINT;
             case INTEGER -> Types.INTEGER;
             case BIGINT -> Types.BIGINT;
+            case REAL, FLOAT -> Types.REAL;
             case DOUBLE -> Types.DOUBLE;
+            case DECIMAL, NUMERIC -> Types.DECIMAL;
             case VARCHAR -> Types.VARCHAR;
+            case CHAR -> Types.CHAR;
+            case NCHAR -> Types.NCHAR;
+            case NVARCHAR -> Types.NVARCHAR;
             case BOOLEAN -> Types.BOOLEAN;
             case DATE -> Types.DATE;
+            case TIME -> Types.TIME;
             case TIMESTAMP -> Types.TIMESTAMP;
-            default -> Types.OTHER;
+            case BINARY -> Types.BINARY;
+            case VARBINARY -> Types.VARBINARY;
         };
     }
 
     private static boolean isIntegerType(ColumnType type) {
-        return type == ColumnType.INTEGER || type == ColumnType.BIGINT;
+        return type == ColumnType.SMALLINT
+                || type == ColumnType.INTEGER
+                || type == ColumnType.BIGINT;
+    }
+
+    private static boolean isDecimalType(ColumnType type) {
+        return type == ColumnType.DECIMAL || type == ColumnType.NUMERIC;
     }
 
     static Pattern compileLike(String pattern) {
