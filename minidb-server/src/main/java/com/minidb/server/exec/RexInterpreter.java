@@ -37,6 +37,8 @@ import org.apache.calcite.rex.RexNode;
 import org.apache.calcite.sql.SqlKind;
 import org.apache.calcite.sql.fun.SqlTrimFunction;
 import org.apache.calcite.sql.type.SqlTypeName;
+import org.apache.calcite.util.DateString;
+import org.apache.calcite.util.TimestampString;
 
 public class RexInterpreter {
 
@@ -535,6 +537,21 @@ public class RexInterpreter {
                     out.setValueCount(rows);
                     return out;
                 }
+                case DATE: {
+                    DateDayVector out = new DateDayVector("cast", allocator);
+                    out.allocateNew(rows);
+                    for (int i = 0; i < rows; i++) {
+                        if (v.isNull(i)) {
+                            out.setNull(i);
+                        } else if (v instanceof DateDayVector ddv) {
+                            out.setSafe(i, ddv.get(i));
+                        } else {
+                            out.setSafe(i, new DateString(asString(v, i)).getDaysSinceEpoch());
+                        }
+                    }
+                    out.setValueCount(rows);
+                    return out;
+                }
                 case TIME: {
                     TimeMilliVector out = new TimeMilliVector("cast", allocator);
                     out.allocateNew(rows);
@@ -543,6 +560,21 @@ public class RexInterpreter {
                             out.setNull(i);
                         } else {
                             out.setSafe(i, (int) asLong(v, i));
+                        }
+                    }
+                    out.setValueCount(rows);
+                    return out;
+                }
+                case TIMESTAMP: {
+                    TimeStampMilliVector out = new TimeStampMilliVector("cast", allocator);
+                    out.allocateNew(rows);
+                    for (int i = 0; i < rows; i++) {
+                        if (v.isNull(i)) {
+                            out.setNull(i);
+                        } else if (v instanceof TimeStampMilliVector tsv) {
+                            out.setSafe(i, tsv.get(i));
+                        } else {
+                            out.setSafe(i, new TimestampString(asString(v, i)).getMillisSinceEpoch());
                         }
                     }
                     out.setValueCount(rows);
