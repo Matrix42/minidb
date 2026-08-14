@@ -20,11 +20,12 @@ class MetadataExecutorTest {
             cat.createSchema("alpha");
             MetadataExecutor exec = new MetadataExecutor(cat, alloc);
             try (VectorSchemaRoot root = exec.schemas(null)) {
-                assertEquals(3, root.getRowCount()); // alpha, beta, public
+                assertEquals(4, root.getRowCount()); // alpha, beta, information_schema, public
                 VarCharVector schem = (VarCharVector) root.getVector("TABLE_SCHEM");
                 assertEquals("alpha", new String(schem.get(0)));
                 assertEquals("beta", new String(schem.get(1)));
-                assertEquals("public", new String(schem.get(2)));
+                assertEquals("information_schema", new String(schem.get(2)));
+                assertEquals("public", new String(schem.get(3)));
                 assertTrue(root.getVector("TABLE_CATALOG").isNull(0));
             }
         }
@@ -58,16 +59,19 @@ class MetadataExecutorTest {
                     java.util.List.of(new com.minidb.server.catalog.ColumnMeta("a", com.minidb.server.catalog.ColumnType.BIGINT))));
             MetadataExecutor exec = new MetadataExecutor(cat, alloc);
             try (VectorSchemaRoot root = exec.tables(null, null, null)) {
-                assertEquals(2, root.getRowCount());
+                // information_schema(3 张系统表) + other/t + public/users
+                assertEquals(5, root.getRowCount());
                 VarCharVector name = (VarCharVector) root.getVector("TABLE_NAME");
                 VarCharVector schem = (VarCharVector) root.getVector("TABLE_SCHEM");
                 VarCharVector type = (VarCharVector) root.getVector("TABLE_TYPE");
-                // sorted by schema then table: other/t, public/users
-                assertEquals("t", new String(name.get(0)));
-                assertEquals("other", new String(schem.get(0)));
-                assertEquals("TABLE", new String(type.get(0)));
-                assertEquals("users", new String(name.get(1)));
-                assertEquals("public", new String(schem.get(1)));
+                // 前 3 行系统表,后 2 行用户表:sorted by schema then table
+                assertEquals("columns", new String(name.get(0)));
+                assertEquals("information_schema", new String(schem.get(0)));
+                assertEquals("t", new String(name.get(3)));
+                assertEquals("other", new String(schem.get(3)));
+                assertEquals("TABLE", new String(type.get(3)));
+                assertEquals("users", new String(name.get(4)));
+                assertEquals("public", new String(schem.get(4)));
             }
         }
     }
@@ -97,7 +101,7 @@ class MetadataExecutorTest {
                             new com.minidb.server.catalog.ColumnMeta("id", com.minidb.server.catalog.ColumnType.INTEGER),
                             new com.minidb.server.catalog.ColumnMeta("name", com.minidb.server.catalog.ColumnType.VARCHAR))));
             MetadataExecutor exec = new MetadataExecutor(cat, alloc);
-            try (VectorSchemaRoot root = exec.columns(null, null, null)) {
+            try (VectorSchemaRoot root = exec.columns("public", null, null)) {
                 assertEquals(2, root.getRowCount());
                 VarCharVector col = (VarCharVector) root.getVector("COLUMN_NAME");
                 VarCharVector typeName = (VarCharVector) root.getVector("TYPE_NAME");
@@ -124,7 +128,7 @@ class MetadataExecutorTest {
                             new com.minidb.server.catalog.ColumnMeta("id", com.minidb.server.catalog.ColumnType.INTEGER),
                             new com.minidb.server.catalog.ColumnMeta("username", com.minidb.server.catalog.ColumnType.VARCHAR))));
             MetadataExecutor exec = new MetadataExecutor(cat, alloc);
-            try (VectorSchemaRoot root = exec.columns(null, null, "%name%")) {
+            try (VectorSchemaRoot root = exec.columns("public", null, "%name%")) {
                 assertEquals(1, root.getRowCount());
                 VarCharVector col = (VarCharVector) root.getVector("COLUMN_NAME");
                 assertEquals("username", new String(col.get(0)));
@@ -143,7 +147,7 @@ class MetadataExecutorTest {
                             new com.minidb.server.catalog.ColumnMeta("t", com.minidb.server.catalog.ColumnType.TIME),
                             new com.minidb.server.catalog.ColumnMeta("b", com.minidb.server.catalog.ColumnType.VARBINARY))));
             MetadataExecutor exec = new MetadataExecutor(cat, alloc);
-            try (VectorSchemaRoot root = exec.columns(null, null, null)) {
+            try (VectorSchemaRoot root = exec.columns("public", null, null)) {
                 assertEquals(4, root.getRowCount());
                 VarCharVector col = (VarCharVector) root.getVector("COLUMN_NAME");
                 VarCharVector typeName = (VarCharVector) root.getVector("TYPE_NAME");

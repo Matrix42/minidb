@@ -88,6 +88,12 @@ class MiniDbCatalogSchemaTest {
     }
 
     @Test
+    void dropInformationSchemaThrows() {
+        MiniDbCatalog catalog = new MiniDbCatalog();
+        assertThrows(IllegalArgumentException.class, () -> catalog.dropSchema("information_schema"));
+    }
+
+    @Test
     void dropMissingSchemaThrows() {
         MiniDbCatalog catalog = new MiniDbCatalog();
         assertThrows(IllegalArgumentException.class, () -> catalog.dropSchema("ghost"));

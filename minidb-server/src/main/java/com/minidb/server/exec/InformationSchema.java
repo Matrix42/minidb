@@ -13,47 +13,13 @@ import org.apache.arrow.vector.IntVector;
 import org.apache.arrow.vector.VarCharVector;
 import org.apache.arrow.vector.VectorSchemaRoot;
 
-/** 只读 information_schema 系统表:从内存 MiniDbCatalog 物化 schemata/tables/columns。 */
+/**
+ * 只读 information_schema 系统表的行物化:从内存 MiniDbCatalog 物化 schemata/tables/columns。
+ * 表定义(schema 名 + 列)在 {@code catalog/InformationSchemaCatalog},这里只负责把行填进 Arrow 向量。
+ */
 public final class InformationSchema {
 
-    public static final String SCHEMA_NAME = "information_schema";
-
     private InformationSchema() {
-    }
-
-    public static boolean isSystemSchema(String name) {
-        return SCHEMA_NAME.equalsIgnoreCase(name);
-    }
-
-    public static TableSchema schemataSchema() {
-        return new TableSchema(SCHEMA_NAME, "schemata", List.of(
-                new ColumnMeta("CATALOG_NAME", ColumnType.VARCHAR),
-                new ColumnMeta("SCHEMA_NAME", ColumnType.VARCHAR),
-                new ColumnMeta("SCHEMA_OWNER", ColumnType.VARCHAR),
-                new ColumnMeta("DEFAULT_CHARACTER_SET_CATALOG", ColumnType.VARCHAR),
-                new ColumnMeta("DEFAULT_CHARACTER_SET_SCHEMA", ColumnType.VARCHAR),
-                new ColumnMeta("DEFAULT_CHARACTER_SET_NAME", ColumnType.VARCHAR),
-                new ColumnMeta("SQL_PATH", ColumnType.VARCHAR)));
-    }
-
-    public static TableSchema tablesSchema() {
-        return new TableSchema(SCHEMA_NAME, "tables", List.of(
-                new ColumnMeta("TABLE_CATALOG", ColumnType.VARCHAR),
-                new ColumnMeta("TABLE_SCHEMA", ColumnType.VARCHAR),
-                new ColumnMeta("TABLE_NAME", ColumnType.VARCHAR),
-                new ColumnMeta("TABLE_TYPE", ColumnType.VARCHAR)));
-    }
-
-    public static TableSchema columnsSchema() {
-        return new TableSchema(SCHEMA_NAME, "columns", List.of(
-                new ColumnMeta("TABLE_CATALOG", ColumnType.VARCHAR),
-                new ColumnMeta("TABLE_SCHEMA", ColumnType.VARCHAR),
-                new ColumnMeta("TABLE_NAME", ColumnType.VARCHAR),
-                new ColumnMeta("COLUMN_NAME", ColumnType.VARCHAR),
-                new ColumnMeta("ORDINAL_POSITION", ColumnType.INTEGER),
-                new ColumnMeta("DATA_TYPE", ColumnType.VARCHAR),
-                new ColumnMeta("NUMERIC_PRECISION", ColumnType.INTEGER),
-                new ColumnMeta("NUMERIC_SCALE", ColumnType.INTEGER)));
     }
 
     public static VectorSchemaRoot materialize(MiniDbCatalog catalog, String tableName,

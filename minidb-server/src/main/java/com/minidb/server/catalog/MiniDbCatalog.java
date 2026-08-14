@@ -16,6 +16,15 @@ public class MiniDbCatalog {
 
     public MiniDbCatalog() {
         schemas.put(DEFAULT_SCHEMA, new ConcurrentHashMap<>());
+        registerInformationSchema();
+    }
+
+    private void registerInformationSchema() {
+        Map<String, TableSchema> systemTables = new ConcurrentHashMap<>();
+        for (TableSchema table : InformationSchemaCatalog.tables()) {
+            systemTables.put(key(table.name()), table);
+        }
+        schemas.put(key(InformationSchemaCatalog.SCHEMA_NAME), systemTables);
     }
 
     public void createSchema(String name) {
@@ -30,6 +39,9 @@ public class MiniDbCatalog {
         String k = key(name);
         if (k.equals(DEFAULT_SCHEMA)) {
             throw new IllegalArgumentException("cannot drop default schema: " + name);
+        }
+        if (k.equals(key(InformationSchemaCatalog.SCHEMA_NAME))) {
+            throw new IllegalArgumentException("cannot drop system schema: " + name);
         }
         if (schemas.remove(k) == null) {
             throw new IllegalArgumentException("schema not found: " + name);
@@ -116,10 +128,19 @@ public class MiniDbCatalog {
 
     public CatalogSnapshot snapshot() {
         List<TableSchema> tables = new ArrayList<>();
-        for (Map<String, TableSchema> t : schemas.values()) {
-            tables.addAll(t.values());
+        for (Map.Entry<String, Map<String, TableSchema>> e : schemas.entrySet()) {
+            if (InformationSchemaCatalog.SCHEMA_NAME.equals(e.getKey())) {
+                continue;
+            }
+            tables.addAll(e.getValue().values());
         }
-        return new CatalogSnapshot(schemaNames(), tables);
+        List<String> names = new ArrayList<>();
+        for (String name : schemas.keySet()) {
+            if (!InformationSchemaCatalog.SCHEMA_NAME.equals(name)) {
+                names.add(name);
+            }
+        }
+        return new CatalogSnapshot(names, tables);
     }
 
     /** 批量恢复(启动时用),不触发 notifyChange —— 避免加载时把刚读到的文件写回。 */

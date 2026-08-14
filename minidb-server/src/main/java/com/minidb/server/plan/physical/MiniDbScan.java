@@ -1,5 +1,6 @@
 package com.minidb.server.plan.physical;
 
+import com.minidb.server.catalog.InformationSchemaCatalog;
 import com.minidb.server.exec.BatchIterator;
 import com.minidb.server.exec.ExecContext;
 import com.minidb.server.exec.InformationSchema;
@@ -40,7 +41,7 @@ public class MiniDbScan extends TableScan implements MiniDbRel {
         if (n >= 3) {
             String schemaName = qualified.get(n - 2);
             String tableName = qualified.get(n - 1);
-            if (InformationSchema.isSystemSchema(schemaName)) {
+            if (InformationSchemaCatalog.isSystemSchema(schemaName)) {
                 return singleBatch(InformationSchema.materialize(
                         ctx.storage().catalog(), tableName, ctx.allocator()));
             }

@@ -48,9 +48,11 @@ class InformationSchemaQueryTest {
         executor.execute("CREATE TABLE public.t (id INT, price DECIMAL(10,2))");
         QueryResult select = executor.execute("SELECT * FROM information_schema.tables");
         VectorSchemaRoot root = ((QueryResult.Rows) select).data();
-        assertEquals(1, root.getRowCount());
+        // information_schema 自身 3 张系统表 + public.t
+        assertEquals(4, root.getRowCount());
         VarCharVector tableName = (VarCharVector) root.getVector("TABLE_NAME");
-        assertEquals("t", new String(tableName.get(0)));
+        // public 是最后的 schema,t 是最后一行
+        assertEquals("t", new String(tableName.get(3)));
         root.close();
     }
 
@@ -58,6 +60,12 @@ class InformationSchemaQueryTest {
     void rejectsCreatingReservedSchema() {
         assertThrows(IllegalArgumentException.class,
                 () -> executor.execute("CREATE SCHEMA information_schema"));
+    }
+
+    @Test
+    void rejectsDroppingReservedSchema() {
+        assertThrows(IllegalArgumentException.class,
+                () -> executor.execute("DROP SCHEMA information_schema"));
     }
 
     @Test
@@ -81,11 +89,13 @@ class InformationSchemaQueryTest {
         executor.execute("CREATE SCHEMA other");
         QueryResult select = executor.execute("SELECT * FROM information_schema.schemata");
         VectorSchemaRoot root = ((QueryResult.Rows) select).data();
-        assertEquals(2, root.getRowCount());
+        // information_schema + other + public
+        assertEquals(3, root.getRowCount());
         VarCharVector schemaName = (VarCharVector) root.getVector("SCHEMA_NAME");
-        // schema 名按字典序:other < public
-        assertEquals("other", new String(schemaName.get(0)));
-        assertEquals("public", new String(schemaName.get(1)));
+        // schema 名按字典序:information_schema < other < public
+        assertEquals("information_schema", new String(schemaName.get(0)));
+        assertEquals("other", new String(schemaName.get(1)));
+        assertEquals("public", new String(schemaName.get(2)));
         root.close();
     }
 }

@@ -4,6 +4,7 @@ import com.minidb.server.calcite.CalciteContext;
 import com.minidb.server.catalog.ArrowTypes;
 import com.minidb.server.catalog.ColumnMeta;
 import com.minidb.server.catalog.ColumnType;
+import com.minidb.server.catalog.InformationSchemaCatalog;
 import com.minidb.server.catalog.MiniDbCatalog;
 import com.minidb.server.catalog.TableSchema;
 import com.minidb.server.plan.physical.MiniDbModify;
@@ -114,7 +115,7 @@ public class QueryExecutor {
 
     private QueryResult handleCreateSchema(SqlCreateSchema create) {
         String name = create.name.getSimple();
-        if (InformationSchema.SCHEMA_NAME.equalsIgnoreCase(name)) {
+        if (InformationSchemaCatalog.SCHEMA_NAME.equalsIgnoreCase(name)) {
             throw new IllegalArgumentException("reserved schema name: " + name);
         }
         if (create.ifNotExists
@@ -127,6 +128,9 @@ public class QueryExecutor {
 
     private QueryResult handleDropSchema(SqlDropSchema drop) {
         String name = drop.name.getSimple();
+        if (InformationSchemaCatalog.SCHEMA_NAME.equalsIgnoreCase(name)) {
+            throw new IllegalArgumentException("reserved schema name: " + name);
+        }
         if (drop.ifExists
                 && !catalog.schemaNames().contains(name.toLowerCase(Locale.ROOT))) {
             return new QueryResult.Update(0);
