@@ -1,5 +1,6 @@
 package com.minidb.server.catalog;
 
+import com.minidb.server.stats.TableStats;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Locale;
@@ -12,6 +13,7 @@ public class MiniDbCatalog {
     public static final String DEFAULT_SCHEMA = "public";
 
     private final Map<String, Map<String, TableSchema>> schemas = new ConcurrentHashMap<>();
+    private final Map<String, TableStats> stats = new ConcurrentHashMap<>();
     private final List<Runnable> listeners = new CopyOnWriteArrayList<>();
 
     public MiniDbCatalog() {
@@ -46,6 +48,7 @@ public class MiniDbCatalog {
         if (schemas.remove(k) == null) {
             throw new IllegalArgumentException("schema not found: " + name);
         }
+        stats.keySet().removeIf(key -> key.startsWith(k + "."));
         notifyChange();
     }
 
@@ -74,6 +77,7 @@ public class MiniDbCatalog {
         if (tables.remove(key(tableName)) == null) {
             throw new IllegalArgumentException("table not found: " + tableName);
         }
+        stats.remove(statsKey(schemaName, tableName));
         notifyChange();
     }
 
@@ -104,6 +108,28 @@ public class MiniDbCatalog {
             names.add(schema.name());
         }
         return names;
+    }
+
+    public TableStats getStats(String schemaName, String tableName) {
+        return stats.get(statsKey(schemaName, tableName));
+    }
+
+    public void setStats(String schemaName, String tableName, TableStats ts) {
+        stats.put(statsKey(schemaName, tableName), ts);
+        notifyChange();
+    }
+
+    public void markStatsStale(String schemaName, String tableName) {
+        String k = statsKey(schemaName, tableName);
+        TableStats ts = stats.get(k);
+        if (ts != null) {
+            stats.put(k, new TableStats(ts.columnHistograms(), ts.rowCount(), true));
+        }
+        // 不 notifyChange:避免每次 DML 都写 catalog.json(与旧 .stats 行为一致,stale 随重启丢)
+    }
+
+    private static String statsKey(String schemaName, String tableName) {
+        return key(schemaName) + "." + key(tableName);
     }
 
     public void dropTable(String name) {
@@ -140,7 +166,7 @@ public class MiniDbCatalog {
                 names.add(name);
             }
         }
-        return new CatalogSnapshot(names, tables);
+        return new CatalogSnapshot(names, tables, Map.copyOf(stats));
     }
 
     /** 批量恢复(启动时用),不触发 notifyChange —— 避免加载时把刚读到的文件写回。 */
@@ -152,6 +178,9 @@ public class MiniDbCatalog {
             String sk = key(table.schemaName());
             Map<String, TableSchema> t = schemas.computeIfAbsent(sk, k -> new ConcurrentHashMap<>());
             t.putIfAbsent(key(table.name()), table);
+        }
+        for (var e : snapshot.stats().entrySet()) {
+            stats.put(e.getKey(), e.getValue());
         }
     }
 
