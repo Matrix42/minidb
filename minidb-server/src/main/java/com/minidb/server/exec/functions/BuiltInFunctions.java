@@ -322,6 +322,12 @@ public final class BuiltInFunctions {
         ScalarKernels.FloatBinary floatOp = floatKernel(op);
         ScalarKernels.DoubleBinary doubleOp = doubleKernel(op);
         ScalarKernels.DecimalBinary decimalOp = decimalKernel(op);
+        // 跨族(整型/浮点/定点)混合算术:Calcite 对 +-*/ 不插 CAST,直接把混型操作数交给
+        // 执行引擎(与比较相反,比较会插 CAST 到同型),故这里按「结果取更宽类型」补重载。
+        Kernel doubleMixed = (args, out) -> fillDoubleMixed(
+                args.get(0), args.get(1), (Float8Vector) out, doubleOp);
+        Kernel decimalMixed = (args, out) -> fillDecimalMixed(
+                args.get(0), args.get(1), (DecimalVector) out, decimalOp);
         return new Function(op.getName(), List.of(
                 new Overload(List.of(SmallIntVector.class, SmallIntVector.class), SmallIntVector.class,
                         (args, out) -> Kernels.fillBinaryShort(
@@ -349,7 +355,85 @@ public final class BuiltInFunctions {
                                 (IntVector) args.get(0), (BigIntVector) args.get(1), (BigIntVector) out, longOp)),
                 new Overload(List.of(BigIntVector.class, IntVector.class), BigIntVector.class,
                         (args, out) -> fillLongIntBinary(
-                                (BigIntVector) args.get(0), (IntVector) args.get(1), (BigIntVector) out, longOp))));
+                                (BigIntVector) args.get(0), (IntVector) args.get(1), (BigIntVector) out, longOp)),
+                // 整型 × DOUBLE → DOUBLE
+                new Overload(List.of(SmallIntVector.class, Float8Vector.class), Float8Vector.class, doubleMixed),
+                new Overload(List.of(Float8Vector.class, SmallIntVector.class), Float8Vector.class, doubleMixed),
+                new Overload(List.of(IntVector.class, Float8Vector.class), Float8Vector.class, doubleMixed),
+                new Overload(List.of(Float8Vector.class, IntVector.class), Float8Vector.class, doubleMixed),
+                new Overload(List.of(BigIntVector.class, Float8Vector.class), Float8Vector.class, doubleMixed),
+                new Overload(List.of(Float8Vector.class, BigIntVector.class), Float8Vector.class, doubleMixed),
+                // FLOAT × DOUBLE → DOUBLE
+                new Overload(List.of(Float4Vector.class, Float8Vector.class), Float8Vector.class, doubleMixed),
+                new Overload(List.of(Float8Vector.class, Float4Vector.class), Float8Vector.class, doubleMixed),
+                // DOUBLE × DECIMAL → DOUBLE
+                new Overload(List.of(Float8Vector.class, DecimalVector.class), Float8Vector.class, doubleMixed),
+                new Overload(List.of(DecimalVector.class, Float8Vector.class), Float8Vector.class, doubleMixed),
+                // 整型 × DECIMAL → DECIMAL
+                new Overload(List.of(SmallIntVector.class, DecimalVector.class), DecimalVector.class, decimalMixed),
+                new Overload(List.of(DecimalVector.class, SmallIntVector.class), DecimalVector.class, decimalMixed),
+                new Overload(List.of(IntVector.class, DecimalVector.class), DecimalVector.class, decimalMixed),
+                new Overload(List.of(DecimalVector.class, IntVector.class), DecimalVector.class, decimalMixed),
+                new Overload(List.of(BigIntVector.class, DecimalVector.class), DecimalVector.class, decimalMixed),
+                new Overload(List.of(DecimalVector.class, BigIntVector.class), DecimalVector.class, decimalMixed)));
+    }
+
+    /** 跨族混合算术:两侧都读成 double,结果写 Float8Vector(结果类型为 DOUBLE)。 */
+    private static void fillDoubleMixed(ValueVector left, ValueVector right, Float8Vector out,
+                                        ScalarKernels.DoubleBinary op) {
+        for (int i = 0; i < left.getValueCount(); i++) {
+            if (left.isNull(i) || right.isNull(i)) { out.setNull(i); continue; }
+            out.setSafe(i, op.apply(toDouble(left, i), toDouble(right, i)));
+        }
+    }
+
+    /** 跨族混合算术:两侧都读成 BigDecimal,结果写 DecimalVector(结果类型为 DECIMAL)。 */
+    private static void fillDecimalMixed(ValueVector left, ValueVector right, DecimalVector out,
+                                         ScalarKernels.DecimalBinary op) {
+        for (int i = 0; i < left.getValueCount(); i++) {
+            if (left.isNull(i) || right.isNull(i)) { out.setNull(i); continue; }
+            out.setSafe(i, Kernels.scaleTo(out, op.apply(toBigDecimal(left, i), toBigDecimal(right, i))));
+        }
+    }
+
+    /** 从任意数值向量第 i 行读 double(供跨族混合算术的结果 DOUBLE 分支)。 */
+    private static double toDouble(ValueVector v, int i) {
+        if (v instanceof Float8Vector f) {
+            return f.get(i);
+        }
+        if (v instanceof Float4Vector f) {
+            return f.get(i);
+        }
+        if (v instanceof IntVector iv) {
+            return iv.get(i);
+        }
+        if (v instanceof BigIntVector bv) {
+            return bv.get(i);
+        }
+        if (v instanceof SmallIntVector sv) {
+            return sv.get(i);
+        }
+        if (v instanceof DecimalVector dv) {
+            return dv.getObject(i).doubleValue();
+        }
+        throw new IllegalArgumentException("not a numeric vector: " + v.getClass());
+    }
+
+    /** 从整型/定点向量第 i 行读 BigDecimal(供跨族混合算术的结果 DECIMAL 分支)。 */
+    private static BigDecimal toBigDecimal(ValueVector v, int i) {
+        if (v instanceof DecimalVector dv) {
+            return dv.getObject(i);
+        }
+        if (v instanceof IntVector iv) {
+            return BigDecimal.valueOf(iv.get(i));
+        }
+        if (v instanceof BigIntVector bv) {
+            return BigDecimal.valueOf(bv.get(i));
+        }
+        if (v instanceof SmallIntVector sv) {
+            return BigDecimal.valueOf(sv.get(i));
+        }
+        throw new IllegalArgumentException("not an integral/decimal vector: " + v.getClass());
     }
 
     private static ScalarKernels.ShortBinary shortKernel(SqlOperator op) {
