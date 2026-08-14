@@ -26,6 +26,7 @@ import org.apache.arrow.vector.VarBinaryVector;
 import org.apache.arrow.vector.VarCharVector;
 import org.apache.arrow.vector.VectorSchemaRoot;
 import org.apache.arrow.vector.types.pojo.Field;
+import org.apache.calcite.avatica.util.ByteString;
 import org.apache.calcite.plan.RelOptCluster;
 import org.apache.calcite.plan.RelTraitSet;
 import org.apache.calcite.rel.RelNode;
@@ -133,11 +134,15 @@ public class MiniDbValues extends Values implements MiniDbRel {
         }
     }
 
-    /** BINARY/VARBINARY 字面量的字节值:Calcite 不同版本可能存 byte[] 或 BitString,两者都兼容。 */
+    /** BINARY/VARBINARY 字面量的字节值:Calcite 1.42 把 `X'...'`/`B'...'` 存为 ByteString,
+     * 旧版本可能存 byte[] 或 BitString,三者都兼容。 */
     private static byte[] literalBytes(RexLiteral literal) {
         Object raw = literal.getValue();
         if (raw instanceof byte[] bytes) {
             return bytes;
+        }
+        if (raw instanceof ByteString byteString) {
+            return byteString.getBytes();
         }
         if (raw instanceof BitString bitString) {
             return bitString.getAsByteArray();

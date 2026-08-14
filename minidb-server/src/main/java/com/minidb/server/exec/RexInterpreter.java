@@ -662,11 +662,15 @@ public class RexInterpreter {
         return out;
     }
 
-    /** BINARY/VARBINARY 字面量的字节值:Calcite 不同版本可能存 byte[] 或 BitString,两者都兼容。 */
+    /** BINARY/VARBINARY 字面量的字节值:Calcite 1.42 把 `X'...'`/`B'...'` 存为 ByteString,
+     * 旧版本可能存 byte[] 或 BitString,三者都兼容。 */
     private static byte[] literalBytes(RexLiteral literal) {
         Object raw = literal.getValue();
         if (raw instanceof byte[] bytes) {
             return bytes;
+        }
+        if (raw instanceof org.apache.calcite.avatica.util.ByteString byteString) {
+            return byteString.getBytes();
         }
         if (raw instanceof org.apache.calcite.util.BitString bitString) {
             return bitString.getAsByteArray();
