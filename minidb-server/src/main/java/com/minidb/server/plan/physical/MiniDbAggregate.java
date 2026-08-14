@@ -394,7 +394,7 @@ public class MiniDbAggregate extends Aggregate implements MiniDbRel {
     private static final class SumAcc implements Accumulator {
         private final NumericDomain domain;
         private long lsum;
-        private BigDecimal dsum = BigDecimal.ZERO;
+        private BigDecimal decimalSum = BigDecimal.ZERO;
         private double fsum;
         private boolean has;
 
@@ -413,7 +413,7 @@ public class MiniDbAggregate extends Aggregate implements MiniDbRel {
                     lsum += readLong(v, row);
                     break;
                 case DECIMAL:
-                    dsum = dsum.add(readDecimal(v, row));
+                    decimalSum = decimalSum.add(readDecimal(v, row));
                     break;
                 case FLOATING:
                     fsum += readDouble(v, row);
@@ -432,7 +432,7 @@ public class MiniDbAggregate extends Aggregate implements MiniDbRel {
                     writeLong(out, row, lsum);
                     break;
                 case DECIMAL:
-                    writeDecimal(out, row, dsum);
+                    writeDecimal(out, row, decimalSum);
                     break;
                 case FLOATING:
                     writeDouble(out, row, fsum);
@@ -444,7 +444,7 @@ public class MiniDbAggregate extends Aggregate implements MiniDbRel {
     private static final class AvgAcc implements Accumulator {
         private final NumericDomain domain;
         private long lsum;
-        private BigDecimal dsum = BigDecimal.ZERO;
+        private BigDecimal decimalSum = BigDecimal.ZERO;
         private double fsum;
         private long cnt;
 
@@ -462,7 +462,7 @@ public class MiniDbAggregate extends Aggregate implements MiniDbRel {
                     lsum += readLong(v, row);
                     break;
                 case DECIMAL:
-                    dsum = dsum.add(readDecimal(v, row));
+                    decimalSum = decimalSum.add(readDecimal(v, row));
                     break;
                 case FLOATING:
                     fsum += readDouble(v, row);
@@ -485,7 +485,7 @@ public class MiniDbAggregate extends Aggregate implements MiniDbRel {
                     // AVG(DECIMAL) 输出仍是 DECIMAL;除到足够精度后由 writeDecimal
                     // 按输出向量 scale 舍入(见 writeDecimal 注释)。
                     writeDecimal(out, row,
-                            dsum.divide(BigDecimal.valueOf(cnt), MathContext.DECIMAL128));
+                            decimalSum.divide(BigDecimal.valueOf(cnt), MathContext.DECIMAL128));
                     break;
                 case FLOATING:
                     writeDouble(out, row, fsum / cnt);
@@ -544,6 +544,9 @@ public class MiniDbAggregate extends Aggregate implements MiniDbRel {
                 "not an integral vector: " + v.getMinorType());
     }
 
+    /** Reads a FLOATING-domain value. Only REAL/FLOAT/DOUBLE reach this method
+     *  (INTEGRAL and DECIMAL aggregates use readLong/readDecimal instead), so
+     *  Float4/Float8 are the only possible vector types. */
     private static double readDouble(ValueVector v, int row) {
         if (v instanceof Float8Vector fv) {
             return fv.get(row);
@@ -551,17 +554,8 @@ public class MiniDbAggregate extends Aggregate implements MiniDbRel {
         if (v instanceof Float4Vector fv) {
             return fv.get(row);
         }
-        if (v instanceof IntVector iv) {
-            return iv.get(row);
-        }
-        if (v instanceof BigIntVector bv) {
-            return bv.get(row);
-        }
-        if (v instanceof SmallIntVector sv) {
-            return sv.get(row);
-        }
         throw new UnsupportedOperationException(
-                "not a numeric vector: " + v.getMinorType());
+                "not a floating-point vector: " + v.getMinorType());
     }
 
     private static BigDecimal readDecimal(ValueVector v, int row) {

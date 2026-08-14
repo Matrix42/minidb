@@ -64,6 +64,7 @@ SMALLINT、INTEGER、BIGINT、REAL、FLOAT、DOUBLE、DECIMAL、NUMERIC、VARCHA
 
 - DECIMAL/NUMERIC 为 128 位定点(BigDecimal),支持 precision/scale(默认 10/0);Calcite 将 NUMERIC 归一为 DECIMAL(两者等价)。
 - CHAR/NCHAR/NVARCHAR 变长存储,不做定长空格填充(简化)。
+- NCHAR 暂不能经 SQL DDL 创建(Calcite 解析器将 NCHAR 视为保留字,不在类型名语法内);程序化建表与元数据保真已通。
 - 限制:BINARY/VARBINARY 参与 JOIN/聚合/窗口/去重时结果未定义(byte[] 无值语义);TIME 无算术,仅比较与 CAST。
 
 ## 限制
