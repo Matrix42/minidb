@@ -53,8 +53,7 @@ class DataTypeIntegrationTest {
         allocator = new RootAllocator();
         catalog = new MiniDbCatalog();
         storage = new StorageManager(catalog, allocator, dataDir);
-        stats = new StatsManager(storage, allocator, dataDir);
-        storage.setStatsManager(stats);
+        stats = new StatsManager(storage);
         executor = new QueryExecutor(catalog, storage, allocator, stats);
     }
 

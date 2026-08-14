@@ -30,8 +30,7 @@ class ExistsSubqueryTest {
         allocator = new RootAllocator();
         catalog = new MiniDbCatalog();
         storage = new StorageManager(catalog, allocator, dataDir);
-        stats = new StatsManager(storage, allocator, dataDir);
-        storage.setStatsManager(stats);
+        stats = new StatsManager(storage);
         executor = new QueryExecutor(catalog, storage, allocator, stats);
         executor.execute("CREATE TABLE a (id INTEGER, name VARCHAR)");
         executor.execute("CREATE TABLE b (id INTEGER, aid INTEGER)");

@@ -34,8 +34,7 @@ class CollationJoinTest {
         try (BufferAllocator allocator = new RootAllocator()) {
             MiniDbCatalog catalog = new MiniDbCatalog();
             StorageManager storage = new StorageManager(catalog, allocator, dataDir);
-            StatsManager stats = new StatsManager(storage, allocator, dataDir);
-            storage.setStatsManager(stats);
+            StatsManager stats = new StatsManager(storage);
             QueryExecutor executor = new QueryExecutor(catalog, storage, allocator, stats);
             try {
                 executor.execute("CREATE TABLE a (id INTEGER, name VARCHAR)");

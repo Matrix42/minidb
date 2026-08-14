@@ -38,8 +38,7 @@ class ExplainExecutorTest {
         allocator = new RootAllocator();
         catalog = new MiniDbCatalog();
         storage = new StorageManager(catalog, allocator, dataDir);
-        stats = new StatsManager(storage, allocator, dataDir);
-        storage.setStatsManager(stats);
+        stats = new StatsManager(storage);
         planner = new Planner(catalog);
         explain = new ExplainExecutor(planner, stats, storage, allocator);
 

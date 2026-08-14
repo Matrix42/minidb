@@ -5,7 +5,6 @@ import com.minidb.server.catalog.ColumnMeta;
 import com.minidb.server.catalog.ColumnType;
 import com.minidb.server.catalog.MiniDbCatalog;
 import com.minidb.server.catalog.TableSchema;
-import com.minidb.server.stats.StatsManager;
 import java.io.IOException;
 import java.io.UncheckedIOException;
 import java.nio.channels.SeekableByteChannel;
@@ -42,7 +41,6 @@ public class StorageManager implements AutoCloseable {
     private final CatalogStore catalogStore;
     private final Map<String, ArrowTable> tables = new ConcurrentHashMap<>();
     private final Set<String> dirty = ConcurrentHashMap.newKeySet();
-    private volatile StatsManager statsManager;
 
     public StorageManager(MiniDbCatalog catalog, BufferAllocator allocator, Path dataDir) {
         this.catalog = catalog;
@@ -58,10 +56,6 @@ public class StorageManager implements AutoCloseable {
         } catch (IOException e) {
             throw new UncheckedIOException("failed to persist catalog", e);
         }
-    }
-
-    public void setStatsManager(StatsManager statsManager) {
-        this.statsManager = statsManager;
     }
 
     public MiniDbCatalog catalog() {
@@ -169,9 +163,6 @@ public class StorageManager implements AutoCloseable {
         if (table == null) {
             throw new IllegalArgumentException("table not found: " + tableName);
         }
-        if (statsManager != null) {
-            statsManager.dropStats(sk);
-        }
         catalog.dropTable(schemaName, tableName);
         table.close();
         dirty.remove(sk);
@@ -199,9 +190,6 @@ public class StorageManager implements AutoCloseable {
             ArrowTable table = tables.remove(k);
             if (table != null) {
                 table.close();
-            }
-            if (statsManager != null) {
-                statsManager.dropStats(k);
             }
             dirty.remove(k);
         }
@@ -236,9 +224,7 @@ public class StorageManager implements AutoCloseable {
     public void markDirty(String schemaName, String tableName) {
         String sk = storageKey(schemaName, tableName);
         dirty.add(sk);
-        if (statsManager != null) {
-            statsManager.markStale(sk);
-        }
+        catalog.markStatsStale(schemaName, tableName);
     }
 
     public void markDirty(String tableName) {

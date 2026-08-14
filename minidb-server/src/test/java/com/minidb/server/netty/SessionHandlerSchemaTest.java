@@ -21,8 +21,7 @@ class SessionHandlerSchemaTest {
         MiniDbCatalog catalog = new MiniDbCatalog();
         RootAllocator allocator = new RootAllocator();
         StorageManager storage = new StorageManager(catalog, allocator, dir);
-        StatsManager stats = new StatsManager(storage, allocator, dir);
-        storage.setStatsManager(stats);
+        StatsManager stats = new StatsManager(storage);
         QueryExecutor executor = new QueryExecutor(catalog, storage, allocator, stats);
         EmbeddedChannel ch = new EmbeddedChannel(
                 new SessionHandler(executor, new MetadataExecutor(catalog, allocator)));
@@ -49,8 +48,7 @@ class SessionHandlerSchemaTest {
         MiniDbCatalog catalog = new MiniDbCatalog();
         RootAllocator allocator = new RootAllocator();
         StorageManager storage = new StorageManager(catalog, allocator, dir);
-        StatsManager stats = new StatsManager(storage, allocator, dir);
-        storage.setStatsManager(stats);
+        StatsManager stats = new StatsManager(storage);
         QueryExecutor executor = new QueryExecutor(catalog, storage, allocator, stats);
         EmbeddedChannel ch = new EmbeddedChannel(
                 new SessionHandler(executor, new MetadataExecutor(catalog, allocator)));

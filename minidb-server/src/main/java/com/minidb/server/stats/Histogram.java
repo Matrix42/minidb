@@ -1,7 +1,6 @@
 package com.minidb.server.stats;
 
 import com.minidb.server.catalog.ColumnType;
-import java.io.Serializable;
 import java.math.BigDecimal;
 import java.util.List;
 import java.util.Objects;
@@ -20,9 +19,8 @@ import org.apache.calcite.sql.SqlKind;
  * JSON. The column's {@link ColumnType} tells {@link #histValue} how to parse
  * those strings back into comparable values for selectivity estimation.
  *
- * <p>Still {@link Serializable} because {@link StatsManager} currently
- * persists {@link TableStats} via Java serialization; JSON persistence is a
- * later phase.
+ * <p>Statistics are persisted as JSON (Jackson) via {@link TableStats}; Java
+ * serialization is no longer used.
  */
 public record Histogram(
         ColumnType type,
@@ -30,20 +28,14 @@ public record Histogram(
         List<McValue> mcv,
         long distinctCount,
         long nullCount,
-        long totalRows) implements Serializable {
-
-    private static final long serialVersionUID = 1L;
+        long totalRows) {
 
     public static final double DEFAULT_SELECTIVITY = 0.33;
 
-    public record Bucket(String lower, String upper, long rowCount)
-            implements Serializable {
-        private static final long serialVersionUID = 1L;
+    public record Bucket(String lower, String upper, long rowCount) {
     }
 
-    public record McValue(String value, long frequency)
-            implements Serializable {
-        private static final long serialVersionUID = 1L;
+    public record McValue(String value, long frequency) {
     }
 
     public Histogram {

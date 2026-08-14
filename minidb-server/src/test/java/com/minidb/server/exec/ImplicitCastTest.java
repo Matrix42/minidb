@@ -34,8 +34,7 @@ class ImplicitCastTest {
         allocator = new RootAllocator();
         catalog = new MiniDbCatalog();
         storage = new StorageManager(catalog, allocator, dataDir);
-        stats = new StatsManager(storage, allocator, dataDir);
-        storage.setStatsManager(stats);
+        stats = new StatsManager(storage);
         executor = new QueryExecutor(catalog, storage, allocator, stats);
         executor.execute("CREATE TABLE t (i INTEGER, b BIGINT, d DOUBLE)");
         executor.execute("INSERT INTO t VALUES (5, 100, 2.5), (NULL, NULL, NULL)");
