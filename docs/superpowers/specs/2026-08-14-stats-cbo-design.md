@@ -63,13 +63,17 @@
 
 > 包依赖:`CatalogSnapshot`(catalog 包)引用 `TableStats`(stats 包)会形成 `catalog↔stats` 包循环(现已有 `stats→catalog`)。接受 Java 包级循环,或后续把 `TableStats`/`Histogram` 移到 `stats` 之外。本次不做大挪动。
 
-### ② 接入 getStatistic()
+### ② 接入统计到 Calcite 成本模型
 
-- `MiniDbCalciteTable` 构造改为 `(TableSchema schema, MiniDbCatalog catalog)`,新增 `getStatistic()` 惰性读 `catalog.getStats(schema.schemaName(), schema.name())`:
-  - 无统计或 `stale` → `Statistics.UNKNOWN`。
-  - 有 → `Statistics.of((double) tableStats.rowCount(), List.of())`(暂无主键,keys 为空;collation/distribution 为 null)。
-- `MiniDbRootCalciteSchema`/`MiniDbCalciteSchema.getTableMap()` 传 `catalog` 进去;`information_schema` 系统表无统计,返回 UNKNOWN。
-- 效果:`RelMetadataQuery.getRowCount(TableScan)` 由「未知」变真实行数,`RelMdRowCount`/`RelMdSelectivity`/`RelMdDistinctRowCount` 链路打通,为阶段二的 CBO 提供行数。
+Calcite 的 `Statistic` 接口**只承载 `rowCount`(和 keys/collations)**,列级 distinct/null/直方图走另一套扩展点:`RelOptTable.unwrap(BuiltInMetadata.*.Handler.class)`。所以 `MiniDbCalciteTable` 要同时接三条,直方图信息才能全部用起来:
+
+1. **rowCount** → 覆写 `getStatistic()` 返回 `Statistics.of(rowCount, List.of())`(无统计或 stale → `Statistics.UNKNOWN`)。驱动 `RelMdRowCount`(表/join/filter/aggregate 的行数)。
+2. **distinctCount** → `MiniDbCalciteTable implements BuiltInMetadata.DistinctRowCount.Handler`,实现 `getDistinctRowCount(RelNode, mq, groupKey, predicate)`:`groupKey` 是单列时返回该列 `Histogram.distinctCount()`,否则 null。驱动 join 基数(`≈ left × right / max(distinct(leftKey), distinct(rightKey))`)、聚合/group-by 去重估算——**这是 join 重排序最关键的信息**。
+3. **buckets + mcv + nullCount** → `MiniDbCalciteTable implements BuiltInMetadata.Selectivity.Handler`,实现 `getSelectivity(RelNode, mq, predicate)`:定位 `predicate` 里第一个 `RexInputRef` 对应列,调 `Histogram.selectivity(predicate, totalRows)`(把 `ExplainExecutor.filterSelectivity`/`histogramForCondition` 抽成公共方法复用)。驱动 filter 基数(`rows × selectivity`)。
+
+`MiniDbCalciteTable` 构造改为 `(TableSchema schema, MiniDbCatalog catalog)`,`getStatistic()` 和两个 Handler 都惰性读 `catalog.getStats(schema.schemaName(), schema.name())`;`AbstractTable` 默认 `unwrap` 已按 `isInstance` 返回 this,无需额外实现。`information_schema` 系统表无统计,各接口返回 null/UNKNOWN。
+
+效果:`RelMetadataQuery.getRowCount` / `getDistinctRowCount` / `getSelectivity` 对表扫描都拿到真实值,`RelMdRowCount`/`RelMdSelectivity`/`RelMdDistinctRowCount` 整条链打通,为阶段二 CBO 提供行数、基数、选择率。
 
 ### 阶段一验证
 
