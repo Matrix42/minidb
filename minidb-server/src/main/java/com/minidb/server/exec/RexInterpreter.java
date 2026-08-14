@@ -5,11 +5,13 @@ import com.minidb.server.exec.functions.BuiltInFunctions;
 import com.minidb.server.exec.functions.Function;
 import com.minidb.server.exec.functions.FunctionRegistry;
 import com.minidb.server.exec.functions.Kernels;
+import com.minidb.server.plan.physical.RowVectors;
 import java.math.BigDecimal;
 import java.nio.charset.StandardCharsets;
 import java.util.ArrayList;
 import java.util.Calendar;
 import java.util.List;
+import java.util.Objects;
 import java.util.concurrent.TimeUnit;
 import org.apache.arrow.memory.BufferAllocator;
 import org.apache.arrow.vector.BigIntVector;
@@ -82,6 +84,18 @@ public class RexInterpreter {
                 return nullTest(call.getOperands().get(0), input, true);
             case IS_NOT_NULL:
                 return nullTest(call.getOperands().get(0), input, false);
+            case IS_NOT_DISTINCT_FROM:
+                return nullSafeComparison(call.getOperands().get(0), call.getOperands().get(1), input, true);
+            case IS_DISTINCT_FROM:
+                return nullSafeComparison(call.getOperands().get(0), call.getOperands().get(1), input, false);
+            case IS_TRUE:
+                return booleanTest(call.getOperands().get(0), input, true, false);
+            case IS_NOT_TRUE:
+                return booleanTest(call.getOperands().get(0), input, true, true);
+            case IS_FALSE:
+                return booleanTest(call.getOperands().get(0), input, false, false);
+            case IS_NOT_FALSE:
+                return booleanTest(call.getOperands().get(0), input, false, true);
             default: {
                 List<ValueVector> args = new ArrayList<>();
                 for (RexNode operand : call.getOperands()) {
@@ -242,6 +256,75 @@ public class RexInterpreter {
             for (int i = 0; i < rows; i++) {
                 boolean nullResult = isNull ? v.isNull(i) : !v.isNull(i);
                 out.setSafe(i, nullResult ? 1 : 0);
+            }
+            out.setValueCount(rows);
+            return out;
+        } finally {
+            v.close();
+        }
+    }
+
+    /**
+     * IS NOT DISTINCT FROM / IS DISTINCT FROM:null-safe 等值比较(非 STRICT)。两侧都为 null →
+     * 结果取决于 isNotDistinct;仅一侧 null → 取反;都非 null → 按值判等。类型无关:用
+     * RowVectors.readObject 读盒装值 + Objects.equals 判等。去相关后的标量子查询(相关键的
+     * null-safe 等值 join)由 RelDecorrelator 直接产出 IS NOT DISTINCT FROM。
+     */
+    private ValueVector nullSafeComparison(RexNode left, RexNode right,
+                                           VectorSchemaRoot input, boolean isNotDistinct) {
+        int rows = input.getRowCount();
+        ValueVector l = eval(left, input);
+        ValueVector r = eval(right, input);
+        try {
+            BitVector out = new BitVector(
+                    isNotDistinct ? "is_not_distinct_from" : "is_distinct_from", allocator);
+            out.allocateNew(rows);
+            for (int i = 0; i < rows; i++) {
+                boolean lNull = l.isNull(i);
+                boolean rNull = r.isNull(i);
+                boolean result;
+                if (lNull && rNull) {
+                    result = isNotDistinct;
+                } else if (lNull || rNull) {
+                    result = !isNotDistinct;
+                } else {
+                    boolean eq = Objects.equals(
+                            RowVectors.readObject(l, i), RowVectors.readObject(r, i));
+                    result = isNotDistinct ? eq : !eq;
+                }
+                out.setSafe(i, result ? 1 : 0);
+            }
+            out.setValueCount(rows);
+            return out;
+        } finally {
+            l.close();
+            r.close();
+        }
+    }
+
+    /**
+     * IS TRUE / IS NOT TRUE / IS FALSE / IS NOT FALSE:非 STRICT 布尔谓词。Calcite 把
+     * `x IS NOT DISTINCT FROM y` 解析期改写为 `IS TRUE(x = y)`(IS DISTINCT FROM 改写为
+     * `IS NOT TRUE(x = y)`),故直接 WHERE 里的 null-safe 比较走这里,而非 nullSafeComparison。
+     * null 操作数按「被测值的反面」处理(IS TRUE/IS FALSE 中 null → false;IS NOT TRUE/IS NOT FALSE
+     * 中 null → true)。
+     */
+    private ValueVector booleanTest(RexNode operand, VectorSchemaRoot input,
+                                    boolean testTrue, boolean negate) {
+        int rows = input.getRowCount();
+        ValueVector v = eval(operand, input);
+        try {
+            BitVector out = new BitVector("boolean_test", allocator);
+            out.allocateNew(rows);
+            for (int i = 0; i < rows; i++) {
+                boolean result;
+                if (v.isNull(i)) {
+                    result = negate;
+                } else {
+                    boolean bitMatches = (((BitVector) v).get(i) == 1) == testTrue;
+                    result = negate ? !bitMatches : bitMatches;
+                }
+                out.setSafe(i, result ? 1 : 0);
             }
             out.setValueCount(rows);
             return out;
