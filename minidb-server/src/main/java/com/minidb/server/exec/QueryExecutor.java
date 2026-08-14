@@ -114,6 +114,9 @@ public class QueryExecutor {
 
     private QueryResult handleCreateSchema(SqlCreateSchema create) {
         String name = create.name.getSimple();
+        if (InformationSchema.SCHEMA_NAME.equalsIgnoreCase(name)) {
+            throw new IllegalArgumentException("reserved schema name: " + name);
+        }
         if (create.ifNotExists
                 && catalog.schemaNames().contains(name.toLowerCase(Locale.ROOT))) {
             return new QueryResult.Update(0);

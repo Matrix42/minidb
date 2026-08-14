@@ -2,6 +2,7 @@ package com.minidb.server.plan.physical;
 
 import com.minidb.server.exec.BatchIterator;
 import com.minidb.server.exec.ExecContext;
+import com.minidb.server.exec.InformationSchema;
 import com.minidb.server.storage.ArrowTable;
 import java.util.Iterator;
 import java.util.List;
@@ -37,8 +38,14 @@ public class MiniDbScan extends TableScan implements MiniDbRel {
         }
         ArrowTable arrowTable;
         if (n >= 3) {
+            String schemaName = qualified.get(n - 2);
+            String tableName = qualified.get(n - 1);
+            if (InformationSchema.isSystemSchema(schemaName)) {
+                return singleBatch(InformationSchema.materialize(
+                        ctx.storage().catalog(), tableName, ctx.allocator()));
+            }
             // qualified name like [minidb, other, t] — schema is second-to-last
-            arrowTable = ctx.getTable(qualified.get(n - 2), qualified.get(n - 1));
+            arrowTable = ctx.getTable(schemaName, tableName);
         } else {
             // promoted table like [minidb, t] — resolve via current schema
             arrowTable = ctx.getTable(qualified.get(n - 1));
@@ -65,6 +72,10 @@ public class MiniDbScan extends TableScan implements MiniDbRel {
     private BatchIterator transientScan(List<Object[]> rows, ExecContext ctx) {
         VectorSchemaRoot root =
                 RowVectors.buildRoot(rows, table.getRowType(), ctx.allocator());
+        return singleBatch(root);
+    }
+
+    private BatchIterator singleBatch(VectorSchemaRoot root) {
         boolean[] done = {false};
         return new BatchIterator() {
             @Override
