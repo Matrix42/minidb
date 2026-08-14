@@ -122,12 +122,14 @@ public class MiniDbResultSetMetaData implements ResultSetMetaData {
 
     @Override
     public int getPrecision(int column) {
-        return 0;
+        ArrowType type = root.getFieldVectors().get(column - 1).getField().getType();
+        return type instanceof ArrowType.Decimal decimal ? decimal.getPrecision() : 0;
     }
 
     @Override
     public int getScale(int column) {
-        return 0;
+        ArrowType type = root.getFieldVectors().get(column - 1).getField().getType();
+        return type instanceof ArrowType.Decimal decimal ? decimal.getScale() : 0;
     }
 
     @Override

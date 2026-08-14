@@ -124,4 +124,15 @@ class MiniDbResultSetMetaDataTest {
             assertArrayEquals(new byte[]{1, 2, 3}, (byte[]) rs.getObject(5));
         }
     }
+
+    @Test
+    void precisionAndScaleReportDecimalMetadata() throws Exception {
+        try (VectorSchemaRoot root = newRoot()) {
+            MiniDbResultSetMetaData md = new MiniDbResultSetMetaData(root);
+            assertEquals(10, md.getPrecision(3)); // c_decimal DECIMAL(10,2)
+            assertEquals(2, md.getScale(3));
+            assertEquals(0, md.getPrecision(1)); // SMALLINT → 0
+            assertEquals(0, md.getScale(1));
+        }
+    }
 }
