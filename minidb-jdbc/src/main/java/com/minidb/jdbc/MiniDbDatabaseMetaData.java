@@ -1,11 +1,14 @@
 package com.minidb.jdbc;
 
+import java.nio.charset.StandardCharsets;
 import java.sql.Connection;
 import java.sql.DatabaseMetaData;
 import java.sql.ResultSet;
 import java.sql.RowIdLifetime;
 import java.sql.SQLException;
 import java.sql.SQLFeatureNotSupportedException;
+import org.apache.arrow.vector.VarCharVector;
+import org.apache.arrow.vector.VectorSchemaRoot;
 
 public class MiniDbDatabaseMetaData implements DatabaseMetaData {
 
@@ -657,7 +660,14 @@ public class MiniDbDatabaseMetaData implements DatabaseMetaData {
 
     @Override
     public ResultSet getTableTypes() throws SQLException {
-        throw new SQLFeatureNotSupportedException();
+        // MiniDB 只有基表(无视图/系统表类型区分),TABLE_TYPE 恒为 "TABLE"。
+        MiniDbStatement stmt = (MiniDbStatement) connection.createStatement();
+        VarCharVector tableType =
+                new VarCharVector("TABLE_TYPE", connection.client().allocator());
+        tableType.allocateNew();
+        tableType.setSafe(0, "TABLE".getBytes(StandardCharsets.UTF_8));
+        tableType.setValueCount(1);
+        return new MiniDbResultSet(stmt, VectorSchemaRoot.of(tableType));
     }
 
     @Override

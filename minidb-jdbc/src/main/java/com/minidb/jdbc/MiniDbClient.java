@@ -71,6 +71,11 @@ public class MiniDbClient implements AutoCloseable {
         return connected;
     }
 
+    /** Shared allocator for client-built result sets (e.g. getTableTypes). */
+    BufferAllocator allocator() {
+        return allocator;
+    }
+
     public void connect(String host, int port) throws SQLException {
         CompletableFuture<Void> handshake = new CompletableFuture<>();
         try {

@@ -97,6 +97,24 @@ class DatabaseMetaDataTest {
     }
 
     @Test
+    void getTableTypesListsTable() throws Exception {
+        Path dataDir = Files.createTempDirectory("minidb-meta");
+        MiniDbServer server = new MiniDbServer();
+        server.start(0, dataDir);
+        String url = "jdbc:minidb://127.0.0.1:" + server.port();
+        try (Connection c = DriverManager.getConnection(url)) {
+            DatabaseMetaData md = c.getMetaData();
+            try (ResultSet rs = md.getTableTypes()) {
+                assertTrue(rs.next());
+                assertEquals("TABLE", rs.getString("TABLE_TYPE"));
+                assertFalse(rs.next());
+            }
+        } finally {
+            server.close();
+        }
+    }
+
+    @Test
     void getColumnsFilterByLikeColumnName() throws Exception {
         Path dataDir = Files.createTempDirectory("minidb-meta");
         MiniDbServer server = new MiniDbServer();
