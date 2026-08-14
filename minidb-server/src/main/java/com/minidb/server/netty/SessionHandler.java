@@ -36,11 +36,16 @@ public class SessionHandler extends SimpleChannelInboundHandler<Message> {
         } else if (msg instanceof Message.ExecuteRequest req) {
             handleExecute(ctx, req);
         } else if (msg instanceof Message.SchemasRequest req) {
+            LOG.info("metadata schemas: schemaPattern='{}'", req.schemaPattern());
             handleMetadata(ctx, req.requestId(), () -> metadata.schemas(req.schemaPattern()));
         } else if (msg instanceof Message.TablesRequest req) {
+            LOG.info("metadata tables: schemaPattern='{}', tableNamePattern='{}'",
+                    req.schemaPattern(), req.tableNamePattern());
             handleMetadata(ctx, req.requestId(), () -> metadata.tables(
                     req.schemaPattern(), req.tableNamePattern(), req.types()));
         } else if (msg instanceof Message.ColumnsRequest req) {
+            LOG.info("metadata columns: schemaPattern='{}', tableNamePattern='{}', columnNamePattern='{}'",
+                    req.schemaPattern(), req.tableNamePattern(), req.columnNamePattern());
             handleMetadata(ctx, req.requestId(), () -> metadata.columns(
                     req.schemaPattern(), req.tableNamePattern(), req.columnNamePattern()));
         } else if (msg instanceof Message.CloseRequest) {
