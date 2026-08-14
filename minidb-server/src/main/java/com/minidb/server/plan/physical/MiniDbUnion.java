@@ -12,11 +12,16 @@ import java.util.Set;
 import org.apache.arrow.vector.BigIntVector;
 import org.apache.arrow.vector.BitVector;
 import org.apache.arrow.vector.DateDayVector;
+import org.apache.arrow.vector.DecimalVector;
 import org.apache.arrow.vector.FieldVector;
+import org.apache.arrow.vector.Float4Vector;
 import org.apache.arrow.vector.Float8Vector;
 import org.apache.arrow.vector.IntVector;
+import org.apache.arrow.vector.SmallIntVector;
+import org.apache.arrow.vector.TimeMilliVector;
 import org.apache.arrow.vector.TimeStampMilliVector;
 import org.apache.arrow.vector.ValueVector;
+import org.apache.arrow.vector.VarBinaryVector;
 import org.apache.arrow.vector.VarCharVector;
 import org.apache.arrow.vector.VectorSchemaRoot;
 import org.apache.calcite.plan.RelOptCluster;
@@ -131,14 +136,23 @@ public class MiniDbUnion extends Union implements MiniDbRel {
         if (v.isNull(row)) {
             return null;
         }
+        if (v instanceof SmallIntVector sv) {
+            return sv.get(row);
+        }
         if (v instanceof IntVector iv) {
             return iv.get(row);
         }
         if (v instanceof BigIntVector bv) {
             return bv.get(row);
         }
+        if (v instanceof Float4Vector fv) {
+            return fv.get(row);
+        }
         if (v instanceof Float8Vector fv) {
             return fv.get(row);
+        }
+        if (v instanceof DecimalVector dv) {
+            return dv.getObject(row);
         }
         if (v instanceof VarCharVector vv) {
             return new String(vv.get(row), StandardCharsets.UTF_8);
@@ -149,8 +163,14 @@ public class MiniDbUnion extends Union implements MiniDbRel {
         if (v instanceof DateDayVector dv) {
             return dv.get(row);
         }
+        if (v instanceof TimeMilliVector tv) {
+            return tv.get(row);
+        }
         if (v instanceof TimeStampMilliVector tv) {
             return tv.get(row);
+        }
+        if (v instanceof VarBinaryVector bv) {
+            return bv.get(row);
         }
         throw new UnsupportedOperationException(
                 "cannot deduplicate column type: " + v.getMinorType());

@@ -3,6 +3,7 @@ package com.minidb.server.plan.physical;
 import com.minidb.server.catalog.ArrowTypes;
 import com.minidb.server.exec.BatchIterator;
 import com.minidb.server.exec.ExecContext;
+import java.math.BigDecimal;
 import java.nio.charset.StandardCharsets;
 import java.util.ArrayList;
 import java.util.List;
@@ -10,11 +11,16 @@ import org.apache.arrow.memory.BufferAllocator;
 import org.apache.arrow.vector.BigIntVector;
 import org.apache.arrow.vector.BitVector;
 import org.apache.arrow.vector.DateDayVector;
+import org.apache.arrow.vector.DecimalVector;
 import org.apache.arrow.vector.FieldVector;
+import org.apache.arrow.vector.Float4Vector;
 import org.apache.arrow.vector.Float8Vector;
 import org.apache.arrow.vector.IntVector;
+import org.apache.arrow.vector.SmallIntVector;
+import org.apache.arrow.vector.TimeMilliVector;
 import org.apache.arrow.vector.TimeStampMilliVector;
 import org.apache.arrow.vector.ValueVector;
+import org.apache.arrow.vector.VarBinaryVector;
 import org.apache.arrow.vector.VarCharVector;
 import org.apache.arrow.vector.VectorSchemaRoot;
 import org.apache.calcite.rel.RelNode;
@@ -59,14 +65,23 @@ public final class RowVectors {
         if (vector.isNull(row)) {
             return null;
         }
+        if (vector instanceof SmallIntVector sv) {
+            return sv.get(row);
+        }
         if (vector instanceof IntVector iv) {
             return iv.get(row);
         }
         if (vector instanceof BigIntVector bv) {
             return bv.get(row);
         }
+        if (vector instanceof Float4Vector fv) {
+            return fv.get(row);
+        }
         if (vector instanceof Float8Vector fv) {
             return fv.get(row);
+        }
+        if (vector instanceof DecimalVector dv) {
+            return dv.getObject(row);
         }
         if (vector instanceof VarCharVector vv) {
             return new String(vv.get(row), StandardCharsets.UTF_8);
@@ -77,8 +92,14 @@ public final class RowVectors {
         if (vector instanceof DateDayVector dv) {
             return dv.get(row);
         }
+        if (vector instanceof TimeMilliVector tv) {
+            return tv.get(row);
+        }
         if (vector instanceof TimeStampMilliVector tv) {
             return tv.get(row);
+        }
+        if (vector instanceof VarBinaryVector bv) {
+            return bv.get(row);
         }
         throw new UnsupportedOperationException(
                 "cannot read column type: " + vector.getMinorType());
@@ -90,20 +111,30 @@ public final class RowVectors {
             vector.setNull(row);
             return;
         }
-        if (vector instanceof IntVector iv) {
+        if (vector instanceof SmallIntVector sv) {
+            sv.setSafe(row, ((Number) value).shortValue());
+        } else if (vector instanceof IntVector iv) {
             iv.setSafe(row, ((Number) value).intValue());
         } else if (vector instanceof BigIntVector bv) {
             bv.setSafe(row, ((Number) value).longValue());
+        } else if (vector instanceof Float4Vector fv) {
+            fv.setSafe(row, ((Number) value).floatValue());
         } else if (vector instanceof Float8Vector fv) {
             fv.setSafe(row, ((Number) value).doubleValue());
+        } else if (vector instanceof DecimalVector dv) {
+            dv.setSafe(row, (BigDecimal) value);
         } else if (vector instanceof VarCharVector vv) {
             vv.setSafe(row, value.toString().getBytes(StandardCharsets.UTF_8));
         } else if (vector instanceof BitVector bv) {
             bv.setSafe(row, ((Number) value).intValue());
         } else if (vector instanceof DateDayVector dv) {
             dv.setSafe(row, ((Number) value).intValue());
+        } else if (vector instanceof TimeMilliVector tv) {
+            tv.setSafe(row, ((Number) value).intValue());
         } else if (vector instanceof TimeStampMilliVector tv) {
             tv.setSafe(row, ((Number) value).longValue());
+        } else if (vector instanceof VarBinaryVector bv) {
+            bv.setSafe(row, (byte[]) value);
         } else {
             throw new UnsupportedOperationException(
                     "cannot write value to " + vector.getMinorType());
