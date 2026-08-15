@@ -1,5 +1,6 @@
 package com.minidb.server.calcite;
 
+import com.minidb.parser.impl.MiniDbSqlParserImpl;
 import com.minidb.server.catalog.MiniDbCatalog;
 import java.util.List;
 import java.util.Locale;
@@ -23,7 +24,6 @@ import org.apache.calcite.sql.fun.SqlLibrary;
 import org.apache.calcite.sql.fun.SqlLibraryOperatorTableFactory;
 import org.apache.calcite.sql.parser.SqlParseException;
 import org.apache.calcite.sql.parser.SqlParser;
-import org.apache.calcite.sql.parser.ddl.SqlDdlParserImpl;
 import org.apache.calcite.sql.type.SqlTypeFactoryImpl;
 import org.apache.calcite.sql.validate.SqlValidator;
 import org.apache.calcite.sql.validate.SqlValidatorUtil;
@@ -42,7 +42,7 @@ public class CalciteContext {
     public CalciteContext(MiniDbCatalog catalog) {
         this.catalog = catalog;
         this.parserConfig = SqlParser.config()
-                .withParserFactory(SqlDdlParserImpl.FACTORY)
+                .withParserFactory(MiniDbSqlParserImpl.FACTORY)
                 .withLex(Lex.MYSQL)
                 .withQuoting(Quoting.DOUBLE_QUOTE)
                 .withUnquotedCasing(Casing.UNCHANGED)

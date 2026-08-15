@@ -12,6 +12,10 @@
   <dependencies>
     <dependency>
       <groupId>com.minidb</groupId>
+      <artifactId>minidb-parser</artifactId>
+    </dependency>
+    <dependency>
+      <groupId>com.minidb</groupId>
       <artifactId>minidb-protocol</artifactId>
     </dependency>
     <dependency>

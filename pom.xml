@@ -9,6 +9,7 @@
   <packaging>pom</packaging>
 
   <modules>
+    <module>minidb-parser</module>
     <module>minidb-protocol</module>
     <module>minidb-server</module>
     <module>minidb-jdbc</module>
@@ -80,6 +81,11 @@
         <artifactId>log4j-slf4j2-impl</artifactId>
         <version>${log4j.version}</version>
         <scope>runtime</scope>
+      </dependency>
+      <dependency>
+        <groupId>com.minidb</groupId>
+        <artifactId>minidb-parser</artifactId>
+        <version>${project.version}</version>
       </dependency>
       <dependency>
         <groupId>com.minidb</groupId>
