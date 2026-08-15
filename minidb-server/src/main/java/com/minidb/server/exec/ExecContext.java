@@ -57,14 +57,6 @@ public class ExecContext {
         return storage.getTable(schemaName, tableName);
     }
 
-    public void markDirty(String schemaName, String tableName) {
-        storage.markDirty(schemaName, tableName);
-    }
-
-    public void markDirty(String tableName) {
-        storage.markDirty(currentSchema, tableName);
-    }
-
     /**
      * Resolve a bare table name against the current schema. Used by EXPLAIN
      * paths that only have a bare name from {@code TableScan.getQualifiedName()}

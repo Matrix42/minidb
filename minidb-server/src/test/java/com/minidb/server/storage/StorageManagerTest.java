@@ -4,8 +4,10 @@ import com.minidb.server.catalog.ColumnMeta;
 import com.minidb.server.catalog.ColumnType;
 import com.minidb.server.catalog.MiniDbCatalog;
 import com.minidb.server.catalog.TableSchema;
+import com.minidb.server.exec.BatchIterator;
 import java.nio.file.Files;
 import java.nio.file.Path;
+import java.util.ArrayList;
 import java.util.List;
 import org.apache.arrow.memory.BufferAllocator;
 import org.apache.arrow.memory.RootAllocator;
@@ -27,23 +29,40 @@ class StorageManagerTest {
                 new ColumnMeta("name", ColumnType.VARCHAR)));
     }
 
+    private void writeRow(ArrowTable table, int id, String name) {
+        VectorSchemaRoot batch = table.newBatchRoot();
+        batch.allocateNew();
+        ((IntVector) batch.getVector("id")).setSafe(0, id);
+        ((VarCharVector) batch.getVector("name")).setSafe(0, name.getBytes());
+        batch.setRowCount(1);
+        table.writePart(batch);
+        batch.close();
+    }
+
+    private List<Integer> readIds(ArrowTable table) {
+        List<Integer> ids = new ArrayList<>();
+        try (BatchIterator it = table.scan()) {
+            while (it.hasNext()) {
+                IntVector v = (IntVector) it.next().getVector("id");
+                for (int i = 0; i < v.getValueCount(); i++) {
+                    ids.add(v.get(i));
+                }
+            }
+        }
+        return ids;
+    }
+
     @Test
-    void createFlushReloadKeepsData(@TempDir Path dir) throws Exception {
+    void writeReloadKeepsData(@TempDir Path dir) {
         MiniDbCatalog catalog = new MiniDbCatalog();
         try (BufferAllocator allocator = new RootAllocator()) {
             StorageManager storage = new StorageManager(catalog, allocator, dir);
             ArrowTable table = storage.createTable(schema());
-            VectorSchemaRoot batch = table.newBatchRoot();
-            batch.allocateNew();
-            ((IntVector) batch.getVector("id")).setSafe(0, 7);
-            ((VarCharVector) batch.getVector("name")).setSafe(0, "hello".getBytes());
-            batch.setRowCount(1);
-            table.appendBatch(batch);
-            storage.markDirty("public", "t");
+            writeRow(table, 7, "hello");
             storage.close();
         }
 
-        assertTrue(Files.exists(dir.resolve("public").resolve("t.arrow")));
+        assertTrue(Files.exists(dir.resolve("public").resolve("t")));
 
         MiniDbCatalog catalog2 = new MiniDbCatalog();
         try (BufferAllocator allocator = new RootAllocator()) {
@@ -51,26 +70,21 @@ class StorageManagerTest {
             storage2.loadAll();
             ArrowTable reloaded = storage2.getTable("public", "t");
             assertEquals(1, reloaded.rowCount());
-            IntVector ids = (IntVector) reloaded.batches().get(0).getVector("id");
-            assertEquals(7, ids.get(0));
-            VarCharVector names =
-                    (VarCharVector) reloaded.batches().get(0).getVector("name");
-            assertEquals("hello", new String(names.get(0)));
+            assertEquals(List.of(7), readIds(reloaded));
             storage2.close();
         }
     }
 
     @Test
-    void dropTableDeletesFile(@TempDir Path dir) {
+    void dropTableDeletesDir(@TempDir Path dir) {
         MiniDbCatalog catalog = new MiniDbCatalog();
         try (BufferAllocator allocator = new RootAllocator()) {
             StorageManager storage = new StorageManager(catalog, allocator, dir);
-            storage.createTable(schema());
-            storage.markDirty("public", "t");
-            storage.flushDirty();
-            assertTrue(Files.exists(dir.resolve("public").resolve("t.arrow")));
+            ArrowTable table = storage.createTable(schema());
+            writeRow(table, 1, "a");
+            assertTrue(Files.exists(dir.resolve("public").resolve("t")));
             storage.dropTable("public", "t");
-            assertFalse(Files.exists(dir.resolve("public").resolve("t.arrow")));
+            assertFalse(Files.exists(dir.resolve("public").resolve("t")));
             storage.close();
         }
     }
@@ -81,14 +95,8 @@ class StorageManagerTest {
         try (BufferAllocator allocator = new RootAllocator()) {
             StorageManager storage = new StorageManager(catalog, allocator, dir);
             ArrowTable table = storage.createTable(schema());
-            VectorSchemaRoot batch = table.newBatchRoot();
-            batch.allocateNew();
-            ((IntVector) batch.getVector("id")).setSafe(0, 7);
-            ((VarCharVector) batch.getVector("name")).setSafe(0, "hello".getBytes());
-            batch.setRowCount(1);
-            table.appendBatch(batch);
+            writeRow(table, 7, "hello");
             storage.truncateTable("public", "t");
-            storage.markDirty("public", "t");
             storage.close();
         }
 
@@ -98,7 +106,6 @@ class StorageManagerTest {
             storage2.loadAll();
             ArrowTable reloaded = storage2.getTable("public", "t");
             assertEquals(0, reloaded.rowCount());
-            // schema intact: a fresh batch still carries both columns
             VectorSchemaRoot fresh = reloaded.newBatchRoot();
             fresh.allocateNew();
             assertEquals(2, fresh.getFieldVectors().size());
@@ -126,7 +133,7 @@ class StorageManagerTest {
             storage.createTable(new TableSchema("t", List.of(
                     new ColumnMeta("id", ColumnType.INTEGER),
                     new ColumnMeta("price", ColumnType.DECIMAL, 10, 2))));
-            // 不插任何行 → 无 .arrow 文件,但 catalog.json 应已落盘
+            // 不插任何行 → 无 part 文件,但 catalog.json 应已落盘
             storage.close();
         }
         assertTrue(Files.exists(dir.resolve("catalog.json")));
@@ -157,7 +164,6 @@ class StorageManagerTest {
         try (BufferAllocator allocator = new RootAllocator()) {
             StorageManager storage = new StorageManager(catalog, allocator, dir);
             storage.createTable(schema);
-            storage.markDirty("public", "t");
             storage.close();
         }
         MiniDbCatalog catalog2 = new MiniDbCatalog();

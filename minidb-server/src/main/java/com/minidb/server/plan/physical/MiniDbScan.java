@@ -51,23 +51,8 @@ public class MiniDbScan extends TableScan implements MiniDbRel {
             // promoted table like [minidb, t] — resolve via current schema
             arrowTable = ctx.getTable(qualified.get(n - 1));
         }
-        Iterator<VectorSchemaRoot> it = arrowTable.batches().iterator();
-        return new BatchIterator() {
-            @Override
-            public boolean hasNext() {
-                return it.hasNext();
-            }
-
-            @Override
-            public VectorSchemaRoot next() {
-                return it.next();
-            }
-
-            @Override
-            public void close() {
-                // batches are owned by the table
-            }
-        };
+        // 递归读表目录下所有 part 文件,逐个返回 batch(batch 归迭代器,用完释放)。
+        return arrowTable.scan();
     }
 
     private BatchIterator transientScan(List<Object[]> rows, ExecContext ctx) {

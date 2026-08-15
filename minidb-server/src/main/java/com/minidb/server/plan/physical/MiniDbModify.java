@@ -54,21 +54,20 @@ public class MiniDbModify extends TableModify implements MiniDbRel {
         // size>=3: [minidb, other, t] → schema is second-to-last.
         // size==2: [minidb, t] (promoted table) → bare name resolves via ctx's
         // current schema.
-        String schemaName = n >= 3 ? qualified.get(n - 2) : null;
-        ArrowTable target = schemaName != null
-                ? ctx.getTable(schemaName, tableName)
-                : ctx.getTable(tableName);
+        String schemaName = n >= 3 ? qualified.get(n - 2) : ctx.currentSchema();
+        ArrowTable target = ctx.getTable(schemaName, tableName);
         BatchIterator input = ((MiniDbRel) getInput()).execute(ctx);
         if (getOperation() == Operation.INSERT) {
-            appendRows(ctx, target, input, schemaName, tableName);
+            appendRows(ctx, target, input);
         } else {
-            rewriteTable(ctx, target, input, schemaName, tableName);
+            rewriteTable(ctx, target, input);
         }
+        // 写数据直接落盘,顺带标记统计过期。
+        ctx.storage().catalog().markStatsStale(schemaName, tableName);
         return BatchIterator.empty();
     }
 
-    private void appendRows(ExecContext ctx, ArrowTable target, BatchIterator input,
-                            String schemaName, String tableName) {
+    private void appendRows(ExecContext ctx, ArrowTable target, BatchIterator input) {
         affected = 0;
         try {
             while (input.hasNext()) {
@@ -83,15 +82,11 @@ public class MiniDbModify extends TableModify implements MiniDbRel {
                 }
                 copy.setRowCount(batch.getRowCount());
                 affected += batch.getRowCount();
-                target.appendBatch(copy);
+                target.writePart(copy); // 直接落盘成一个新 part
+                copy.close();
             }
         } finally {
             input.close();
-        }
-        if (schemaName != null) {
-            ctx.markDirty(schemaName, tableName);
-        } else {
-            ctx.markDirty(tableName);
         }
     }
 
@@ -129,11 +124,14 @@ public class MiniDbModify extends TableModify implements MiniDbRel {
             List<Integer> childIdx = columnIndexes(target.schema(), fk.columns());
             List<Integer> refIdx = columnIndexes(refTable.schema(), refColumns);
             Set<List<Object>> refKeys = new HashSet<>();
-            for (VectorSchemaRoot b : refTable.batches()) {
-                for (int i = 0; i < b.getRowCount(); i++) {
-                    List<Object> key = keyOf(b, i, refIdx);
-                    if (key != null) {
-                        refKeys.add(key);
+            try (BatchIterator it = refTable.scan()) {
+                while (it.hasNext()) {
+                    VectorSchemaRoot b = it.next();
+                    for (int i = 0; i < b.getRowCount(); i++) {
+                        List<Object> key = keyOf(b, i, refIdx);
+                        if (key != null) {
+                            refKeys.add(key);
+                        }
                     }
                 }
             }
@@ -190,13 +188,16 @@ public class MiniDbModify extends TableModify implements MiniDbRel {
                     }
                     ArrowTable childTable = ctx.getTable(schemaName, tableName);
                     List<Integer> childIdx = columnIndexes(childSchema, fk.columns());
-                    for (VectorSchemaRoot b : childTable.batches()) {
-                        for (int i = 0; i < b.getRowCount(); i++) {
-                            List<Object> key = keyOf(b, i, childIdx);
-                            if (key != null && deletedKeys.contains(key)) {
-                                throw new IllegalArgumentException(
-                                        "foreign key violation: row still referenced by "
-                                                + schemaName + "." + tableName);
+                    try (BatchIterator it = childTable.scan()) {
+                        while (it.hasNext()) {
+                            VectorSchemaRoot b = it.next();
+                            for (int i = 0; i < b.getRowCount(); i++) {
+                                List<Object> key = keyOf(b, i, childIdx);
+                                if (key != null && deletedKeys.contains(key)) {
+                                    throw new IllegalArgumentException(
+                                            "foreign key violation: row still referenced by "
+                                                    + schemaName + "." + tableName);
+                                }
                             }
                         }
                     }
@@ -213,11 +214,14 @@ public class MiniDbModify extends TableModify implements MiniDbRel {
             idxs.add(target.schema().columnIndex(column));
         }
         Set<List<Object>> existing = new HashSet<>();
-        for (VectorSchemaRoot b : target.batches()) {
-            for (int i = 0; i < b.getRowCount(); i++) {
-                List<Object> key = keyOf(b, i, idxs);
-                if (key != null) {
-                    existing.add(key);
+        try (BatchIterator it = target.scan()) {
+            while (it.hasNext()) {
+                VectorSchemaRoot b = it.next();
+                for (int i = 0; i < b.getRowCount(); i++) {
+                    List<Object> key = keyOf(b, i, idxs);
+                    if (key != null) {
+                        existing.add(key);
+                    }
                 }
             }
         }
@@ -244,16 +248,13 @@ public class MiniDbModify extends TableModify implements MiniDbRel {
 
     /**
      * UPDATE and DELETE must remove the matched rows from the table; the input
-     * only produces the matched rows, so we rebuild the table content, keeping
-     * unmatched rows and replacing (UPDATE) or dropping (DELETE) matched ones.
+     * only produces the matched rows, so we read all parts, keep unmatched rows
+     * and replace (UPDATE) or drop (DELETE) matched ones, then rewrite the parts.
      */
-    private void rewriteTable(ExecContext ctx, ArrowTable target, BatchIterator input,
-                              String schemaName, String tableName) {
+    private void rewriteTable(ExecContext ctx, ArrowTable target, BatchIterator input) {
         int numTableCols = target.schema().columns().size();
         List<String> updateCols = getOperation() == Operation.UPDATE
                 ? getUpdateColumnList() : List.of();
-        // Materialize the matched rows into a root we own, then close the input
-        // (its batches belong to the operators and the table scan).
         VectorSchemaRoot matched = materializeInput(input, ctx);
         input.close();
         if (matched == null || matched.getRowCount() == 0) {
@@ -277,55 +278,55 @@ public class MiniDbModify extends TableModify implements MiniDbRel {
         for (int i = 0; i < matched.getRowCount(); i++) {
             matchRow.putIfAbsent(rowKey(matched, i, numTableCols), i);
         }
-        List<VectorSchemaRoot> oldBatches = target.batches();
+        // 读所有 part,rebuild 成新 part。
         List<VectorSchemaRoot> newBatches = new ArrayList<>();
         affected = 0;
-        for (VectorSchemaRoot old : oldBatches) {
-            VectorSchemaRoot nb = target.newBatchRoot();
-            nb.allocateNew();
-            int kept = 0;
-            for (int i = 0; i < old.getRowCount(); i++) {
-                Integer srcRow = matchRow.get(rowKey(old, i, numTableCols));
-                if (srcRow == null) {
-                    RowCopier.copyRow(old, i, nb, kept);
+        try (BatchIterator it = target.scan()) {
+            while (it.hasNext()) {
+                VectorSchemaRoot old = it.next();
+                VectorSchemaRoot nb = target.newBatchRoot();
+                nb.allocateNew();
+                int kept = 0;
+                for (int i = 0; i < old.getRowCount(); i++) {
+                    Integer srcRow = matchRow.get(rowKey(old, i, numTableCols));
+                    if (srcRow == null) {
+                        RowCopier.copyRow(old, i, nb, kept);
+                        kept++;
+                        continue;
+                    }
+                    affected++;
+                    if (getOperation() == Operation.DELETE) {
+                        continue; // matched row is removed
+                    }
+                    // UPDATE: copy the original table columns, then overwrite the
+                    // updated ones with the trailing source values from the input.
+                    for (int j = 0; j < numTableCols; j++) {
+                        nb.getFieldVectors().get(j)
+                                .copyFromSafe(srcRow, kept, matched.getFieldVectors().get(j));
+                    }
+                    for (int j = 0; j < updateCols.size(); j++) {
+                        int colIndex = target.schema().columnIndex(updateCols.get(j));
+                        RowCopier.writeValue(
+                                nb.getFieldVectors().get(colIndex), kept,
+                                matched.getFieldVectors().get(numTableCols + j), srcRow);
+                    }
                     kept++;
-                    continue;
                 }
-                affected++;
-                if (getOperation() == Operation.DELETE) {
-                    continue; // matched row is removed
+                if (kept > 0) {
+                    nb.setRowCount(kept);
+                    newBatches.add(nb);
+                } else {
+                    nb.close();
                 }
-                // UPDATE: copy the original table columns, then overwrite the
-                // updated ones with the trailing source values from the input.
-                for (int j = 0; j < numTableCols; j++) {
-                    nb.getFieldVectors().get(j)
-                            .copyFromSafe(srcRow, kept, matched.getFieldVectors().get(j));
-                }
-                for (int j = 0; j < updateCols.size(); j++) {
-                    int colIndex = target.schema().columnIndex(updateCols.get(j));
-                    RowCopier.writeValue(
-                            nb.getFieldVectors().get(colIndex), kept,
-                            matched.getFieldVectors().get(numTableCols + j), srcRow);
-                }
-                kept++;
-            }
-            if (kept > 0) {
-                nb.setRowCount(kept);
-                newBatches.add(nb);
-            } else {
-                nb.close();
             }
         }
-        target.replaceBatches(newBatches);
-        for (VectorSchemaRoot old : oldBatches) {
-            old.close();
+        // 删旧 part,写新 part。
+        target.clearParts();
+        for (VectorSchemaRoot nb : newBatches) {
+            target.writePart(nb);
+            nb.close();
         }
         matched.close();
-        if (schemaName != null) {
-            ctx.markDirty(schemaName, tableName);
-        } else {
-            ctx.markDirty(tableName);
-        }
     }
 
     private VectorSchemaRoot materializeInput(BatchIterator input, ExecContext ctx) {
@@ -355,5 +356,4 @@ public class MiniDbModify extends TableModify implements MiniDbRel {
         }
         return key;
     }
-
 }

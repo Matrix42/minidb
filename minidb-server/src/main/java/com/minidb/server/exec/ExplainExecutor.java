@@ -190,7 +190,7 @@ public class ExplainExecutor {
         if (node instanceof MiniDbScan scan) {
             String[] st = resolveTable(scan, currentSchema);
             ArrowTable t = storage.getTable(st[0], st[1]);
-            return new Est((long) t.rowCount(), t.batches().size(), null);
+            return new Est((long) t.rowCount(), t.partCount(), null);
         }
         if (node instanceof MiniDbProject) {
             return new Est(childRows(node, currentSchema), null, null);

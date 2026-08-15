@@ -1,15 +1,12 @@
 package com.minidb.server.storage;
 
-import com.minidb.server.catalog.TableSchema;
+import java.nio.file.Path;
 import java.util.List;
-import org.apache.arrow.memory.BufferAllocator;
 
 /**
- * 存储引擎:决定一张表的数据怎么持久化、怎么加载、怎么删除。
- *
- * <p>内存态恒为 {@link ArrowTable}(Arrow 列式,等价于 ClickHouse 的 Block);本接口抽象的是
- * 「落盘组织方式」这一层——当前默认实现 {@link IpcFileTableStorage} 是每表一个 Arrow IPC
- * 文件,将来可加 MergeTree 类(排序/分区/索引)、内存表、Parquet 等实现,而算子/执行层不变。
+ * 存储引擎:决定「一张表的目录怎么定位、怎么删除」。数据本身是目录里的 part 文件,
+ * 由 {@link ArrowTable} 直接读写(写入落盘、读取递归读 part)。本接口只负责目录级的
+ * 组织,为将来换 part 格式(如 Parquet part)留扩展点。
  */
 public interface TableStorage {
 
@@ -17,26 +14,15 @@ public interface TableStorage {
     record TableRef(String schemaName, String tableName) {
     }
 
-    /** 加载结果:内存表 + 实际生效的 schema(无 catalog 回退时由存储推断)。 */
-    record LoadedTable(ArrowTable table, TableSchema schema) {
-    }
-
-    /** 启动时列出所有已持久化的表。 */
+    /** 列出所有已存在的表。 */
     List<TableRef> listTables();
 
-    /**
-     * 加载一张表到内存。{@code schema} 为 null 时(旧目录无 catalog.json 的回退路径)
-     * 由存储引擎从自身格式推断 schema;否则以传入 schema 为准。
-     */
-    LoadedTable load(String schemaName, String tableName, TableSchema schema,
-                     BufferAllocator allocator);
+    /** 一张表的目录路径(可能尚未创建)。 */
+    Path tableDir(String schemaName, String tableName);
 
-    /** 持久化一张内存表。 */
-    void save(String schemaName, String tableName, ArrowTable table);
-
-    /** 删除一张表的持久化数据。 */
+    /** 删除一张表的数据目录。 */
     void delete(String schemaName, String tableName);
 
-    /** 删除一个 schema 的所有持久化数据。 */
+    /** 删除一个 schema 的数据目录。 */
     void deleteSchema(String schemaName);
 }

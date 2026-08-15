@@ -196,7 +196,6 @@ class DataTypeIntegrationTest {
                 new ColumnMeta("n", ColumnType.NCHAR),
                 new ColumnMeta("nv", ColumnType.NVARCHAR),
                 new ColumnMeta("b", ColumnType.BINARY))));
-        storage.markDirty("public", "nt");
         storage.close();
 
         MiniDbCatalog catalog2 = new MiniDbCatalog();
@@ -396,15 +395,17 @@ class DataTypeIntegrationTest {
 
             // 数据本身也随持久化往返,证明 DECIMAL 值按 scale 精确落盘(而非退化浮点),
             // BINARY 不补零、声明名经 Arrow 元数据保真。
-            VectorSchemaRoot batch = storage2.getTable("public", "t").batches().get(0);
-            assertEquals(1, batch.getRowCount());
-            assertEquals(1, ((SmallIntVector) batch.getVector("s")).get(0));
-            assertEquals(0, new BigDecimal("1.23").compareTo(
-                    ((DecimalVector) batch.getVector("p")).getObject(0)));
-            assertEquals("x", new String(
-                    ((VarCharVector) batch.getVector("c")).get(0), StandardCharsets.UTF_8));
-            assertArrayEquals(new byte[]{(byte) 0xCA, (byte) 0xFE},
-                    ((VarBinaryVector) batch.getVector("b")).get(0));
+            try (BatchIterator it = storage2.getTable("public", "t").scan()) {
+                VectorSchemaRoot batch = it.next();
+                assertEquals(1, batch.getRowCount());
+                assertEquals(1, ((SmallIntVector) batch.getVector("s")).get(0));
+                assertEquals(0, new BigDecimal("1.23").compareTo(
+                        ((DecimalVector) batch.getVector("p")).getObject(0)));
+                assertEquals("x", new String(
+                        ((VarCharVector) batch.getVector("c")).get(0), StandardCharsets.UTF_8));
+                assertArrayEquals(new byte[]{(byte) 0xCA, (byte) 0xFE},
+                        ((VarBinaryVector) batch.getVector("b")).get(0));
+            }
         } finally {
             storage2.close();
         }

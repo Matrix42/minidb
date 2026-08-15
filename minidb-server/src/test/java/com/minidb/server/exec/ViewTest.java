@@ -145,7 +145,6 @@ class ViewTest {
         executor.execute("CREATE TABLE t (id INTEGER)");
         executor.execute("INSERT INTO t VALUES (1), (2)");
         executor.execute("CREATE VIEW v AS SELECT id FROM t WHERE id = 1");
-        storage.flushDirty();
 
         MiniDbCatalog catalog2 = new MiniDbCatalog();
         BufferAllocator allocator2 = new RootAllocator();

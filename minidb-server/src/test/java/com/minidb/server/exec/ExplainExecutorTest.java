@@ -62,7 +62,8 @@ class ExplainExecutorTest {
         idv.setValueCount(ids.length);
         nv.setValueCount(ids.length);
         root.setRowCount(ids.length);
-        arrowTable.appendBatch(root);
+        arrowTable.writePart(root);
+        root.close();
     }
 
     @AfterEach

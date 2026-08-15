@@ -1,5 +1,6 @@
 package com.minidb.server.storage;
 
+import com.minidb.server.catalog.InformationSchemaCatalog;
 import com.minidb.server.catalog.MiniDbCatalog;
 import com.minidb.server.catalog.TableSchema;
 import java.io.IOException;
@@ -10,15 +11,14 @@ import java.util.ArrayList;
 import java.util.List;
 import java.util.Locale;
 import java.util.Map;
-import java.util.Set;
 import java.util.concurrent.ConcurrentHashMap;
 import org.apache.arrow.memory.BufferAllocator;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
 /**
- * 表目录 + dirty 跟踪 + catalog 持久化。数据怎么落盘/加载委托给 {@link TableStorage}
- * (默认 {@link IpcFileTableStorage}),换存储引擎只换这一个字段。
+ * 表目录 + catalog 持久化。数据不驻留内存:每表一个目录,数据是目录里的 part 文件,
+ * 由 {@link ArrowTable} 写入直接落盘、读取递归读 part。本类只持「目录句柄」。
  */
 public class StorageManager implements AutoCloseable {
 
@@ -30,7 +30,6 @@ public class StorageManager implements AutoCloseable {
     private final CatalogStore catalogStore;
     private final TableStorage tableStorage;
     private final Map<String, ArrowTable> tables = new ConcurrentHashMap<>();
-    private final Set<String> dirty = ConcurrentHashMap.newKeySet();
 
     public StorageManager(MiniDbCatalog catalog, BufferAllocator allocator, Path dataDir) {
         this.catalog = catalog;
@@ -53,36 +52,31 @@ public class StorageManager implements AutoCloseable {
         return catalog;
     }
 
+    /** 启动:恢复元数据,并为每张表挂一个「目录句柄」(不加载数据)。 */
     public void loadAll() {
-        boolean restored = restoreCatalog();
-        int count = 0;
-        for (TableStorage.TableRef ref : tableStorage.listTables()) {
-            // 有 catalog.json → schema 从 catalog 取;否则回退到存储引擎推断(旧目录兼容)。
-            TableSchema schema = restored
-                    ? catalog.getTable(ref.schemaName(), ref.tableName())
-                    : null;
-            TableStorage.LoadedTable loaded = tableStorage.load(
-                    ref.schemaName(), ref.tableName(), schema, allocator);
-            tables.put(storageKey(ref.schemaName(), ref.tableName()), loaded.table());
-            if (!restored) {
-                catalog.createTable(loaded.schema());
+        restoreCatalog();
+        for (String schema : catalog.schemaNames()) {
+            if (InformationSchemaCatalog.isSystemSchema(schema)) {
+                continue;
             }
-            count++;
+            for (String tableName : catalog.tableNames(schema)) {
+                TableSchema ts = catalog.getTable(schema, tableName);
+                tables.put(storageKey(schema, tableName),
+                        new ArrowTable(ts, allocator, tableStorage.tableDir(schema, tableName)));
+            }
         }
-        LOG.info("loaded {} table(s)", count);
+        LOG.info("loaded {} table(s)", tables.size());
     }
 
-    /** 恢复元数据。有 catalog.json → 恢复并返回 true;否则回退 .arrow 推断(返回 false)。 */
-    private boolean restoreCatalog() {
+    /** 恢复元数据(catalog.json)。磁盘型下无旧数据回退:无 catalog.json 即空库。 */
+    private void restoreCatalog() {
         try {
             if (Files.exists(dataDir.resolve("catalog.json"))) {
                 catalog.restore(catalogStore.load());
-                return true;
             }
         } catch (IOException e) {
             throw new UncheckedIOException(e);
         }
-        return false;
     }
 
     public ArrowTable getTable(String schemaName, String tableName) {
@@ -94,7 +88,8 @@ public class StorageManager implements AutoCloseable {
     }
 
     public ArrowTable createTable(TableSchema schema) {
-        ArrowTable table = new ArrowTable(schema, allocator);
+        ArrowTable table = new ArrowTable(schema, allocator,
+                tableStorage.tableDir(schema.schemaName(), schema.name()));
         String sk = storageKey(schema.schemaName(), schema.name());
         if (tables.putIfAbsent(sk, table) != null) {
             throw new IllegalArgumentException("table already exists: " + schema.name());
@@ -105,13 +100,10 @@ public class StorageManager implements AutoCloseable {
 
     public void dropTable(String schemaName, String tableName) {
         String sk = storageKey(schemaName, tableName);
-        ArrowTable table = tables.remove(sk);
-        if (table == null) {
+        if (tables.remove(sk) == null) {
             throw new IllegalArgumentException("table not found: " + tableName);
         }
         catalog.dropTable(schemaName, tableName);
-        table.close();
-        dirty.remove(sk);
         tableStorage.delete(schemaName, tableName);
     }
 
@@ -125,11 +117,7 @@ public class StorageManager implements AutoCloseable {
         }
         catalog.dropSchema(schemaName); // throws for public / missing — do first
         for (String k : toDrop) {
-            ArrowTable table = tables.remove(k);
-            if (table != null) {
-                table.close();
-            }
-            dirty.remove(k);
+            tables.remove(k);
         }
         tableStorage.deleteSchema(schemaName);
     }
@@ -139,36 +127,12 @@ public class StorageManager implements AutoCloseable {
         if (table == null) {
             throw new IllegalArgumentException("table not found: " + tableName);
         }
-        table.clear();
-        markDirty(schemaName, tableName);
-    }
-
-    public void markDirty(String schemaName, String tableName) {
-        String sk = storageKey(schemaName, tableName);
-        dirty.add(sk);
-        catalog.markStatsStale(schemaName, tableName);
-    }
-
-    public void flushDirty() {
-        for (String sk : List.copyOf(dirty)) {
-            ArrowTable table = tables.get(sk);
-            if (table == null) {
-                dirty.remove(sk);
-                continue;
-            }
-            tableStorage.save(table.schema().schemaName(), table.schema().name(), table);
-            dirty.remove(sk);
-            LOG.info("flushed table {}", sk);
-        }
+        table.clearParts();
     }
 
     @Override
     public void close() {
-        flushDirty();
-        for (ArrowTable table : tables.values()) {
-            table.close();
-        }
-        tables.clear();
+        // 数据不驻留内存,无需 flush/close。
     }
 
     private static String storageKey(String schemaName, String tableName) {

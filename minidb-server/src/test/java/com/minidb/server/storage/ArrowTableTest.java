@@ -3,6 +3,9 @@ package com.minidb.server.storage;
 import com.minidb.server.catalog.ColumnMeta;
 import com.minidb.server.catalog.ColumnType;
 import com.minidb.server.catalog.TableSchema;
+import com.minidb.server.exec.BatchIterator;
+import java.nio.file.Path;
+import java.util.ArrayList;
 import java.util.List;
 import org.apache.arrow.memory.BufferAllocator;
 import org.apache.arrow.memory.RootAllocator;
@@ -12,12 +15,15 @@ import org.apache.arrow.vector.VectorSchemaRoot;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
+import org.junit.jupiter.api.io.TempDir;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertNotNull;
 
 class ArrowTableTest {
 
+    @TempDir
+    Path tempDir;
     BufferAllocator allocator;
     ArrowTable table;
 
@@ -26,12 +32,11 @@ class ArrowTableTest {
         allocator = new RootAllocator();
         table = new ArrowTable(new TableSchema("t", List.of(
                 new ColumnMeta("id", ColumnType.INTEGER),
-                new ColumnMeta("name", ColumnType.VARCHAR))), allocator);
+                new ColumnMeta("name", ColumnType.VARCHAR))), allocator, tempDir);
     }
 
     @AfterEach
     void tearDown() {
-        table.close();
         allocator.close();
     }
 
@@ -49,40 +54,40 @@ class ArrowTableTest {
     }
 
     @Test
-    void appendAndScanBatches() {
-        table.appendBatch(batch(1, 2));
-        table.appendBatch(batch(3));
-        assertEquals(2, table.batches().size());
+    void writeAndScanParts() {
+        VectorSchemaRoot p1 = batch(1, 2);
+        table.writePart(p1);
+        p1.close();
+        VectorSchemaRoot p2 = batch(3);
+        table.writePart(p2);
+        p2.close();
+        assertEquals(2, table.partCount());
         assertEquals(3, table.rowCount());
-        IntVector v = (IntVector) table.batches().get(1).getVector("id");
-        assertEquals(3, v.get(0));
+        List<Integer> ids = new ArrayList<>();
+        try (BatchIterator it = table.scan()) {
+            while (it.hasNext()) {
+                IntVector v = (IntVector) it.next().getVector("id");
+                for (int i = 0; i < v.getValueCount(); i++) {
+                    ids.add(v.get(i));
+                }
+            }
+        }
+        assertEquals(List.of(1, 2, 3), ids);
     }
 
     @Test
-    void emptyTableHasNoBatches() {
+    void emptyTableHasNoParts() {
         assertEquals(0, table.rowCount());
-        assertEquals(0, table.batches().size());
-    }
-
-    @Test
-    void closeReleasesMemory() {
-        table.appendBatch(batch(1));
-        table.close();
-        // RootAllocator.close() in tearDown throws if buffers leaked
-        table = new ArrowTable(new TableSchema("t2", List.of()), allocator);
+        assertEquals(0, table.partCount());
     }
 
     @Test
     void arrowSchemaCarriesSchemaMetadata() {
         ArrowTable t = new ArrowTable(new TableSchema("other", "t", List.of(
-                new ColumnMeta("id", ColumnType.INTEGER))), allocator);
-        try {
-            java.util.Map<String, String> meta = t.arrowSchema().getCustomMetadata();
-            assertNotNull(meta);
-            assertEquals("other", meta.get("schema"));
-        } finally {
-            t.close();
-        }
+                new ColumnMeta("id", ColumnType.INTEGER))), allocator, tempDir.resolve("other"));
+        java.util.Map<String, String> meta = t.arrowSchema().getCustomMetadata();
+        assertNotNull(meta);
+        assertEquals("other", meta.get("schema"));
     }
 
     @Test
