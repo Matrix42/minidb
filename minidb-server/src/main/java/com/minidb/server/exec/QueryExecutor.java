@@ -2,11 +2,13 @@ package com.minidb.server.exec;
 import com.minidb.storage.common.BatchIterator;
 
 import com.minidb.parser.ddl.SqlForeignKeyConstraint;
+import com.minidb.parser.ddl.SqlTableOptions;
 import com.minidb.server.calcite.CalciteContext;
 import com.minidb.storage.common.ArrowTypes;
 import com.minidb.storage.common.ColumnMeta;
 import com.minidb.storage.common.ColumnType;
 import com.minidb.storage.common.ForeignKey;
+import com.minidb.storage.common.StorageFormat;
 import com.minidb.server.catalog.InformationSchemaCatalog;
 import com.minidb.server.catalog.MiniDbCatalog;
 import com.minidb.storage.common.TableSchema;
@@ -19,6 +21,7 @@ import com.minidb.server.stats.StatsManager;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Locale;
+import java.util.Map;
 import org.apache.arrow.memory.BufferAllocator;
 import org.apache.arrow.vector.VectorSchemaRoot;
 import org.apache.arrow.vector.types.pojo.Field;
@@ -29,6 +32,7 @@ import org.apache.calcite.sql.SqlBasicTypeNameSpec;
 import org.apache.calcite.sql.SqlDdl;
 import org.apache.calcite.sql.SqlIdentifier;
 import org.apache.calcite.sql.SqlKind;
+import org.apache.calcite.sql.SqlLiteral;
 import org.apache.calcite.sql.SqlNode;
 import org.apache.calcite.sql.SqlNodeList;
 import org.apache.calcite.sql.ddl.SqlColumnDeclaration;
@@ -41,6 +45,7 @@ import org.apache.calcite.sql.ddl.SqlDropView;
 import org.apache.calcite.sql.ddl.SqlKeyConstraint;
 import org.apache.calcite.sql.ddl.SqlTruncateTable;
 import org.apache.calcite.sql.dialect.CalciteSqlDialect;
+import org.apache.calcite.sql.type.SqlTypeName;
 
 public class QueryExecutor {
 
@@ -191,7 +196,12 @@ public class QueryExecutor {
         List<String> primaryKey = List.of();
         List<List<String>> uniqueKeys = new ArrayList<>();
         List<ForeignKey> foreignKeys = new ArrayList<>();
+        StorageFormat storageFormat = StorageFormat.ARROW;
         for (SqlNode node : create.columnList) {
+            if (node instanceof SqlTableOptions options) {
+                storageFormat = storageFormatFromOptions(options);
+                continue;
+            }
             if (node instanceof SqlKeyConstraint key) {
                 // 表级/列级 PRIMARY KEY (col, ...) / UNIQUE (col, ...)
                 SqlNodeList keyCols = (SqlNodeList) key.getOperandList().get(1);
@@ -250,9 +260,31 @@ public class QueryExecutor {
             columns.add(new ColumnMeta(column.name.getSimple(), type, precision, scale, nullable));
         }
         TableSchema schema = new TableSchema(schemaName, tableName, columns,
-                primaryKey, uniqueKeys, foreignKeys);
+                primaryKey, uniqueKeys, foreignKeys, storageFormat);
         storage.createTable(schema);
         return new QueryResult.Update(0);
+    }
+
+    /**
+     * 从 WITH 子句取存储格式。目前只支持 {@code format} 键(值必须是字符串字面量),
+     * 其余键明确拒绝,避免拼写错误被静默吞掉。
+     */
+    private StorageFormat storageFormatFromOptions(SqlTableOptions options) {
+        StorageFormat format = StorageFormat.ARROW;
+        for (Map.Entry<String, SqlNode> e : options.options().entrySet()) {
+            String key = e.getKey();
+            if ("format".equalsIgnoreCase(key)) {
+                if (!(e.getValue() instanceof SqlLiteral literal)
+                        || literal.getTypeName() != SqlTypeName.CHAR) {
+                    throw new IllegalArgumentException("format 值必须是字符串字面量");
+                }
+                format = StorageFormat.fromString(literal.getValueAs(String.class));
+            } else {
+                throw new IllegalArgumentException(
+                        "unknown table option: " + key + " (目前仅支持 format)");
+            }
+        }
+        return format;
     }
 
     private QueryResult handleCreateView(SqlCreateView create, String currentSchema) {

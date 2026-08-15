@@ -273,6 +273,7 @@ SqlCreate SqlCreateTable(Span s, boolean replace) :
     final SqlIdentifier id;
     SqlNodeList tableElementList = null;
     SqlNode query = null;
+    SqlTableOptions tableOptions = null;
 
     SqlCreate createTableLike = null;
 }
@@ -284,11 +285,55 @@ SqlCreate SqlCreateTable(Span s, boolean replace) :
         }
     |
         [ tableElementList = TableElementList() ]
+        [ <WITH> tableOptions = TableOptions() {
+            if (tableElementList == null) {
+                tableElementList = new SqlNodeList(getPos());
+            }
+            tableElementList.add(tableOptions);
+        } ]
         [ <AS> query = OrderedQueryOrExpr(ExprContext.ACCEPT_QUERY) ]
         {
             return SqlDdlNodes.createTable(s.end(this), replace, ifNotExists, id, tableElementList, query);
         }
     )
+}
+
+/**
+ * Parses a Flink-style {@code WITH (key = value, ...)} table option list.
+ * key is a string literal, value is a string/boolean/numeric literal.
+ */
+SqlTableOptions TableOptions() :
+{
+    final List<SqlNode> entries = new ArrayList<SqlNode>();
+    SqlNode key;
+    SqlNode value;
+    final Span s;
+}
+{
+    { s = span(); }
+    <LPAREN>
+    key = StringLiteral() <EQ> value = TableOptionValue()
+    { entries.add(key); entries.add(value); }
+    ( <COMMA> key = StringLiteral() <EQ> value = TableOptionValue()
+      { entries.add(key); entries.add(value); } )*
+    <RPAREN> {
+        return new SqlTableOptions(s.end(this), entries);
+    }
+}
+
+/** Table option value: string/boolean/numeric literal. */
+SqlNode TableOptionValue() :
+{
+    SqlNode value;
+}
+{
+    value = StringLiteral() { return value; }
+|
+    value = NumericLiteral() { return value; }
+|
+    <TRUE> { return SqlLiteral.createBoolean(true, getPos()); }
+|
+    <FALSE> { return SqlLiteral.createBoolean(false, getPos()); }
 }
 
 SqlCreate SqlCreateTableLike(Span s, boolean replace, boolean ifNotExists, SqlIdentifier id) :
