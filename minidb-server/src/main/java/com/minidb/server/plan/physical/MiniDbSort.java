@@ -3,26 +3,12 @@ package com.minidb.server.plan.physical;
 import com.minidb.server.exec.BatchIterator;
 import com.minidb.server.exec.ExecContext;
 import com.minidb.server.exec.RowCopier;
+import com.minidb.server.exec.ValueComparators;
 import java.math.BigDecimal;
 import java.util.ArrayList;
-import java.util.Arrays;
 import java.util.Comparator;
 import java.util.List;
-import org.apache.arrow.vector.BigIntVector;
-import org.apache.arrow.vector.BitVector;
-import org.apache.arrow.vector.DateDayVector;
-import org.apache.arrow.vector.DecimalVector;
-import org.apache.arrow.vector.FieldVector;
-import org.apache.arrow.vector.Float4Vector;
-import org.apache.arrow.vector.Float8Vector;
-import org.apache.arrow.vector.IntVector;
-import org.apache.arrow.vector.SmallIntVector;
-import org.apache.arrow.vector.TimeMilliVector;
-import org.apache.arrow.vector.TimeStampMilliVector;
-import org.apache.arrow.vector.TinyIntVector;
 import org.apache.arrow.vector.ValueVector;
-import org.apache.arrow.vector.VarBinaryVector;
-import org.apache.arrow.vector.VarCharVector;
 import org.apache.arrow.vector.VectorSchemaRoot;
 import org.apache.calcite.plan.RelOptCluster;
 import org.apache.calcite.plan.RelTraitSet;
@@ -145,44 +131,8 @@ public class MiniDbSort extends Sort implements MiniDbRel {
         if (nullB) {
             return -1;
         }
-        if (v instanceof SmallIntVector sv) {
-            return Short.compare(sv.get(rowA), sv.get(rowB));
-        }
-        if (v instanceof IntVector iv) {
-            return Integer.compare(iv.get(rowA), iv.get(rowB));
-        }
-        if (v instanceof BigIntVector bv) {
-            return Long.compare(bv.get(rowA), bv.get(rowB));
-        }
-        if (v instanceof Float4Vector fv) {
-            return Float.compare(fv.get(rowA), fv.get(rowB));
-        }
-        if (v instanceof Float8Vector fv) {
-            return Double.compare(fv.get(rowA), fv.get(rowB));
-        }
-        if (v instanceof DecimalVector dv) {
-            return dv.getObject(rowA).compareTo(dv.getObject(rowB));
-        }
-        if (v instanceof VarCharVector vv) {
-            return new String(vv.get(rowA)).compareTo(new String(vv.get(rowB)));
-        }
-        if (v instanceof BitVector bv) {
-            return Integer.compare(bv.get(rowA), bv.get(rowB));
-        }
-        if (v instanceof DateDayVector dv) {
-            return Integer.compare(dv.get(rowA), dv.get(rowB));
-        }
-        if (v instanceof TimeMilliVector tv) {
-            return Integer.compare(tv.get(rowA), tv.get(rowB));
-        }
-        if (v instanceof TimeStampMilliVector tv) {
-            return Long.compare(tv.get(rowA), tv.get(rowB));
-        }
-        if (v instanceof VarBinaryVector bv) {
-            // byte[] is not Comparable; compare unsigned byte-by-byte.
-            return Arrays.compareUnsigned(bv.get(rowA), bv.get(rowB));
-        }
-        throw new UnsupportedOperationException("cannot sort column type: " + v.getMinorType());
+        // 列式比较:VarChar/VarBinary 走字节比较,避免每比较一次分配两个 String/BigDecimal 对象。
+        return ValueComparators.compare(v, rowA, v, rowB);
     }
 
     private VectorSchemaRoot mergeBatches(List<VectorSchemaRoot> batches, int total,
