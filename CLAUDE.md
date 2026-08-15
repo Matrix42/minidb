@@ -37,6 +37,7 @@ MiniDB 是一个基于 Apache Calcite(解析/规划)+ Apache Arrow(列式存储)
 5. **测试用 JUnit 5 + `@TempDir` + `RootAllocator`**。断言关系/比例而非精确浮点值(选择率单元测试除外,用 1e-9 delta)。
 6. **现有 7 个物理算子文件(`MiniDbScan`/`Filter`/`Project`/`Sort`/`Values`/`Modify`/`Aggregate`)和 `minidb-protocol` 模块尽量不改**——它们是稳定核心,扩展应通过新模块(参考 EXPLAIN 用 `ExplainExecutor` + `Instrumenter` 外挂的方式,零侵入算子)。规则类在 `rule/physical` 包(逻辑优化规则在 `rule/logical`)。
 7. **用中文回复用户**(代码/标识符/路径保持原文)。
+8. **不要偷懒,优先做对而不是做快**。当「干净、可扩展」的改法可行时,不要用局部特判/硬编码糊过去——特判会在调用点留 wart、破坏统一性、堵死后续同类扩展。判据:如果「把这个特判复制第二遍」会让你想把它下沉成框架能力,那第一次就不该特判。反例(已修):`CURRENT_DATE`/`CURRENT_TIMESTAMP` 最初在 `RexInterpreter.evalCall` 按算子特判,正确做法是让 `Function.evaluate` 支持 0 参函数,再把它们当普通函数注册进 `BuiltInFunctions`。
 
 ## 架构与关键类
 
