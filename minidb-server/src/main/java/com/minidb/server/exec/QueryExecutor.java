@@ -25,6 +25,7 @@ import org.apache.calcite.rel.RelNode;
 import org.apache.calcite.rel.type.RelDataType;
 import org.apache.calcite.rel.type.RelDataTypeField;
 import org.apache.calcite.sql.SqlBasicTypeNameSpec;
+import org.apache.calcite.sql.SqlDdl;
 import org.apache.calcite.sql.SqlIdentifier;
 import org.apache.calcite.sql.SqlKind;
 import org.apache.calcite.sql.SqlNode;
@@ -65,6 +66,22 @@ public class QueryExecutor {
 
     public QueryResult execute(String sql, String currentSchema) {
         String trimmed = sql.strip();
+        // ① 命令:ANALYZE/EXPLAIN/USE SCHEMA,Calcite 不解析,parse 前前缀拦截。
+        QueryResult command = tryHandleCommand(trimmed, currentSchema);
+        if (command != null) {
+            return command;
+        }
+        SqlNode parsed = calcite.parse(trimmed);
+        // ② DDL:CREATE/DROP/TRUNCATE,统一挂在 SqlDdl 基类下。
+        if (parsed instanceof SqlDdl ddl) {
+            return handleDdl(ddl, currentSchema);
+        }
+        // ③ DQL/DML:SELECT/INSERT/UPDATE/DELETE。
+        return executeQuery(trimmed, currentSchema);
+    }
+
+    /** 命令:Calcite 不解析(ANALYZE/EXPLAIN/USE SCHEMA),parse 前前缀拦截;非命令返回 null。 */
+    private QueryResult tryHandleCommand(String trimmed, String currentSchema) {
         String upper = trimmed.toUpperCase(Locale.ROOT);
         if (upper.equals("ANALYZE")) {
             stats.analyzeAll();
@@ -93,28 +110,37 @@ public class QueryExecutor {
             }
             return new QueryResult.UseSchema(resolved);
         }
-        SqlNode parsed = calcite.parse(trimmed);
-        if (parsed instanceof SqlCreateSchema create) {
+        return null;
+    }
+
+    /** DDL:CREATE/DROP/TRUNCATE 各类,统一挂在 Calcite 的 SqlDdl 基类下。 */
+    private QueryResult handleDdl(SqlDdl ddl, String currentSchema) {
+        if (ddl instanceof SqlCreateSchema create) {
             return handleCreateSchema(create);
         }
-        if (parsed instanceof SqlDropSchema drop) {
+        if (ddl instanceof SqlDropSchema drop) {
             return handleDropSchema(drop);
         }
-        if (parsed instanceof SqlCreateTable create) {
+        if (ddl instanceof SqlCreateTable create) {
             return handleCreate(create, currentSchema);
         }
-        if (parsed instanceof SqlCreateView create) {
+        if (ddl instanceof SqlCreateView create) {
             return handleCreateView(create, currentSchema);
         }
-        if (parsed instanceof SqlDropTable drop) {
+        if (ddl instanceof SqlDropTable drop) {
             return handleDrop(drop, currentSchema);
         }
-        if (parsed instanceof SqlDropView drop) {
+        if (ddl instanceof SqlDropView drop) {
             return handleDropView(drop, currentSchema);
         }
-        if (parsed instanceof SqlTruncateTable truncate) {
+        if (ddl instanceof SqlTruncateTable truncate) {
             return handleTruncate(truncate, currentSchema);
         }
+        throw new IllegalArgumentException("unsupported DDL: " + ddl.getKind());
+    }
+
+    /** DQL/DML:SELECT/INSERT/UPDATE/DELETE,走 planner 规划 + 执行。 */
+    private QueryResult executeQuery(String sql, String currentSchema) {
         RelNode plan = planner.plan(sql, currentSchema);
         ExecContext ctx = new ExecContext(storage, allocator, currentSchema);
         if (plan instanceof MiniDbModify modify) {
