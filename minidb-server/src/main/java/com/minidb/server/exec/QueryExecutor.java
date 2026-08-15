@@ -23,6 +23,7 @@ import org.apache.calcite.rel.RelNode;
 import org.apache.calcite.rel.type.RelDataType;
 import org.apache.calcite.rel.type.RelDataTypeField;
 import org.apache.calcite.sql.SqlBasicTypeNameSpec;
+import org.apache.calcite.sql.SqlIdentifier;
 import org.apache.calcite.sql.SqlNode;
 import org.apache.calcite.sql.ddl.SqlColumnDeclaration;
 import org.apache.calcite.sql.ddl.SqlCreateSchema;
@@ -191,10 +192,13 @@ public class QueryExecutor {
         // 把定义 SQL 规范化为 Calcite 方言文本(可被重新 parse,ViewTable 展开用)。
         String querySql = create.query.toSqlString(CalciteSqlDialect.DEFAULT).getSql();
         // 在视图所在 schema 上下文 plan 定义 SQL,得到结果列名+类型存入 ViewDefinition。
-        // 注:CREATE VIEW v(a,b) 的显式列名列表暂不支持(直接忽略,取查询输出列名)。
         RelNode plan = planner.plan(querySql, schemaName);
+        List<ColumnMeta> columns = columnsFromRowType(plan.getRowType());
+        if (create.columnList != null && !create.columnList.isEmpty()) {
+            columns = applyColumnList(columns, create.columnList);
+        }
         ViewDefinition view = new ViewDefinition(
-                schemaName, viewName, querySql, columnsFromRowType(plan.getRowType()));
+                schemaName, viewName, querySql, columns);
         if (create.getReplace()) {
             catalog.replaceView(view);
         } else {
@@ -234,6 +238,26 @@ public class QueryExecutor {
             }
         }
         return columns;
+    }
+
+    /** CREATE VIEW v(a,b) 的显式列名列表:数量必须匹配查询输出列,按列表重命名(类型不变)。 */
+    private static List<ColumnMeta> applyColumnList(List<ColumnMeta> columns,
+                                                    List<SqlNode> columnList) {
+        List<String> names = new ArrayList<>();
+        for (SqlNode node : columnList) {
+            names.add(((SqlIdentifier) node).getSimple());
+        }
+        if (names.size() != columns.size()) {
+            throw new IllegalArgumentException("view column list has " + names.size()
+                    + " columns but query produces " + columns.size());
+        }
+        List<ColumnMeta> renamed = new ArrayList<>(names.size());
+        for (int i = 0; i < names.size(); i++) {
+            ColumnMeta original = columns.get(i);
+            renamed.add(new ColumnMeta(
+                    names.get(i), original.type(), original.precision(), original.scale()));
+        }
+        return renamed;
     }
 
     private QueryResult handleDrop(SqlDropTable drop, String currentSchema) {

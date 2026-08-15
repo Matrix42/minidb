@@ -109,6 +109,27 @@ class ViewTest {
     }
 
     @Test
+    void createViewWithColumnList() {
+        executor.execute("CREATE TABLE t (id INTEGER, name VARCHAR)");
+        executor.execute("INSERT INTO t VALUES (1,'a'), (2,'b')");
+        executor.execute("CREATE VIEW v (num, label) AS SELECT id, name FROM t");
+        int[] nums = intCol("SELECT num FROM v ORDER BY num", "num");
+        assertEquals(2, nums.length);
+        assertEquals(1, nums[0]);
+        assertEquals(2, nums[1]);
+        String[] labels = strCol("SELECT label FROM v WHERE num = 2", "label");
+        assertEquals(1, labels.length);
+        assertEquals("b", labels[0]);
+    }
+
+    @Test
+    void createViewColumnListMismatch() {
+        executor.execute("CREATE TABLE t (id INTEGER, name VARCHAR)");
+        assertThrows(Exception.class,
+                () -> executor.execute("CREATE VIEW v (a) AS SELECT id, name FROM t"));
+    }
+
+    @Test
     void nestedView() {
         executor.execute("CREATE TABLE t (id INTEGER)");
         executor.execute("INSERT INTO t VALUES (1), (2), (3)");
