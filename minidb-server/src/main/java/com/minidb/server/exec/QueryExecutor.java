@@ -4,6 +4,7 @@ import com.minidb.server.calcite.CalciteContext;
 import com.minidb.server.catalog.ArrowTypes;
 import com.minidb.server.catalog.ColumnMeta;
 import com.minidb.server.catalog.ColumnType;
+import com.minidb.server.catalog.ForeignKey;
 import com.minidb.server.catalog.InformationSchemaCatalog;
 import com.minidb.server.catalog.MiniDbCatalog;
 import com.minidb.server.catalog.TableSchema;
@@ -91,9 +92,13 @@ public class QueryExecutor {
             }
             return new QueryResult.UseSchema(resolved);
         }
+        List<ForeignKey> foreignKeys = List.of();
         if (upper.startsWith("CREATE TABLE ")) {
-            // 列级 PRIMARY KEY / UNIQUE Calcite 不支持,parse 前提升为表级约束。
-            trimmed = rewriteColumnConstraints(trimmed);
+            // 列级 PRIMARY KEY / UNIQUE Calcite 不支持,parse 前提升为表级约束;
+            // 外键 Calcite 完全不支持,parse 前剥离并单独记录。
+            TableRewrite rewrite = rewriteColumnConstraints(trimmed, currentSchema);
+            trimmed = rewrite.sql();
+            foreignKeys = rewrite.foreignKeys();
         }
         SqlNode parsed = calcite.parse(trimmed);
         if (parsed instanceof SqlCreateSchema create) {
@@ -103,7 +108,7 @@ public class QueryExecutor {
             return handleDropSchema(drop);
         }
         if (parsed instanceof SqlCreateTable create) {
-            return handleCreate(create, currentSchema);
+            return handleCreate(create, currentSchema, foreignKeys);
         }
         if (parsed instanceof SqlCreateView create) {
             return handleCreateView(create, currentSchema);
@@ -158,7 +163,8 @@ public class QueryExecutor {
         return new QueryResult.Update(0);
     }
 
-    private QueryResult handleCreate(SqlCreateTable create, String currentSchema) {
+    private QueryResult handleCreate(SqlCreateTable create, String currentSchema,
+                                     List<ForeignKey> foreignKeys) {
         List<String> parts = create.name.names;
         String schemaName = parts.size() > 1 ? parts.get(0) : currentSchema;
         String tableName = parts.get(parts.size() - 1);
@@ -205,7 +211,8 @@ public class QueryExecutor {
             boolean nullable = !Boolean.FALSE.equals(column.dataType.getNullable());
             columns.add(new ColumnMeta(column.name.getSimple(), type, precision, scale, nullable));
         }
-        TableSchema schema = new TableSchema(schemaName, tableName, columns, primaryKey, uniqueKeys);
+        TableSchema schema = new TableSchema(schemaName, tableName, columns,
+                primaryKey, uniqueKeys, foreignKeys);
         storage.createTable(schema);
         return new QueryResult.Update(0);
     }
@@ -342,19 +349,24 @@ public class QueryExecutor {
         return root;
     }
 
+    private record TableRewrite(String sql, List<ForeignKey> foreignKeys) {}
+
     /**
-     * 把列级 PRIMARY KEY / UNIQUE 提升为表级(Calcite DDL parser 只认表级 PRIMARY KEY (col) /
-     * UNIQUE (col),不支持 col TYPE PRIMARY KEY)。仅处理列定义列表的顶层元素,类型括号
-     * (DECIMAL(10,2)) 与 DEFAULT 表达式里的逗号/括号不误判。
+     * 预处理 CREATE TABLE 的列定义列表:
+     * <ul>
+     *   <li>列级 PRIMARY KEY / UNIQUE 提升为表级(Calcite 只认表级)。</li>
+     *   <li>外键(表级 FOREIGN KEY / 列级 REFERENCES)Calcite 完全不支持,剥离并单独记录。</li>
+     * </ul>
+     * 仅处理顶层元素,类型括号(DECIMAL(10,2))与 DEFAULT 表达式里的逗号/括号不误判。
      */
-    private static String rewriteColumnConstraints(String sql) {
+    private static TableRewrite rewriteColumnConstraints(String sql, String defaultSchema) {
         int open = sql.indexOf('(');
         if (open < 0) {
-            return sql;
+            return new TableRewrite(sql, List.of());
         }
         int close = matchingParen(sql, open);
         if (close < 0) {
-            return sql;
+            return new TableRewrite(sql, List.of());
         }
         String prefix = sql.substring(0, open + 1);
         String body = sql.substring(open + 1, close);
@@ -362,17 +374,27 @@ public class QueryExecutor {
 
         List<String> elements = splitTopLevel(body);
         List<String> tableConstraints = new ArrayList<>();
+        List<ForeignKey> foreignKeys = new ArrayList<>();
         StringBuilder out = new StringBuilder(body.length() + 64);
         for (String raw : elements) {
             String element = raw.strip();
+            if (isForeignKeyConstraint(element)) {
+                foreignKeys.add(parseTableForeignKey(element, defaultSchema));
+                continue;
+            }
             String normalized = element;
             if (!isTableConstraint(element)) {
                 String columnName = firstIdentifier(element);
-                if (endsWithIgnoreCase(element, "PRIMARY KEY")) {
-                    normalized = element.substring(0, element.length() - "PRIMARY KEY".length()).strip();
+                int refIdx = indexOfIgnoreCase(element, "REFERENCES");
+                if (refIdx >= 0) {
+                    foreignKeys.add(parseColumnForeignKey(element, columnName, refIdx, defaultSchema));
+                    normalized = element.substring(0, refIdx).strip();
+                }
+                if (endsWithIgnoreCase(normalized, "PRIMARY KEY")) {
+                    normalized = normalized.substring(0, normalized.length() - "PRIMARY KEY".length()).strip();
                     tableConstraints.add("PRIMARY KEY (" + columnName + ")");
-                } else if (endsWithIgnoreCase(element, "UNIQUE")) {
-                    normalized = element.substring(0, element.length() - "UNIQUE".length()).strip();
+                } else if (endsWithIgnoreCase(normalized, "UNIQUE")) {
+                    normalized = normalized.substring(0, normalized.length() - "UNIQUE".length()).strip();
                     tableConstraints.add("UNIQUE (" + columnName + ")");
                 }
             }
@@ -384,7 +406,71 @@ public class QueryExecutor {
         for (String constraint : tableConstraints) {
             out.append(", ").append(constraint);
         }
-        return prefix + out + suffix;
+        return new TableRewrite(prefix + out + suffix, foreignKeys);
+    }
+
+    private static boolean isForeignKeyConstraint(String element) {
+        String upper = element.toUpperCase(Locale.ROOT);
+        return upper.startsWith("FOREIGN KEY")
+                || (upper.startsWith("CONSTRAINT") && indexOfIgnoreCase(upper, "FOREIGN KEY") >= 0);
+    }
+
+    /** 表级 FOREIGN KEY (col, ...) REFERENCES ref(col, ...) / CONSTRAINT name FOREIGN KEY ... */
+    private static ForeignKey parseTableForeignKey(String element, String defaultSchema) {
+        int fkIdx = indexOfIgnoreCase(element, "FOREIGN KEY");
+        int open = element.indexOf('(', fkIdx);
+        int close = matchingParen(element, open);
+        List<String> columns = splitParenContent(element.substring(open + 1, close));
+        int refIdx = indexOfIgnoreCase(element, "REFERENCES", close);
+        String refSpec = element.substring(refIdx + "REFERENCES".length()).strip();
+        return parseRefSpec(refSpec, columns, defaultSchema);
+    }
+
+    /** 列级 col TYPE REFERENCES ref(col, ...) */
+    private static ForeignKey parseColumnForeignKey(String element, String columnName,
+                                                    int refIdx, String defaultSchema) {
+        String refSpec = element.substring(refIdx + "REFERENCES".length()).strip();
+        return parseRefSpec(refSpec, List.of(columnName), defaultSchema);
+    }
+
+    /** 解析 REFERENCES 后的 "schema.table (col, ...)"。refColumns 空 = 引用 refTable 主键。 */
+    private static ForeignKey parseRefSpec(String refSpec, List<String> columns, String defaultSchema) {
+        int paren = refSpec.indexOf('(');
+        String tableRef = paren < 0 ? refSpec.strip() : refSpec.substring(0, paren).strip();
+        List<String> refColumns = paren < 0 ? List.of()
+                : splitParenContent(refSpec.substring(paren + 1, matchingParen(refSpec, paren)));
+        String[] parts = tableRef.split("\\.");
+        String refTable = unquote(parts[parts.length - 1].strip());
+        String refSchema = parts.length > 1 ? unquote(parts[0].strip()) : defaultSchema;
+        List<String> cols = columns.stream().map(QueryExecutor::unquote).toList();
+        List<String> refCols = refColumns.stream().map(QueryExecutor::unquote).toList();
+        return new ForeignKey(cols, refSchema, refTable, refCols);
+    }
+
+    private static int indexOfIgnoreCase(String s, String sub) {
+        return indexOfIgnoreCase(s, sub, 0);
+    }
+
+    private static int indexOfIgnoreCase(String s, String sub, int from) {
+        return s.toLowerCase(Locale.ROOT).indexOf(sub.toLowerCase(Locale.ROOT), from);
+    }
+
+    private static List<String> splitParenContent(String content) {
+        List<String> result = new ArrayList<>();
+        for (String part : splitTopLevel(content)) {
+            if (!part.isBlank()) {
+                result.add(part.strip());
+            }
+        }
+        return result;
+    }
+
+    private static String unquote(String name) {
+        String s = name.strip();
+        if (s.length() >= 2 && s.startsWith("\"") && s.endsWith("\"")) {
+            return s.substring(1, s.length() - 1);
+        }
+        return s;
     }
 
     /** 从 open 处 '(' 找匹配的 ')' (跟踪括号深度与字符串/引号字面量)。 */

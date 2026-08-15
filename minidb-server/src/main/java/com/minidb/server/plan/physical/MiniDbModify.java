@@ -1,6 +1,8 @@
 package com.minidb.server.plan.physical;
 
 import com.minidb.server.catalog.ColumnMeta;
+import com.minidb.server.catalog.ForeignKey;
+import com.minidb.server.catalog.MiniDbCatalog;
 import com.minidb.server.catalog.TableSchema;
 import com.minidb.server.exec.BatchIterator;
 import com.minidb.server.exec.ExecContext;
@@ -71,7 +73,7 @@ public class MiniDbModify extends TableModify implements MiniDbRel {
         try {
             while (input.hasNext()) {
                 VectorSchemaRoot batch = input.next();
-                validateInsert(target, batch);
+                validateInsert(ctx, target, batch);
                 // copy rows into a table-owned root; never take ownership of
                 // batches that may belong to another table (Scan) or the iterator
                 VectorSchemaRoot copy = target.newBatchRoot();
@@ -93,8 +95,8 @@ public class MiniDbModify extends TableModify implements MiniDbRel {
         }
     }
 
-    /** INSERT 前的约束校验:NOT NULL + 主键/唯一冲突。 */
-    private void validateInsert(ArrowTable target, VectorSchemaRoot batch) {
+    /** INSERT 前的约束校验:NOT NULL + 主键/唯一冲突 + 外键引用存在。 */
+    private void validateInsert(ExecContext ctx, ArrowTable target, VectorSchemaRoot batch) {
         TableSchema schema = target.schema();
         for (ColumnMeta column : schema.columns()) {
             if (!column.nullable()) {
@@ -113,6 +115,93 @@ public class MiniDbModify extends TableModify implements MiniDbRel {
         }
         for (List<String> unique : schema.uniqueKeys()) {
             validateUnique(target, batch, unique, "unique");
+        }
+        validateForeignKeys(ctx, target, batch);
+    }
+
+    /** 外键 INSERT 校验:child 行的外键列值必须存在于引用表(含 null 的键不校验)。 */
+    private void validateForeignKeys(ExecContext ctx, ArrowTable target, VectorSchemaRoot batch) {
+        for (ForeignKey fk : target.schema().foreignKeys()) {
+            ArrowTable refTable = ctx.getTable(fk.refSchema(), fk.refTable());
+            List<String> refColumns = fk.refColumns().isEmpty()
+                    ? refTable.schema().primaryKey()
+                    : fk.refColumns();
+            List<Integer> childIdx = columnIndexes(target.schema(), fk.columns());
+            List<Integer> refIdx = columnIndexes(refTable.schema(), refColumns);
+            Set<List<Object>> refKeys = new HashSet<>();
+            for (VectorSchemaRoot b : refTable.batches()) {
+                for (int i = 0; i < b.getRowCount(); i++) {
+                    List<Object> key = keyOf(b, i, refIdx);
+                    if (key != null) {
+                        refKeys.add(key);
+                    }
+                }
+            }
+            for (int i = 0; i < batch.getRowCount(); i++) {
+                List<Object> key = keyOf(batch, i, childIdx);
+                if (key != null && !refKeys.contains(key)) {
+                    throw new IllegalArgumentException(
+                            "foreign key violation: " + fk.columns()
+                                    + " references " + fk.refTable() + "." + refColumns);
+                }
+            }
+        }
+    }
+
+    private static List<Integer> columnIndexes(TableSchema schema, List<String> names) {
+        List<Integer> idxs = new ArrayList<>(names.size());
+        for (String name : names) {
+            idxs.add(schema.columnIndex(name));
+        }
+        return idxs;
+    }
+
+    /**
+     * DELETE 的外键 RESTRICT 校验:被删除行的主键不能仍被其它表引用。只处理 child 外键
+     * 引用本表主键的常见情况(引用非主键唯一列暂不校验);UPDATE 本表被引用列(如改主键)
+     * 的外键校验暂未覆盖。
+     */
+    private void validateDeleteRestrict(ExecContext ctx, ArrowTable target, VectorSchemaRoot matched) {
+        TableSchema schema = target.schema();
+        if (schema.primaryKey().isEmpty()) {
+            return;
+        }
+        List<Integer> pkIdx = columnIndexes(schema, schema.primaryKey());
+        Set<List<Object>> deletedKeys = new HashSet<>();
+        for (int i = 0; i < matched.getRowCount(); i++) {
+            List<Object> key = keyOf(matched, i, pkIdx);
+            if (key != null) {
+                deletedKeys.add(key);
+            }
+        }
+        MiniDbCatalog catalog = ctx.storage().catalog();
+        for (String schemaName : catalog.schemaNames()) {
+            for (String tableName : catalog.tableNames(schemaName)) {
+                TableSchema childSchema = catalog.getTable(schemaName, tableName);
+                for (ForeignKey fk : childSchema.foreignKeys()) {
+                    if (!fk.refSchema().equalsIgnoreCase(schema.schemaName())
+                            || !fk.refTable().equalsIgnoreCase(schema.name())) {
+                        continue;
+                    }
+                    List<String> refColumns = fk.refColumns().isEmpty()
+                            ? schema.primaryKey() : fk.refColumns();
+                    if (!refColumns.equals(schema.primaryKey())) {
+                        continue; // 引用非主键列,暂不校验
+                    }
+                    ArrowTable childTable = ctx.getTable(schemaName, tableName);
+                    List<Integer> childIdx = columnIndexes(childSchema, fk.columns());
+                    for (VectorSchemaRoot b : childTable.batches()) {
+                        for (int i = 0; i < b.getRowCount(); i++) {
+                            List<Object> key = keyOf(b, i, childIdx);
+                            if (key != null && deletedKeys.contains(key)) {
+                                throw new IllegalArgumentException(
+                                        "foreign key violation: row still referenced by "
+                                                + schemaName + "." + tableName);
+                            }
+                        }
+                    }
+                }
+            }
         }
     }
 
@@ -173,6 +262,14 @@ public class MiniDbModify extends TableModify implements MiniDbRel {
             }
             affected = 0;
             return; // nothing matched, table unchanged
+        }
+        if (getOperation() == Operation.DELETE) {
+            try {
+                validateDeleteRestrict(ctx, target, matched);
+            } catch (RuntimeException e) {
+                matched.close();
+                throw e;
+            }
         }
         // One representative matched row per original full-row value: identical
         // original rows always produce identical updated rows.
