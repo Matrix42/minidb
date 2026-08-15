@@ -35,12 +35,22 @@ public class SimpleTable {
         this.allocator = allocator;
         this.tableDir = tableDir;
         this.format = format;
+        createTableDir();
         List<Field> fields = new ArrayList<>();
         for (ColumnMeta column : schema.columns()) {
             fields.add(ArrowTypes.field(column));
         }
         this.arrowSchema = new Schema(fields, Map.of("schema", schema.schemaName()));
         this.partSeq = new AtomicInteger(maxPartSeq());
+    }
+
+    /** 建表时确保表目录存在(幂等);数据本身仍由 writePart 按需落盘。 */
+    private void createTableDir() {
+        try {
+            Files.createDirectories(tableDir);
+        } catch (IOException e) {
+            throw new UncheckedIOException(e);
+        }
     }
 
     public TableSchema schema() {

@@ -77,6 +77,18 @@ class StorageManagerTest {
     }
 
     @Test
+    void createTableCreatesDir(@TempDir Path dir) {
+        MiniDbCatalog catalog = new MiniDbCatalog();
+        try (BufferAllocator allocator = new RootAllocator()) {
+            StorageManager storage = new StorageManager(catalog, allocator, dir);
+            storage.createTable(schema());
+            // 建表即建目录,不等首次写入。
+            assertTrue(Files.isDirectory(dir.resolve("public").resolve("t")));
+            storage.close();
+        }
+    }
+
+    @Test
     void dropTableDeletesDir(@TempDir Path dir) {
         MiniDbCatalog catalog = new MiniDbCatalog();
         try (BufferAllocator allocator = new RootAllocator()) {
