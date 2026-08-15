@@ -143,10 +143,6 @@ public class StorageManager implements AutoCloseable {
         return table;
     }
 
-    public ArrowTable getTable(String name) {
-        return getTable(MiniDbCatalog.DEFAULT_SCHEMA, name);
-    }
-
     public ArrowTable createTable(TableSchema schema) {
         ArrowTable table = new ArrowTable(schema, allocator);
         String sk = storageKey(schema.schemaName(), schema.name());
@@ -171,10 +167,6 @@ public class StorageManager implements AutoCloseable {
         } catch (IOException e) {
             throw new UncheckedIOException(e);
         }
-    }
-
-    public void dropTable(String name) {
-        dropTable(MiniDbCatalog.DEFAULT_SCHEMA, name);
     }
 
     public void dropSchema(String schemaName) {
@@ -217,18 +209,10 @@ public class StorageManager implements AutoCloseable {
         markDirty(schemaName, tableName);
     }
 
-    public void truncateTable(String name) {
-        truncateTable(MiniDbCatalog.DEFAULT_SCHEMA, name);
-    }
-
     public void markDirty(String schemaName, String tableName) {
         String sk = storageKey(schemaName, tableName);
         dirty.add(sk);
         catalog.markStatsStale(schemaName, tableName);
-    }
-
-    public void markDirty(String tableName) {
-        markDirty(MiniDbCatalog.DEFAULT_SCHEMA, tableName);
     }
 
     public void flushDirty() {

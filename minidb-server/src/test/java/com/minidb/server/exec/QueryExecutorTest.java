@@ -167,7 +167,7 @@ class QueryExecutorTest {
         executor.execute("CREATE TABLE dst (id INTEGER)");
         QueryResult r = executor.execute("INSERT INTO dst SELECT id FROM src");
         assertEquals(2L, ((QueryResult.Update) r).count());
-        assertEquals(2L, storage.getTable("dst").rowCount());
+        assertEquals(2L, storage.getTable("public", "dst").rowCount());
     }
 
     @Test
@@ -209,7 +209,7 @@ class QueryExecutorTest {
         executor.execute("INSERT INTO t VALUES (1, 'a'), (2, 'b')");
         QueryResult update = executor.execute("UPDATE t SET name = 'x' WHERE id = 99");
         assertEquals(0L, ((QueryResult.Update) update).count());
-        assertEquals(2L, storage.getTable("t").rowCount());
+        assertEquals(2L, storage.getTable("public", "t").rowCount());
     }
 
     @Test
@@ -241,8 +241,8 @@ class QueryExecutorTest {
         executor.execute("INSERT INTO t VALUES (1, 'a'), (2, 'b'), (3, 'c')");
         QueryResult truncate = executor.execute("TRUNCATE TABLE t");
         assertEquals(0L, ((QueryResult.Update) truncate).count());
-        assertEquals(0L, storage.getTable("t").rowCount());
-        assertTrue(catalog.hasTable("t"));
+        assertEquals(0L, storage.getTable("public", "t").rowCount());
+        assertTrue(catalog.hasTable("public", "t"));
 
         // SELECT over the now-empty table returns a zero-row result whose
         // schema still describes both columns.
@@ -286,7 +286,7 @@ class QueryExecutorTest {
         executor.execute("TRUNCATE TABLE t");
         QueryResult insert = executor.execute("INSERT INTO t VALUES (2, 'b')");
         assertEquals(1L, ((QueryResult.Update) insert).count());
-        assertEquals(1L, storage.getTable("t").rowCount());
+        assertEquals(1L, storage.getTable("public", "t").rowCount());
     }
 
     @Test

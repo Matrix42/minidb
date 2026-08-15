@@ -50,7 +50,7 @@ class ExplainExecutorTest {
     }
 
     private void insertRows(String table, int[] ids, String[] names) {
-        var arrowTable = storage.getTable(table);
+        var arrowTable = storage.getTable("public", table);
         var root = arrowTable.newBatchRoot();
         root.allocateNew();
         var idv = (IntVector) root.getVector(0);

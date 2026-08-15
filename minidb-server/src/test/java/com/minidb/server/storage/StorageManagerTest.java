@@ -39,7 +39,7 @@ class StorageManagerTest {
             ((VarCharVector) batch.getVector("name")).setSafe(0, "hello".getBytes());
             batch.setRowCount(1);
             table.appendBatch(batch);
-            storage.markDirty("t");
+            storage.markDirty("public", "t");
             storage.close();
         }
 
@@ -49,7 +49,7 @@ class StorageManagerTest {
         try (BufferAllocator allocator = new RootAllocator()) {
             StorageManager storage2 = new StorageManager(catalog2, allocator, dir);
             storage2.loadAll();
-            ArrowTable reloaded = storage2.getTable("t");
+            ArrowTable reloaded = storage2.getTable("public", "t");
             assertEquals(1, reloaded.rowCount());
             IntVector ids = (IntVector) reloaded.batches().get(0).getVector("id");
             assertEquals(7, ids.get(0));
@@ -66,10 +66,10 @@ class StorageManagerTest {
         try (BufferAllocator allocator = new RootAllocator()) {
             StorageManager storage = new StorageManager(catalog, allocator, dir);
             storage.createTable(schema());
-            storage.markDirty("t");
+            storage.markDirty("public", "t");
             storage.flushDirty();
             assertTrue(Files.exists(dir.resolve("public").resolve("t.arrow")));
-            storage.dropTable("t");
+            storage.dropTable("public", "t");
             assertFalse(Files.exists(dir.resolve("public").resolve("t.arrow")));
             storage.close();
         }
@@ -87,8 +87,8 @@ class StorageManagerTest {
             ((VarCharVector) batch.getVector("name")).setSafe(0, "hello".getBytes());
             batch.setRowCount(1);
             table.appendBatch(batch);
-            storage.truncateTable("t");
-            storage.markDirty("t");
+            storage.truncateTable("public", "t");
+            storage.markDirty("public", "t");
             storage.close();
         }
 
@@ -96,7 +96,7 @@ class StorageManagerTest {
         try (BufferAllocator allocator = new RootAllocator()) {
             StorageManager storage2 = new StorageManager(catalog2, allocator, dir);
             storage2.loadAll();
-            ArrowTable reloaded = storage2.getTable("t");
+            ArrowTable reloaded = storage2.getTable("public", "t");
             assertEquals(0, reloaded.rowCount());
             // schema intact: a fresh batch still carries both columns
             VectorSchemaRoot fresh = reloaded.newBatchRoot();
@@ -113,7 +113,7 @@ class StorageManagerTest {
         try (BufferAllocator allocator = new RootAllocator()) {
             StorageManager storage = new StorageManager(catalog, allocator, dir);
             storage.loadAll();
-            assertEquals(0, catalog.tableNames().size());
+            assertEquals(0, catalog.tableNames("public").size());
             storage.close();
         }
     }
@@ -135,8 +135,8 @@ class StorageManagerTest {
         try (BufferAllocator allocator = new RootAllocator()) {
             StorageManager storage2 = new StorageManager(catalog2, allocator, dir);
             storage2.loadAll();
-            assertTrue(catalog2.hasTable("t"));
-            List<ColumnMeta> cols = catalog2.getTable("t").columns();
+            assertTrue(catalog2.hasTable("public", "t"));
+            List<ColumnMeta> cols = catalog2.getTable("public", "t").columns();
             assertEquals(ColumnType.INTEGER, cols.get(0).type());
             assertEquals(ColumnType.DECIMAL, cols.get(1).type());
             assertEquals(10, cols.get(1).precision());
@@ -157,14 +157,14 @@ class StorageManagerTest {
         try (BufferAllocator allocator = new RootAllocator()) {
             StorageManager storage = new StorageManager(catalog, allocator, dir);
             storage.createTable(schema);
-            storage.markDirty("t");
+            storage.markDirty("public", "t");
             storage.close();
         }
         MiniDbCatalog catalog2 = new MiniDbCatalog();
         try (BufferAllocator allocator = new RootAllocator()) {
             StorageManager storage2 = new StorageManager(catalog2, allocator, dir);
             storage2.loadAll();
-            List<ColumnMeta> cols = catalog2.getTable("t").columns();
+            List<ColumnMeta> cols = catalog2.getTable("public", "t").columns();
             assertEquals(ColumnType.SMALLINT, cols.get(0).type());
             assertEquals(ColumnType.REAL, cols.get(1).type());
             assertEquals(ColumnType.DECIMAL, cols.get(2).type());

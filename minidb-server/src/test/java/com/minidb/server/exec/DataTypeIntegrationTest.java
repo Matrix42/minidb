@@ -108,7 +108,7 @@ class DataTypeIntegrationTest {
     void decimalRoundTripKeepsExactScale() {
         executor.execute("CREATE TABLE t (price DECIMAL(10,2))");
         // 先断言 DDL 落库的 precision/scale,再走 INSERT → SELECT 验证值。
-        ColumnMeta price = catalog.getTable("t").columns().get(0);
+        ColumnMeta price = catalog.getTable("public", "t").columns().get(0);
         assertEquals(ColumnType.DECIMAL, price.type());
         assertEquals(10, price.precision());
         assertEquals(2, price.scale());
@@ -131,7 +131,7 @@ class DataTypeIntegrationTest {
     void numericFoldsToDecimal() {
         // NUMERIC 被 Calcite 归一为 DECIMAL,端到端同样落 DecimalVector(与 DataTypeDdlTest 对齐)。
         executor.execute("CREATE TABLE t (qty NUMERIC(8))");
-        ColumnMeta qty = catalog.getTable("t").columns().get(0);
+        ColumnMeta qty = catalog.getTable("public", "t").columns().get(0);
         assertEquals(ColumnType.DECIMAL, qty.type());
         assertEquals(8, qty.precision());
 
@@ -167,7 +167,7 @@ class DataTypeIntegrationTest {
         // NVARCHAR 与 CHAR 一样变长(Utf8)、不做空格填充;声明名靠 Arrow 元数据保真,
         // 落 VarCharVector、值精确往返(含中文)。
         executor.execute("CREATE TABLE t (nv NVARCHAR)");
-        List<ColumnMeta> cols = catalog.getTable("t").columns();
+        List<ColumnMeta> cols = catalog.getTable("public", "t").columns();
         assertEquals(ColumnType.NVARCHAR, cols.get(0).type());
 
         executor.execute("INSERT INTO t VALUES ('字符')");
@@ -196,14 +196,14 @@ class DataTypeIntegrationTest {
                 new ColumnMeta("n", ColumnType.NCHAR),
                 new ColumnMeta("nv", ColumnType.NVARCHAR),
                 new ColumnMeta("b", ColumnType.BINARY))));
-        storage.markDirty("nt");
+        storage.markDirty("public", "nt");
         storage.close();
 
         MiniDbCatalog catalog2 = new MiniDbCatalog();
         StorageManager storage2 = new StorageManager(catalog2, allocator, dataDir);
         try {
             storage2.loadAll();
-            List<ColumnMeta> cols = catalog2.getTable("nt").columns();
+            List<ColumnMeta> cols = catalog2.getTable("public", "nt").columns();
             assertEquals(ColumnType.NCHAR, cols.get(0).type());
             assertEquals(ColumnType.NVARCHAR, cols.get(1).type());
             assertEquals(ColumnType.BINARY, cols.get(2).type());
@@ -386,7 +386,7 @@ class DataTypeIntegrationTest {
         StorageManager storage2 = new StorageManager(catalog2, allocator, dataDir);
         try {
             storage2.loadAll();
-            List<ColumnMeta> cols = catalog2.getTable("t").columns();
+            List<ColumnMeta> cols = catalog2.getTable("public", "t").columns();
             assertEquals(ColumnType.SMALLINT, cols.get(0).type());
             assertEquals(ColumnType.DECIMAL, cols.get(1).type());
             assertEquals(10, cols.get(1).precision());
@@ -396,7 +396,7 @@ class DataTypeIntegrationTest {
 
             // 数据本身也随持久化往返,证明 DECIMAL 值按 scale 精确落盘(而非退化浮点),
             // BINARY 不补零、声明名经 Arrow 元数据保真。
-            VectorSchemaRoot batch = storage2.getTable("t").batches().get(0);
+            VectorSchemaRoot batch = storage2.getTable("public", "t").batches().get(0);
             assertEquals(1, batch.getRowCount());
             assertEquals(1, ((SmallIntVector) batch.getVector("s")).get(0));
             assertEquals(0, new BigDecimal("1.23").compareTo(

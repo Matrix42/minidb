@@ -104,10 +104,10 @@ class MiniDbCatalogSchemaTest {
         MiniDbCatalog catalog = new MiniDbCatalog();
         catalog.createTable(new TableSchema("t", List.of(
                 new ColumnMeta("id", ColumnType.INTEGER))));
-        assertTrue(catalog.hasTable("t"));
-        assertEquals("public", catalog.getTable("t").schemaName());
-        assertEquals(1, catalog.tableNames().size());
-        catalog.dropTable("t");
-        assertFalse(catalog.hasTable("t"));
+        assertTrue(catalog.hasTable("public", "t"));
+        assertEquals("public", catalog.getTable("public", "t").schemaName());
+        assertEquals(1, catalog.tableNames("public").size());
+        catalog.dropTable("public", "t");
+        assertFalse(catalog.hasTable("public", "t"));
     }
 }

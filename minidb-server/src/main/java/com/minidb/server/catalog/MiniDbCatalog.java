@@ -192,22 +192,6 @@ public class MiniDbCatalog {
         return key(schemaName) + "." + key(tableName);
     }
 
-    public void dropTable(String name) {
-        dropTable(DEFAULT_SCHEMA, name);
-    }
-
-    public TableSchema getTable(String name) {
-        return getTable(DEFAULT_SCHEMA, name);
-    }
-
-    public boolean hasTable(String name) {
-        return hasTable(DEFAULT_SCHEMA, name);
-    }
-
-    public List<String> tableNames() {
-        return tableNames(DEFAULT_SCHEMA);
-    }
-
     public void addListener(Runnable listener) {
         listeners.add(listener);
     }

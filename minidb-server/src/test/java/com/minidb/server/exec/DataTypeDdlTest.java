@@ -44,7 +44,7 @@ class DataTypeDdlTest {
     @Test
     void createTableParsesDecimalPrecisionScale() {
         executor.execute("CREATE TABLE t (price DECIMAL(10,2), qty NUMERIC(8), s SMALLINT)");
-        List<ColumnMeta> cols = catalog.getTable("t").columns();
+        List<ColumnMeta> cols = catalog.getTable("public", "t").columns();
         assertEquals(ColumnType.DECIMAL, cols.get(0).type());
         assertEquals(10, cols.get(0).precision());
         assertEquals(2, cols.get(0).scale());

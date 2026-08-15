@@ -21,17 +21,17 @@ class MiniDbCatalogTest {
     void createAndGetTable() {
         MiniDbCatalog catalog = new MiniDbCatalog();
         catalog.createTable(table("t1"));
-        assertTrue(catalog.hasTable("t1"));
-        assertEquals("t1", catalog.getTable("t1").name());
-        assertEquals(2, catalog.getTable("t1").columns().size());
+        assertTrue(catalog.hasTable("public", "t1"));
+        assertEquals("t1", catalog.getTable("public", "t1").name());
+        assertEquals(2, catalog.getTable("public", "t1").columns().size());
     }
 
     @Test
     void tableNamesCaseInsensitive() {
         MiniDbCatalog catalog = new MiniDbCatalog();
         catalog.createTable(table("t1"));
-        assertTrue(catalog.hasTable("T1"));
-        assertEquals("t1", catalog.getTable("T1").name());
+        assertTrue(catalog.hasTable("public", "T1"));
+        assertEquals("t1", catalog.getTable("public", "T1").name());
     }
 
     @Test
@@ -45,20 +45,20 @@ class MiniDbCatalogTest {
     void dropTableRemovesIt() {
         MiniDbCatalog catalog = new MiniDbCatalog();
         catalog.createTable(table("t1"));
-        catalog.dropTable("t1");
-        assertFalse(catalog.hasTable("t1"));
+        catalog.dropTable("public", "t1");
+        assertFalse(catalog.hasTable("public", "t1"));
     }
 
     @Test
     void dropMissingTableThrows() {
         MiniDbCatalog catalog = new MiniDbCatalog();
-        assertThrows(IllegalArgumentException.class, () -> catalog.dropTable("nope"));
+        assertThrows(IllegalArgumentException.class, () -> catalog.dropTable("public", "nope"));
     }
 
     @Test
     void getMissingTableThrows() {
         MiniDbCatalog catalog = new MiniDbCatalog();
-        assertThrows(IllegalArgumentException.class, () -> catalog.getTable("nope"));
+        assertThrows(IllegalArgumentException.class, () -> catalog.getTable("public", "nope"));
     }
 
     @Test
@@ -67,7 +67,7 @@ class MiniDbCatalogTest {
         AtomicInteger calls = new AtomicInteger();
         catalog.addListener(calls::incrementAndGet);
         catalog.createTable(table("t1"));
-        catalog.dropTable("t1");
+        catalog.dropTable("public", "t1");
         assertEquals(2, calls.get());
     }
 
