@@ -5,6 +5,7 @@ import org.apache.calcite.plan.RelOptRule;
 import org.apache.calcite.rel.core.RelFactories;
 import org.apache.calcite.rel.rules.AggregateProjectMergeRule;
 import org.apache.calcite.rel.rules.AggregateRemoveRule;
+import org.apache.calcite.rel.rules.CoreRules;
 import org.apache.calcite.rel.rules.FilterAggregateTransposeRule;
 import org.apache.calcite.rel.rules.FilterJoinRule;
 import org.apache.calcite.rel.rules.FilterMergeRule;
@@ -27,6 +28,9 @@ public final class MiniDbLogicalRules {
      *  注意:不含 ProjectRemoveRule / CalcRemoveRule —— 两者按「索引恒等」判 trivial,会删掉改名节点
      *  (SELECT a.id AS aid),丢失 JDBC 可见的列别名。 */
     public static final List<RelOptRule> HEP = List.of(
+            // 常量折叠 + 条件简化(依赖 RexExecutor,见 Planner)
+            CoreRules.FILTER_REDUCE_EXPRESSIONS,
+            CoreRules.PROJECT_REDUCE_EXPRESSIONS,
             // 投影/过滤化简与换位
             ProjectMergeRule.Config.DEFAULT.toRule(),
             FilterMergeRule.Config.DEFAULT.toRule(),
