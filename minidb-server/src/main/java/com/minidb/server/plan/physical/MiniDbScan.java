@@ -55,6 +55,27 @@ public class MiniDbScan extends TableScan implements MiniDbRel {
         return arrowTable.scan();
     }
 
+    /**
+     * 解析真实表(非瞬态/系统表)的 {@link SimpleTable};瞬态表(单段名,递归 CTE)与
+     * information_schema 系统表没有对应存储表,返回 null。供 COUNT(*) 短路直接读
+     * {@code rowCount()} 而不扫描数据。
+     */
+    public SimpleTable resolveTable(ExecContext ctx) {
+        List<String> qualified = table.getQualifiedName();
+        int n = qualified.size();
+        if (n == 1) {
+            return null;
+        }
+        if (n >= 3) {
+            String schemaName = qualified.get(n - 2);
+            if (InformationSchemaCatalog.isSystemSchema(schemaName)) {
+                return null;
+            }
+            return ctx.getTable(schemaName, qualified.get(n - 1));
+        }
+        return ctx.getTable(qualified.get(n - 1));
+    }
+
     private BatchIterator transientScan(List<Object[]> rows, ExecContext ctx) {
         VectorSchemaRoot root =
                 RowVectors.buildRoot(rows, table.getRowType(), ctx.allocator());

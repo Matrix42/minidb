@@ -2,6 +2,7 @@ package com.minidb.server.plan.physical;
 
 import com.minidb.storage.common.ArrowTypes;
 import com.minidb.storage.common.BatchIterator;
+import com.minidb.storage.common.SimpleTable;
 import com.minidb.server.exec.ExecContext;
 import com.minidb.server.exec.RowCopier;
 import java.math.BigDecimal;
@@ -52,6 +53,15 @@ public class MiniDbAggregate extends Aggregate implements MiniDbRel {
 
     @Override
     public BatchIterator execute(ExecContext ctx) {
+        // COUNT(*) 无 GROUP BY 直接读表行数(元数据),不扫描数据。
+        if (getGroupSet().isEmpty() && getAggCallList().size() == 1
+                && isCountStar(getAggCallList().get(0))
+                && getInput() instanceof MiniDbScan scan) {
+            SimpleTable table = scan.resolveTable(ctx);
+            if (table != null) {
+                return singleRowCount(table.rowCount(), ctx);
+            }
+        }
         BatchIterator input = ((MiniDbRel) getInput()).execute(ctx);
         ImmutableBitSet groupSet = getGroupSet();
         List<AggregateCall> calls = getAggCallList();
@@ -91,6 +101,49 @@ public class MiniDbAggregate extends Aggregate implements MiniDbRel {
             return BatchIterator.empty();
         }
         VectorSchemaRoot out = buildOutput(groups, ctx);
+        boolean[] done = {false};
+        return new BatchIterator() {
+            @Override
+            public boolean hasNext() {
+                return !done[0];
+            }
+
+            @Override
+            public VectorSchemaRoot next() {
+                done[0] = true;
+                return out;
+            }
+
+            @Override
+            public void close() {
+                out.close();
+            }
+        };
+    }
+
+    /** COUNT(*):COUNT 聚合、无 DISTINCT、无参数。 */
+    private static boolean isCountStar(AggregateCall call) {
+        return call.getAggregation().kind == SqlKind.COUNT
+                && !call.isDistinct()
+                && call.getArgList().isEmpty()
+                && call.rexList.isEmpty();
+    }
+
+    /** 把 COUNT(*) 的行数直接物化成单行单列结果(不扫描)。 */
+    private BatchIterator singleRowCount(long count, ExecContext ctx) {
+        List<FieldVector> vectors = new ArrayList<>();
+        for (RelDataTypeField f : getRowType().getFieldList()) {
+            vectors.add(ArrowTypes.field(f).createVector(ctx.allocator()));
+        }
+        for (FieldVector v : vectors) {
+            v.setInitialCapacity(1);
+            v.allocateNew();
+        }
+        writeLong(vectors.get(0), 0, count);
+        for (FieldVector v : vectors) {
+            v.setValueCount(1);
+        }
+        VectorSchemaRoot out = VectorSchemaRoot.of(vectors.toArray(new FieldVector[0]));
         boolean[] done = {false};
         return new BatchIterator() {
             @Override

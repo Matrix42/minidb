@@ -9,6 +9,7 @@ import java.math.BigDecimal;
 import java.nio.file.Path;
 import org.apache.arrow.memory.BufferAllocator;
 import org.apache.arrow.memory.RootAllocator;
+import org.apache.arrow.vector.BigIntVector;
 import org.apache.arrow.vector.DecimalVector;
 import org.apache.arrow.vector.Float4Vector;
 import org.apache.arrow.vector.SmallIntVector;
@@ -124,5 +125,48 @@ class MiniDbAggregateTest {
                 "expected DecimalVector for SUM(DISTINCT), got " + s.getClass().getSimpleName());
         assertEquals(0, new BigDecimal("31.00").compareTo((BigDecimal) s.getObject(0)));
         root.close();
+    }
+
+    private long countOf(QueryResult r) {
+        VectorSchemaRoot root = rows(r);
+        try {
+            return ((BigIntVector) root.getVector(0)).get(0);
+        } finally {
+            root.close();
+        }
+    }
+
+    @Test
+    void countStarReadsMetadata() {
+        executor.execute("CREATE TABLE t (id INTEGER)");
+        executor.execute("INSERT INTO t VALUES (1), (2), (3)");
+        assertEquals(3, countOf(executor.execute("SELECT COUNT(*) FROM t")));
+    }
+
+    @Test
+    void countStarEmptyTableIsZero() {
+        executor.execute("CREATE TABLE t (id INTEGER)");
+        assertEquals(0, countOf(executor.execute("SELECT COUNT(*) FROM t")));
+    }
+
+    @Test
+    void countStarWithWhereStillScans() {
+        executor.execute("CREATE TABLE t (id INTEGER)");
+        executor.execute("INSERT INTO t VALUES (1), (2), (3)");
+        assertEquals(2, countOf(executor.execute("SELECT COUNT(*) FROM t WHERE id >= 2")));
+    }
+
+    @Test
+    void countColumnStillIgnoresNulls() {
+        executor.execute("CREATE TABLE t (id INTEGER)");
+        executor.execute("INSERT INTO t VALUES (1), (NULL), (3)");
+        assertEquals(2, countOf(executor.execute("SELECT COUNT(id) FROM t")));
+    }
+
+    @Test
+    void countStarParquet() {
+        executor.execute("CREATE TABLE t (id INTEGER) WITH ('format'='parquet')");
+        executor.execute("INSERT INTO t VALUES (1), (2), (3)");
+        assertEquals(3, countOf(executor.execute("SELECT COUNT(*) FROM t")));
     }
 }
