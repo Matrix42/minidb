@@ -42,7 +42,6 @@ import org.apache.calcite.rex.RexInputRef;
 import org.apache.calcite.rex.RexLiteral;
 import org.apache.calcite.rex.RexNode;
 import org.apache.calcite.sql.SqlKind;
-import org.apache.calcite.sql.fun.SqlStdOperatorTable;
 import org.apache.calcite.sql.fun.SqlTrimFunction;
 import org.apache.calcite.sql.type.SqlTypeName;
 import org.apache.calcite.util.DateString;
@@ -77,13 +76,6 @@ public class RexInterpreter {
 
     private ValueVector evalCall(RexCall call, VectorSchemaRoot input) {
         SqlKind kind = call.getKind();
-        // 零参「当前时间」函数(kind 是通用的 OTHER_FUNCTION,且函数框架不支持 0 参,故按算子特判)。
-        if (call.getOperator() == SqlStdOperatorTable.CURRENT_DATE) {
-            return currentDate(input);
-        }
-        if (call.getOperator() == SqlStdOperatorTable.CURRENT_TIMESTAMP) {
-            return currentTimestamp(input);
-        }
         switch (kind) {
             case AND:
                 return logic(call.getOperands(), input, true);
@@ -127,7 +119,7 @@ public class RexInterpreter {
                     }
                     throw new UnsupportedOperationException("unsupported operator: " + call.getOperator());
                 }
-                return f.evaluate(args, call.getType(), allocator);
+                return f.evaluate(args, call.getType(), input.getRowCount(), allocator);
             }
         }
     }
@@ -350,32 +342,6 @@ public class RexInterpreter {
         } finally {
             v.close();
         }
-    }
-
-    /** CURRENT_DATE:返回今天(本地时区)的 DATE,逐行广播同一值。 */
-    private ValueVector currentDate(VectorSchemaRoot input) {
-        int rows = input.getRowCount();
-        int days = (int) LocalDate.now().toEpochDay();
-        DateDayVector out = new DateDayVector("current_date", allocator);
-        out.allocateNew(rows);
-        for (int i = 0; i < rows; i++) {
-            out.setSafe(i, days);
-        }
-        out.setValueCount(rows);
-        return out;
-    }
-
-    /** CURRENT_TIMESTAMP:返回当前时刻的 TIMESTAMP(UTC 毫秒),逐行广播同一值。 */
-    private ValueVector currentTimestamp(VectorSchemaRoot input) {
-        int rows = input.getRowCount();
-        long millis = Instant.now().toEpochMilli();
-        TimeStampMilliVector out = new TimeStampMilliVector("current_timestamp", allocator);
-        out.allocateNew(rows);
-        for (int i = 0; i < rows; i++) {
-            out.setSafe(i, millis);
-        }
-        out.setValueCount(rows);
-        return out;
     }
 
     /**

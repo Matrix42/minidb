@@ -126,7 +126,7 @@ class FunctionFrameworkTest {
         intIn.setNull(2);
         intIn.setValueCount(3);
         ValueVector intOut = twiceOrInc.evaluate(List.of(intIn),
-                typeFactory.createSqlType(SqlTypeName.INTEGER), allocator);
+                typeFactory.createSqlType(SqlTypeName.INTEGER), intIn.getValueCount(), allocator);
         assertEquals(IntVector.class, intOut.getClass(), "应命中 int 重载并分配 IntVector 输出");
         assertEquals(3, intOut.getValueCount(), "evaluate 应统一 setValueCount");
         assertEquals(-10, ((IntVector) intOut).get(0));
@@ -140,7 +140,7 @@ class FunctionFrameworkTest {
         longIn.setSafe(1, 0L);
         longIn.setValueCount(2);
         ValueVector longOut = twiceOrInc.evaluate(List.of(longIn),
-                typeFactory.createSqlType(SqlTypeName.BIGINT), allocator);
+                typeFactory.createSqlType(SqlTypeName.BIGINT), longIn.getValueCount(), allocator);
         assertEquals(BigIntVector.class, longOut.getClass(), "应命中 long 重载并分配 BigIntVector 输出");
         assertEquals(42L, ((BigIntVector) longOut).get(0));
         assertEquals(1L, ((BigIntVector) longOut).get(1));
@@ -162,7 +162,7 @@ class FunctionFrameworkTest {
         try {
             UnsupportedOperationException ex = assertThrows(UnsupportedOperationException.class,
                     () -> twiceOrInc.evaluate(List.of(floatIn),
-                            typeFactory.createSqlType(SqlTypeName.INTEGER), allocator));
+                            typeFactory.createSqlType(SqlTypeName.INTEGER), floatIn.getValueCount(), allocator));
             assertTrue(ex.getMessage().contains("no overload of twiceOrInc"),
                     "异常应指明函数名与参数类型");
         } finally {

@@ -30,15 +30,17 @@ public final class Function {
         this.overloads = overloads;
     }
 
-    public ValueVector evaluate(List<ValueVector> args, RelDataType resultType,
+    public ValueVector evaluate(List<ValueVector> args, RelDataType resultType, int rows,
                                 BufferAllocator allocator) {
-        int rows = args.get(0).getValueCount();
         // 先解析(含输出类型)再分配:解析失败不泄漏输出向量。
         Class<? extends FieldVector> outputClass = outputVectorClass(resultType);
         Kernel kernel = resolve(args, outputClass);
         FieldVector out = ArrowTypes.field(resultType, "expr").createVector(allocator);
         out.setInitialCapacity(rows);
         out.allocateNew();
+        // 先 setValueCount 再执行 kernel:0 参函数(如 CURRENT_DATE)没有入参可读行数,
+        // 靠 out.getValueCount() 得知要写多少行;有参函数不受影响(仍读 args 的行数)。
+        out.setValueCount(rows);
         try {
             kernel.execute(args, out);
         } finally {
@@ -46,7 +48,6 @@ public final class Function {
                 a.close();
             }
         }
-        out.setValueCount(rows);
         return out;
     }
 

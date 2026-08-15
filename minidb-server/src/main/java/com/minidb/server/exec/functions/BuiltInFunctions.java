@@ -7,6 +7,7 @@ import java.util.Arrays;
 import java.util.List;
 import org.apache.arrow.vector.BigIntVector;
 import org.apache.arrow.vector.BitVector;
+import org.apache.arrow.vector.DateDayVector;
 import org.apache.arrow.vector.DecimalVector;
 import org.apache.arrow.vector.FieldVector;
 import org.apache.arrow.vector.Float4Vector;
@@ -14,6 +15,7 @@ import org.apache.arrow.vector.Float8Vector;
 import org.apache.arrow.vector.IntVector;
 import org.apache.arrow.vector.SmallIntVector;
 import org.apache.arrow.vector.TimeMilliVector;
+import org.apache.arrow.vector.TimeStampMilliVector;
 import org.apache.arrow.vector.ValueVector;
 import org.apache.arrow.vector.VarBinaryVector;
 import org.apache.arrow.vector.VarCharVector;
@@ -32,6 +34,7 @@ public final class BuiltInFunctions {
         comparison(registry);
         stringFunctions(registry);
         likeFunctions(registry);
+        currentTimeFunctions(registry);
         mathFunctions(registry);
         return registry;
     }
@@ -282,6 +285,36 @@ public final class BuiltInFunctions {
             }
         }
         return java.util.regex.Pattern.compile(regex.toString());
+    }
+
+    /** CURRENT_DATE / CURRENT_TIMESTAMP:零参「当前时间」函数(见 Function.evaluate 对 0 参的支持)。 */
+    private static void currentTimeFunctions(FunctionRegistry r) {
+        r.register(SqlStdOperatorTable.CURRENT_DATE, currentDateFunction());
+        r.register(SqlStdOperatorTable.CURRENT_TIMESTAMP, currentTimestampFunction());
+    }
+
+    private static Function currentDateFunction() {
+        Kernel kernel = (args, out) -> {
+            DateDayVector dv = (DateDayVector) out;
+            int days = (int) java.time.LocalDate.now().toEpochDay();
+            for (int i = 0; i < dv.getValueCount(); i++) {
+                dv.setSafe(i, days);
+            }
+        };
+        return new Function("CURRENT_DATE",
+                List.of(new Overload(List.of(), DateDayVector.class, kernel)));
+    }
+
+    private static Function currentTimestampFunction() {
+        Kernel kernel = (args, out) -> {
+            TimeStampMilliVector tv = (TimeStampMilliVector) out;
+            long millis = java.time.Instant.now().toEpochMilli();
+            for (int i = 0; i < tv.getValueCount(); i++) {
+                tv.setSafe(i, millis);
+            }
+        };
+        return new Function("CURRENT_TIMESTAMP",
+                List.of(new Overload(List.of(), TimeStampMilliVector.class, kernel)));
     }
 
     private static void comparison(FunctionRegistry r) {
