@@ -33,11 +33,12 @@ public class ArrowPartFormat implements PartFormat {
     }
 
     @Override
-    public VectorSchemaRoot read(Path part, BufferAllocator allocator) {
+    public VectorSchemaRoot read(Path part, org.apache.arrow.vector.types.pojo.Schema schema,
+                                 BufferAllocator allocator) {
         try (SeekableByteChannel channel = Files.newByteChannel(part, StandardOpenOption.READ);
              ArrowFileReader reader = new ArrowFileReader(channel, allocator)) {
             VectorSchemaRoot src = reader.getVectorSchemaRoot();
-            VectorSchemaRoot out = VectorSchemaRoot.create(src.getSchema(), allocator);
+            VectorSchemaRoot out = VectorSchemaRoot.create(schema, allocator);
             out.allocateNew();
             int dst = 0;
             while (reader.loadNextBatch()) {

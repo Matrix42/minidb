@@ -69,7 +69,7 @@ public class SimpleTable {
 
             @Override
             public VectorSchemaRoot next() {
-                VectorSchemaRoot batch = format.read(parts.get(idx++), allocator);
+                VectorSchemaRoot batch = format.read(parts.get(idx++), arrowSchema, allocator);
                 read.add(batch);
                 return batch;
             }
@@ -87,7 +87,7 @@ public class SimpleTable {
     /** 把一个 batch 直接落成一个新 part 文件。 */
     public void writePart(VectorSchemaRoot batch) {
         int seq = partSeq.incrementAndGet();
-        format.write(tableDir.resolve(String.format("part-%06d.arrow", seq)), batch);
+        format.write(tableDir.resolve(String.format("part-%06d.%s", seq, format.fileExtension())), batch);
     }
 
     /** 删除所有 part 文件(truncate)。 */
@@ -114,7 +114,7 @@ public class SimpleTable {
         return partFiles().size();
     }
 
-    /** 递归列出目录下所有 .arrow 文件,按名排序保证稳定顺序。 */
+    /** 递归列出目录下所有 part 文件(按格式扩展名),按名排序保证稳定顺序。 */
     private List<Path> partFiles() {
         List<Path> parts = new ArrayList<>();
         if (Files.exists(tableDir)) {
@@ -124,12 +124,12 @@ public class SimpleTable {
         return parts;
     }
 
-    private static void collectParts(Path dir, List<Path> parts) {
+    private void collectParts(Path dir, List<Path> parts) {
         try (DirectoryStream<Path> ds = Files.newDirectoryStream(dir)) {
             for (Path p : ds) {
                 if (Files.isDirectory(p)) {
                     collectParts(p, parts);
-                } else if (p.getFileName().toString().endsWith(".arrow")) {
+                } else if (p.getFileName().toString().endsWith(partSuffix())) {
                     parts.add(p);
                 }
             }
@@ -140,12 +140,13 @@ public class SimpleTable {
 
     /** 现有 part 文件的最大序号(重启后接续)。 */
     private int maxPartSeq() {
+        String suffix = partSuffix();
         int max = 0;
         for (Path part : partFiles()) {
             String name = part.getFileName().toString();
-            if (name.startsWith("part-") && name.endsWith(".arrow")) {
+            if (name.startsWith("part-") && name.endsWith(suffix)) {
                 try {
-                    int seq = Integer.parseInt(name.substring("part-".length(), name.length() - ".arrow".length()));
+                    int seq = Integer.parseInt(name.substring("part-".length(), name.length() - suffix.length()));
                     max = Math.max(max, seq);
                 } catch (NumberFormatException ignored) {
                     // 非标准命名,跳过
@@ -153,5 +154,9 @@ public class SimpleTable {
             }
         }
         return max;
+    }
+
+    private String partSuffix() {
+        return "." + format.fileExtension();
     }
 }
