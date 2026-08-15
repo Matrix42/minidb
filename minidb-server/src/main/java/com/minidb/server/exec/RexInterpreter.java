@@ -8,6 +8,12 @@ import com.minidb.server.exec.functions.Kernels;
 import com.minidb.server.plan.physical.RowVectors;
 import java.math.BigDecimal;
 import java.nio.charset.StandardCharsets;
+import java.time.Instant;
+import java.time.LocalDate;
+import java.time.LocalDateTime;
+import java.time.ZoneOffset;
+import java.time.temporal.ChronoField;
+import java.time.temporal.WeekFields;
 import java.util.ArrayList;
 import java.util.Calendar;
 import java.util.List;
@@ -29,12 +35,14 @@ import org.apache.arrow.vector.ValueVector;
 import org.apache.arrow.vector.VarBinaryVector;
 import org.apache.arrow.vector.VarCharVector;
 import org.apache.arrow.vector.VectorSchemaRoot;
+import org.apache.calcite.avatica.util.TimeUnitRange;
 import org.apache.calcite.rel.type.RelDataType;
 import org.apache.calcite.rex.RexCall;
 import org.apache.calcite.rex.RexInputRef;
 import org.apache.calcite.rex.RexLiteral;
 import org.apache.calcite.rex.RexNode;
 import org.apache.calcite.sql.SqlKind;
+import org.apache.calcite.sql.fun.SqlStdOperatorTable;
 import org.apache.calcite.sql.fun.SqlTrimFunction;
 import org.apache.calcite.sql.type.SqlTypeName;
 import org.apache.calcite.util.DateString;
@@ -69,6 +77,13 @@ public class RexInterpreter {
 
     private ValueVector evalCall(RexCall call, VectorSchemaRoot input) {
         SqlKind kind = call.getKind();
+        // 零参「当前时间」函数(kind 是通用的 OTHER_FUNCTION,且函数框架不支持 0 参,故按算子特判)。
+        if (call.getOperator() == SqlStdOperatorTable.CURRENT_DATE) {
+            return currentDate(input);
+        }
+        if (call.getOperator() == SqlStdOperatorTable.CURRENT_TIMESTAMP) {
+            return currentTimestamp(input);
+        }
         switch (kind) {
             case AND:
                 return logic(call.getOperands(), input, true);
@@ -82,6 +97,8 @@ public class RexInterpreter {
                 return caseExpr(call, input);
             case TRIM:
                 return evalTrim(call, input);
+            case EXTRACT:
+                return evalExtract(call, input);
             case IS_NULL:
                 return nullTest(call.getOperands().get(0), input, true);
             case IS_NOT_NULL:
@@ -333,6 +350,84 @@ public class RexInterpreter {
         } finally {
             v.close();
         }
+    }
+
+    /** CURRENT_DATE:返回今天(本地时区)的 DATE,逐行广播同一值。 */
+    private ValueVector currentDate(VectorSchemaRoot input) {
+        int rows = input.getRowCount();
+        int days = (int) LocalDate.now().toEpochDay();
+        DateDayVector out = new DateDayVector("current_date", allocator);
+        out.allocateNew(rows);
+        for (int i = 0; i < rows; i++) {
+            out.setSafe(i, days);
+        }
+        out.setValueCount(rows);
+        return out;
+    }
+
+    /** CURRENT_TIMESTAMP:返回当前时刻的 TIMESTAMP(UTC 毫秒),逐行广播同一值。 */
+    private ValueVector currentTimestamp(VectorSchemaRoot input) {
+        int rows = input.getRowCount();
+        long millis = Instant.now().toEpochMilli();
+        TimeStampMilliVector out = new TimeStampMilliVector("current_timestamp", allocator);
+        out.allocateNew(rows);
+        for (int i = 0; i < rows; i++) {
+            out.setSafe(i, millis);
+        }
+        out.setValueCount(rows);
+        return out;
+    }
+
+    /**
+     * EXTRACT(field FROM expr):operand 0 是 SYMBOL 字面量(TimeUnitRange),operand 1 是
+     * DATE/TIMESTAMP。与 TRIM 同理,SYMBOL 走不了常规字面量向量,从 RexLiteral 直接取。
+     */
+    private ValueVector evalExtract(RexCall call, VectorSchemaRoot input) {
+        TimeUnitRange range = ((RexLiteral) call.getOperands().get(0))
+                .getValueAs(TimeUnitRange.class);
+        ValueVector v = eval(call.getOperands().get(1), input);
+        int rows = input.getRowCount();
+        try {
+            BigIntVector out = new BigIntVector("extract", allocator);
+            out.allocateNew(rows);
+            for (int i = 0; i < rows; i++) {
+                if (v.isNull(i)) {
+                    out.setNull(i);
+                } else {
+                    out.setSafe(i, extract(v, i, range));
+                }
+            }
+            out.setValueCount(rows);
+            return out;
+        } finally {
+            v.close();
+        }
+    }
+
+    /** 从 DATE(天)/TIMESTAMP(毫秒)向量第 i 行抽取 TimeUnitRange 对应字段。 */
+    private static long extract(ValueVector v, int i, TimeUnitRange range) {
+        LocalDateTime dt;
+        if (v instanceof DateDayVector dv) {
+            dt = LocalDate.ofEpochDay(dv.get(i)).atStartOfDay();
+        } else if (v instanceof TimeStampMilliVector tv) {
+            dt = LocalDateTime.ofInstant(Instant.ofEpochMilli(tv.get(i)), ZoneOffset.UTC);
+        } else {
+            throw new UnsupportedOperationException("EXTRACT on " + v.getMinorType());
+        }
+        return switch (range) {
+            case YEAR -> dt.getYear();
+            case QUARTER -> (dt.getMonthValue() - 1) / 3 + 1;
+            case MONTH -> dt.getMonthValue();
+            case WEEK -> dt.get(WeekFields.ISO.weekOfWeekBasedYear());
+            case DAY -> dt.getDayOfMonth();
+            case DOW -> dt.getDayOfWeek().getValue();
+            case DOY -> dt.getDayOfYear();
+            case HOUR -> dt.getHour();
+            case MINUTE -> dt.getMinute();
+            case SECOND -> dt.getSecond();
+            case MILLISECOND -> dt.get(ChronoField.MILLI_OF_SECOND);
+            default -> throw new UnsupportedOperationException("EXTRACT " + range + " not supported");
+        };
     }
 
     private ValueVector caseExpr(RexCall call, VectorSchemaRoot input) {
