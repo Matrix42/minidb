@@ -12,6 +12,7 @@ import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 import org.apache.arrow.vector.BigIntVector;
+import org.apache.arrow.vector.BitVector;
 import org.apache.arrow.vector.DecimalVector;
 import org.apache.arrow.vector.FieldVector;
 import org.apache.arrow.vector.Float4Vector;
@@ -27,6 +28,7 @@ import org.apache.calcite.rel.core.Aggregate;
 import org.apache.calcite.rel.core.AggregateCall;
 import org.apache.calcite.rel.type.RelDataType;
 import org.apache.calcite.rel.type.RelDataTypeField;
+import org.apache.calcite.rex.RexLiteral;
 import org.apache.calcite.rex.RexNode;
 import org.apache.calcite.sql.SqlKind;
 import org.apache.calcite.sql.type.SqlTypeName;
@@ -195,6 +197,11 @@ public class MiniDbAggregate extends Aggregate implements MiniDbRel {
                 return distinct
                         ? () -> new DistinctAcc(kind, kind == SqlKind.MIN)
                         : () -> new MinMaxAcc(kind == SqlKind.MIN);
+            case LITERAL_AGG:
+                // 去相关后的 NOT IN 用它给「命中的分组」打标记:LITERAL_AGG[literal]()
+                // 对每个非空分组输出该字面量(字面量在 rexList 里,与输入行无关)。
+                return () -> new LiteralAcc(
+                        ((RexLiteral) call.rexList.get(0)).getValue());
             default:
                 throw new UnsupportedOperationException("aggregate not supported: " + kind);
         }
@@ -527,6 +534,30 @@ public class MiniDbAggregate extends Aggregate implements MiniDbRel {
                 return;
             }
             RowVectors.writeObject(out, row, best);
+        }
+    }
+
+    /** LITERAL_AGG[literal]():add 是 no-op(值与输入行无关),write 直接输出字面量。 */
+    private static final class LiteralAcc implements Accumulator {
+        private final Object value;
+
+        LiteralAcc(Object value) {
+            this.value = value;
+        }
+
+        @Override
+        public void add(ValueVector v, int row) {
+        }
+
+        @Override
+        public void write(FieldVector out, int row) {
+            if (value == null) {
+                out.setNull(row);
+            } else if (value instanceof Boolean b) {
+                ((BitVector) out).setSafe(row, b ? 1 : 0);
+            } else {
+                RowVectors.writeObject(out, row, value);
+            }
         }
     }
 

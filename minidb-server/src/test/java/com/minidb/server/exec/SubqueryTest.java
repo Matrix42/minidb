@@ -96,4 +96,25 @@ class SubqueryTest {
         assertEquals(2, ((BigIntVector) root.getVector("n")).get(0));
         root.close();
     }
+
+    @Test
+    void notInWithNullReturnsEmpty() {
+        // b.aid 含 NULL:NOT IN 恒非 TRUE → 结果空集(三值逻辑陷阱)。
+        VectorSchemaRoot root = ((QueryResult.Rows) executor.execute(
+                "SELECT id FROM a WHERE a.id NOT IN (SELECT b.aid FROM b) ORDER BY id")).data();
+        assertEquals(0, root.getRowCount());
+        root.close();
+    }
+
+    @Test
+    void notInWithoutNull() {
+        // 滤掉 NULL 后,b.aid 非空 = {1,2,3},a.id NOT IN → 只有 4。
+        VectorSchemaRoot root = ((QueryResult.Rows) executor.execute(
+                "SELECT id FROM a WHERE a.id NOT IN "
+                + "(SELECT b.aid FROM b WHERE b.aid IS NOT NULL) ORDER BY id")).data();
+        IntVector id = (IntVector) root.getVector("id");
+        assertEquals(1, id.getValueCount());
+        assertEquals(4, id.get(0));
+        root.close();
+    }
 }
