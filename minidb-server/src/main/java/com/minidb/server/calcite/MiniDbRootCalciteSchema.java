@@ -1,7 +1,6 @@
 package com.minidb.server.calcite;
 
 import com.minidb.server.catalog.MiniDbCatalog;
-import com.minidb.server.catalog.TableSchema;
 import java.util.HashMap;
 import java.util.Locale;
 import java.util.Map;
@@ -28,12 +27,7 @@ public class MiniDbRootCalciteSchema extends AbstractSchema {
 
     @Override
     protected Map<String, Table> getTableMap() {
-        Map<String, Table> tables = new HashMap<>();
-        for (String name : catalog.tableNames(currentSchema)) {
-            TableSchema ts = catalog.getTable(currentSchema, name);
-            tables.put(name, new MiniDbCalciteTable(ts, catalog));
-        }
-        return tables;
+        return MiniDbCalciteSchema.tableMap(catalog, currentSchema);
     }
 
     @Override

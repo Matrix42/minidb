@@ -11,6 +11,7 @@ import org.apache.calcite.config.CalciteConnectionProperty;
 import org.apache.calcite.config.Lex;
 import org.apache.calcite.jdbc.CalciteSchema;
 import org.apache.calcite.plan.RelOptCluster;
+import org.apache.calcite.plan.RelOptTable;
 import org.apache.calcite.plan.hep.HepPlanner;
 import org.apache.calcite.plan.hep.HepProgramBuilder;
 import org.apache.calcite.prepare.CalciteCatalogReader;
@@ -80,6 +81,13 @@ public class CalciteContext {
     }
 
     public RelRoot planInCluster(String sql, RelOptCluster cluster, String currentSchema) {
+        return planInCluster(sql, cluster, currentSchema, NO_VIEWS);
+    }
+
+    /** 展开视图时把视图定义 SQL 重新解析/校验/转换;viewExpander 由调用方(Planner)提供,
+     * 以便展开出的 RelNode 复用同一个 VolcanoPlanner(trait 注册一致,见坑 38)。 */
+    public RelRoot planInCluster(String sql, RelOptCluster cluster, String currentSchema,
+                                 RelOptTable.ViewExpander viewExpander) {
         SqlNode parsed = parse(sql);
         SqlTypeFactoryImpl typeFactory =
                 (SqlTypeFactoryImpl) cluster.getTypeFactory();
@@ -93,11 +101,17 @@ public class CalciteContext {
                 SqlValidator.Config.DEFAULT.withIdentifierExpansion(true));
         SqlNode validated = validator.validate(parsed);
         SqlToRelConverter converter = new SqlToRelConverter(
-                null, validator, catalogReader, cluster,
+                viewExpander, validator, catalogReader, cluster,
                 StandardConvertletTable.INSTANCE,
                 SqlToRelConverter.config());
         return converter.convertQuery(validated, false, true);
     }
+
+    private static final RelOptTable.ViewExpander NO_VIEWS =
+            (rowType, queryString, schemaPath, viewPath) -> {
+                throw new UnsupportedOperationException(
+                        "view expansion not supported in this context");
+            };
 
     private CalciteCatalogReader buildCatalogReader(
             SqlTypeFactoryImpl typeFactory, String currentSchema) {

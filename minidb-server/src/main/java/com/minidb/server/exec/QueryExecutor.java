@@ -7,6 +7,7 @@ import com.minidb.server.catalog.ColumnType;
 import com.minidb.server.catalog.InformationSchemaCatalog;
 import com.minidb.server.catalog.MiniDbCatalog;
 import com.minidb.server.catalog.TableSchema;
+import com.minidb.server.catalog.ViewDefinition;
 import com.minidb.server.plan.physical.MiniDbModify;
 import com.minidb.server.plan.physical.MiniDbRel;
 import com.minidb.server.plan.Planner;
@@ -19,15 +20,19 @@ import org.apache.arrow.memory.BufferAllocator;
 import org.apache.arrow.vector.VectorSchemaRoot;
 import org.apache.arrow.vector.types.pojo.Field;
 import org.apache.calcite.rel.RelNode;
+import org.apache.calcite.rel.type.RelDataType;
 import org.apache.calcite.rel.type.RelDataTypeField;
 import org.apache.calcite.sql.SqlBasicTypeNameSpec;
 import org.apache.calcite.sql.SqlNode;
 import org.apache.calcite.sql.ddl.SqlColumnDeclaration;
 import org.apache.calcite.sql.ddl.SqlCreateSchema;
 import org.apache.calcite.sql.ddl.SqlCreateTable;
+import org.apache.calcite.sql.ddl.SqlCreateView;
 import org.apache.calcite.sql.ddl.SqlDropSchema;
 import org.apache.calcite.sql.ddl.SqlDropTable;
+import org.apache.calcite.sql.ddl.SqlDropView;
 import org.apache.calcite.sql.ddl.SqlTruncateTable;
+import org.apache.calcite.sql.dialect.CalciteSqlDialect;
 
 public class QueryExecutor {
 
@@ -92,8 +97,14 @@ public class QueryExecutor {
         if (parsed instanceof SqlCreateTable create) {
             return handleCreate(create, currentSchema);
         }
+        if (parsed instanceof SqlCreateView create) {
+            return handleCreateView(create, currentSchema);
+        }
         if (parsed instanceof SqlDropTable drop) {
             return handleDrop(drop, currentSchema);
+        }
+        if (parsed instanceof SqlDropView drop) {
+            return handleDropView(drop, currentSchema);
         }
         if (parsed instanceof SqlTruncateTable truncate) {
             return handleTruncate(truncate, currentSchema);
@@ -171,6 +182,58 @@ public class QueryExecutor {
         TableSchema schema = new TableSchema(schemaName, tableName, columns);
         storage.createTable(schema);
         return new QueryResult.Update(0);
+    }
+
+    private QueryResult handleCreateView(SqlCreateView create, String currentSchema) {
+        List<String> parts = create.name.names;
+        String schemaName = parts.size() > 1 ? parts.get(0) : currentSchema;
+        String viewName = parts.get(parts.size() - 1);
+        // 把定义 SQL 规范化为 Calcite 方言文本(可被重新 parse,ViewTable 展开用)。
+        String querySql = create.query.toSqlString(CalciteSqlDialect.DEFAULT).getSql();
+        // 在视图所在 schema 上下文 plan 定义 SQL,得到结果列名+类型存入 ViewDefinition。
+        // 注:CREATE VIEW v(a,b) 的显式列名列表暂不支持(直接忽略,取查询输出列名)。
+        RelNode plan = planner.plan(querySql, schemaName);
+        ViewDefinition view = new ViewDefinition(
+                schemaName, viewName, querySql, columnsFromRowType(plan.getRowType()));
+        if (create.getReplace()) {
+            catalog.replaceView(view);
+        } else {
+            catalog.createView(view);
+        }
+        return new QueryResult.Update(0);
+    }
+
+    private QueryResult handleDropView(SqlDropView drop, String currentSchema) {
+        List<String> parts = drop.name.names;
+        String schemaName = parts.size() > 1 ? parts.get(0) : currentSchema;
+        String viewName = parts.get(parts.size() - 1);
+        if (!catalog.hasView(schemaName, viewName)) {
+            if (drop.ifExists) {
+                return new QueryResult.Update(0);
+            }
+            throw new IllegalArgumentException("view not found: " + viewName);
+        }
+        catalog.dropView(schemaName, viewName);
+        return new QueryResult.Update(0);
+    }
+
+    /** 从查询结果的 rowType 提取列定义(视图存储用)。DECIMAL/NUMERIC 保留 precision/scale。 */
+    private static List<ColumnMeta> columnsFromRowType(RelDataType rowType) {
+        List<ColumnMeta> columns = new ArrayList<>();
+        for (RelDataTypeField field : rowType.getFieldList()) {
+            ColumnType type = ArrowTypes.fromSqlTypeName(
+                    field.getType().getSqlTypeName().getName());
+            if (type == ColumnType.DECIMAL || type == ColumnType.NUMERIC) {
+                int precision = field.getType().getPrecision();
+                int scale = field.getType().getScale();
+                columns.add(new ColumnMeta(field.getName(), type,
+                        precision >= 0 ? precision : ColumnMeta.PRECISION_UNSET,
+                        scale >= 0 ? scale : ColumnMeta.SCALE_UNSET));
+            } else {
+                columns.add(new ColumnMeta(field.getName(), type));
+            }
+        }
+        return columns;
     }
 
     private QueryResult handleDrop(SqlDropTable drop, String currentSchema) {

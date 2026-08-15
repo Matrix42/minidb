@@ -12,16 +12,20 @@ import org.apache.calcite.DataContexts;
 import org.apache.calcite.plan.ConventionTraitDef;
 import org.apache.calcite.plan.RelOptCluster;
 import org.apache.calcite.plan.RelOptRule;
+import org.apache.calcite.plan.RelOptTable;
 import org.apache.calcite.plan.volcano.VolcanoPlanner;
 import org.apache.calcite.rel.RelCollationTraitDef;
 import org.apache.calcite.rel.RelNode;
 import org.apache.calcite.rel.RelRoot;
 import org.apache.calcite.rel.rules.JoinAssociateRule;
 import org.apache.calcite.rel.rules.JoinCommuteRule;
+import org.apache.calcite.rel.type.RelDataType;
 import org.apache.calcite.rel.type.RelDataTypeSystem;
 import org.apache.calcite.rex.RexBuilder;
 import org.apache.calcite.rex.RexExecutorImpl;
 import org.apache.calcite.sql.type.SqlTypeFactoryImpl;
+
+import java.util.List;
 
 public class Planner {
 
@@ -60,7 +64,12 @@ public class Planner {
                 new Utf8SqlTypeFactory(RelDataTypeSystem.DEFAULT);
         RelOptCluster cluster = RelOptCluster.create(volcanoPlanner, new RexBuilder(typeFactory));
 
-        RelRoot root = calcite.planInCluster(sql, cluster, currentSchema);
+        // 视图展开器:共享本次规划的 VolcanoPlanner 与 typeFactory,保证视图内展开的 RelNode
+        // 与外部树 traitSet 一致(否则 HepPlanner 新建的 cluster 缺 convention/collation 分量,
+        // changeTraits 时 trait 不匹配抛 AssertionError,见坑 38)。
+        RelOptTable.ViewExpander viewExpander =
+                new ViewExpander(volcanoPlanner, typeFactory, calcite, currentSchema);
+        RelRoot root = calcite.planInCluster(sql, cluster, currentSchema, viewExpander);
         RelNode logical = root.rel;
         // Phase 1: logical optimization (HepPlanner over Calcite Logical* tree)
         RelNode optimized = LogicalOptimizer.optimize(logical);
@@ -74,5 +83,31 @@ public class Planner {
                     "planner produced non-physical root: " + best);
         }
         return best;
+    }
+
+    /** 展开视图定义 SQL:取 schemaPath 最后一段作视图所在 schema,复用共享 planner 重新 plan。 */
+    private static final class ViewExpander implements RelOptTable.ViewExpander {
+        private final VolcanoPlanner planner;
+        private final SqlTypeFactoryImpl typeFactory;
+        private final CalciteContext calcite;
+        private final String fallbackSchema;
+
+        ViewExpander(VolcanoPlanner planner, SqlTypeFactoryImpl typeFactory,
+                     CalciteContext calcite, String fallbackSchema) {
+            this.planner = planner;
+            this.typeFactory = typeFactory;
+            this.calcite = calcite;
+            this.fallbackSchema = fallbackSchema;
+        }
+
+        @Override
+        public RelRoot expandView(RelDataType rowType, String queryString,
+                                  List<String> schemaPath, List<String> viewPath) {
+            String schema = schemaPath.isEmpty()
+                    ? fallbackSchema
+                    : schemaPath.get(schemaPath.size() - 1);
+            RelOptCluster cluster = RelOptCluster.create(planner, new RexBuilder(typeFactory));
+            return calcite.planInCluster(queryString, cluster, schema, this);
+        }
     }
 }

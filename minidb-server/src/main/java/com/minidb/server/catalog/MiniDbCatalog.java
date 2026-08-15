@@ -13,6 +13,7 @@ public class MiniDbCatalog {
     public static final String DEFAULT_SCHEMA = "public";
 
     private final Map<String, Map<String, TableSchema>> schemas = new ConcurrentHashMap<>();
+    private final Map<String, Map<String, ViewDefinition>> views = new ConcurrentHashMap<>();
     private final Map<String, TableStats> stats = new ConcurrentHashMap<>();
     private final List<Runnable> listeners = new CopyOnWriteArrayList<>();
 
@@ -48,6 +49,7 @@ public class MiniDbCatalog {
         if (schemas.remove(k) == null) {
             throw new IllegalArgumentException("schema not found: " + name);
         }
+        views.remove(k);
         stats.keySet().removeIf(key -> key.startsWith(k + "."));
         notifyChange();
     }
@@ -63,10 +65,66 @@ public class MiniDbCatalog {
             throw new IllegalArgumentException("schema not found: " + schema.schemaName());
         }
         String tk = key(schema.name());
+        if (hasView(schema.schemaName(), schema.name())) {
+            throw new IllegalArgumentException("view already exists: " + schema.name());
+        }
         if (tables.putIfAbsent(tk, schema) != null) {
             throw new IllegalArgumentException("table already exists: " + schema.name());
         }
         notifyChange();
+    }
+
+    public void createView(ViewDefinition view) {
+        Map<String, ViewDefinition> v = views.computeIfAbsent(
+                key(view.schemaName()), k -> new ConcurrentHashMap<>());
+        if (hasTable(view.schemaName(), view.name())) {
+            throw new IllegalArgumentException("table already exists: " + view.name());
+        }
+        if (v.putIfAbsent(key(view.name()), view) != null) {
+            throw new IllegalArgumentException("view already exists: " + view.name());
+        }
+        notifyChange();
+    }
+
+    /** CREATE OR REPLACE VIEW:覆盖同 schema 下同名视图(不检查是否存在)。 */
+    public void replaceView(ViewDefinition view) {
+        Map<String, ViewDefinition> v = views.computeIfAbsent(
+                key(view.schemaName()), k -> new ConcurrentHashMap<>());
+        if (hasTable(view.schemaName(), view.name())) {
+            throw new IllegalArgumentException("table already exists: " + view.name());
+        }
+        v.put(key(view.name()), view);
+        notifyChange();
+    }
+
+    public void dropView(String schemaName, String viewName) {
+        Map<String, ViewDefinition> v = views.get(key(schemaName));
+        if (v == null || v.remove(key(viewName)) == null) {
+            throw new IllegalArgumentException("view not found: " + viewName);
+        }
+        notifyChange();
+    }
+
+    public ViewDefinition getView(String schemaName, String viewName) {
+        Map<String, ViewDefinition> v = views.get(key(schemaName));
+        if (v == null) {
+            throw new IllegalArgumentException("schema not found: " + schemaName);
+        }
+        ViewDefinition view = v.get(key(viewName));
+        if (view == null) {
+            throw new IllegalArgumentException("view not found: " + viewName);
+        }
+        return view;
+    }
+
+    public boolean hasView(String schemaName, String viewName) {
+        Map<String, ViewDefinition> v = views.get(key(schemaName));
+        return v != null && v.containsKey(key(viewName));
+    }
+
+    public List<ViewDefinition> views(String schemaName) {
+        Map<String, ViewDefinition> v = views.get(key(schemaName));
+        return v == null ? List.of() : new ArrayList<>(v.values());
     }
 
     public void dropTable(String schemaName, String tableName) {
@@ -162,13 +220,20 @@ public class MiniDbCatalog {
             }
             tables.addAll(e.getValue().values());
         }
+        List<ViewDefinition> viewList = new ArrayList<>();
+        for (Map.Entry<String, Map<String, ViewDefinition>> e : views.entrySet()) {
+            if (InformationSchemaCatalog.SCHEMA_NAME.equals(e.getKey())) {
+                continue;
+            }
+            viewList.addAll(e.getValue().values());
+        }
         List<String> names = new ArrayList<>();
         for (String name : schemas.keySet()) {
             if (!InformationSchemaCatalog.SCHEMA_NAME.equals(name)) {
                 names.add(name);
             }
         }
-        return new CatalogSnapshot(names, tables, Map.copyOf(stats));
+        return new CatalogSnapshot(names, tables, viewList, Map.copyOf(stats));
     }
 
     /** 批量恢复(启动时用),不触发 notifyChange —— 避免加载时把刚读到的文件写回。 */
@@ -180,6 +245,11 @@ public class MiniDbCatalog {
             String sk = key(table.schemaName());
             Map<String, TableSchema> t = schemas.computeIfAbsent(sk, k -> new ConcurrentHashMap<>());
             t.putIfAbsent(key(table.name()), table);
+        }
+        for (ViewDefinition view : snapshot.views()) {
+            String sk = key(view.schemaName());
+            Map<String, ViewDefinition> v = views.computeIfAbsent(sk, k -> new ConcurrentHashMap<>());
+            v.putIfAbsent(key(view.name()), view);
         }
         for (var e : snapshot.stats().entrySet()) {
             stats.put(e.getKey(), e.getValue());
