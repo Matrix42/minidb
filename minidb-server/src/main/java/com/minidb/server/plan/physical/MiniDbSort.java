@@ -6,8 +6,11 @@ import com.minidb.server.exec.RowCopier;
 import com.minidb.server.exec.ValueComparators;
 import java.math.BigDecimal;
 import java.util.ArrayList;
-import java.util.Comparator;
 import java.util.List;
+import org.apache.arrow.algorithm.sort.CompositeVectorComparator;
+import org.apache.arrow.algorithm.sort.IndexSorter;
+import org.apache.arrow.algorithm.sort.VectorValueComparator;
+import org.apache.arrow.vector.IntVector;
 import org.apache.arrow.vector.ValueVector;
 import org.apache.arrow.vector.VectorSchemaRoot;
 import org.apache.calcite.plan.RelOptCluster;
@@ -52,48 +55,54 @@ public class MiniDbSort extends Sort implements MiniDbRel {
         }
 
         int rows = materialized.getRowCount();
-        List<Integer> order = new ArrayList<>(rows);
-        for (int i = 0; i < rows; i++) {
-            order.add(i);
+        IntVector indices = new IntVector("sort_indices", ctx.allocator());
+        indices.allocateNew(rows);
+        // allocateNew 只分配 buffer 不设 valueCount,而 IndexSorter.quickSort 靠
+        // getValueCount() 定排序范围,必须在这里显式设置,否则排序空转。
+        indices.setValueCount(rows);
+        VectorValueComparator<ValueVector> comparator = buildComparator(materialized);
+        try {
+            // Arrow 原生索引快排(arrow-algorithm),比较走 ValueComparators 的列式实现。
+            new IndexSorter<ValueVector>().sort(materialized.getVector(0), indices, comparator);
+
+            int offsetRows = literalInt(offset, 0);
+            int fetchRows = literalInt(fetch, Integer.MAX_VALUE);
+            int start = Math.min(offsetRows, rows);
+            int end = Math.min(rows, start + fetchRows);
+
+            VectorSchemaRoot out = VectorSchemaRoot.create(materialized.getSchema(), ctx.allocator());
+            out.allocateNew();
+            int dst = 0;
+            for (int i = start; i < end; i++) {
+                RowCopier.copyRow(materialized, indices.get(i), out, dst++);
+            }
+            out.setRowCount(dst);
+            materialized.close();
+
+            VectorSchemaRoot single = out;
+            boolean emitted = false;
+            return new BatchIterator() {
+                boolean done = emitted;
+
+                @Override
+                public boolean hasNext() {
+                    return !done;
+                }
+
+                @Override
+                public VectorSchemaRoot next() {
+                    done = true;
+                    return single;
+                }
+
+                @Override
+                public void close() {
+                    single.close();
+                }
+            };
+        } finally {
+            indices.close();
         }
-        Comparator<Integer> cmp = buildComparator(materialized);
-        order.sort(cmp);
-
-        int offsetRows = literalInt(offset, 0);
-        int fetchRows = literalInt(fetch, Integer.MAX_VALUE);
-        int start = Math.min(offsetRows, rows);
-        int end = Math.min(rows, start + fetchRows);
-
-        VectorSchemaRoot out = VectorSchemaRoot.create(materialized.getSchema(), ctx.allocator());
-        out.allocateNew();
-        int dst = 0;
-        for (int i = start; i < end; i++) {
-            RowCopier.copyRow(materialized, order.get(i), out, dst++);
-        }
-        out.setRowCount(dst);
-        materialized.close();
-
-        VectorSchemaRoot single = out;
-        boolean emitted = false;
-        return new BatchIterator() {
-            boolean done = emitted;
-
-            @Override
-            public boolean hasNext() {
-                return !done;
-            }
-
-            @Override
-            public VectorSchemaRoot next() {
-                done = true;
-                return single;
-            }
-
-            @Override
-            public void close() {
-                single.close();
-            }
-        };
     }
 
     private static int literalInt(RexNode node, int defaultValue) {
@@ -103,36 +112,53 @@ public class MiniDbSort extends Sort implements MiniDbRel {
         return defaultValue;
     }
 
-    private Comparator<Integer> buildComparator(VectorSchemaRoot root) {
-        Comparator<Integer> result = null;
-        for (RelFieldCollation fc : collation.getFieldCollations()) {
-            int field = fc.getFieldIndex();
+    /** 多列比较器:每列一个「null 恒排最后、desc 反转」的比较器,列式比较走 ValueComparators。 */
+    @SuppressWarnings("unchecked")
+    private VectorValueComparator<ValueVector> buildComparator(VectorSchemaRoot root) {
+        List<RelFieldCollation> collations = collation.getFieldCollations();
+        VectorValueComparator<ValueVector>[] inner = new VectorValueComparator[collations.size()];
+        for (int i = 0; i < collations.size(); i++) {
+            RelFieldCollation fc = collations.get(i);
             boolean desc = fc.getDirection() == RelFieldCollation.Direction.DESCENDING
                     || fc.getDirection() == RelFieldCollation.Direction.STRICTLY_DESCENDING;
-            Comparator<Integer> one = (a, b) -> compareCells(root, field, a, b);
-            if (desc) {
-                one = one.reversed();
-            }
-            result = result == null ? one : result.thenComparing(one);
+            SortComparator sc = new SortComparator(desc);
+            sc.attachVector(root.getVector(fc.getFieldIndex()));
+            inner[i] = sc;
         }
-        return result == null ? Comparator.comparingInt(i -> i) : result;
+        return new CompositeVectorComparator(inner);
     }
 
-    private static int compareCells(VectorSchemaRoot root, int field, int rowA, int rowB) {
-        ValueVector v = root.getVector(field);
-        boolean nullA = v.isNull(rowA);
-        boolean nullB = v.isNull(rowB);
-        if (nullA && nullB) {
-            return 0;
+    /** 包装列式比较,实现「null 恒排最后 + 可选 desc」;非 null 比较走 ValueComparators(无符号字节序)。 */
+    private static final class SortComparator extends VectorValueComparator<ValueVector> {
+        private final boolean descending;
+
+        SortComparator(boolean descending) {
+            this.descending = descending;
         }
-        if (nullA) {
-            return 1; // nulls last
+
+        @Override
+        public int compare(int i1, int i2) {
+            boolean null1 = vector1.isNull(i1);
+            boolean null2 = vector2.isNull(i2);
+            int cmp;
+            if (null1 || null2) {
+                cmp = (null1 && null2) ? 0 : (null1 ? 1 : -1); // null last
+            } else {
+                cmp = ValueComparators.compare(vector1, i1, vector2, i2);
+            }
+            return descending ? -cmp : cmp;
         }
-        if (nullB) {
-            return -1;
+
+        @Override
+        public int compareNotNull(int i1, int i2) {
+            int cmp = ValueComparators.compare(vector1, i1, vector2, i2);
+            return descending ? -cmp : cmp;
         }
-        // 列式比较:VarChar/VarBinary 走字节比较,避免每比较一次分配两个 String/BigDecimal 对象。
-        return ValueComparators.compare(v, rowA, v, rowB);
+
+        @Override
+        public VectorValueComparator<ValueVector> createNew() {
+            return new SortComparator(descending);
+        }
     }
 
     private VectorSchemaRoot mergeBatches(List<VectorSchemaRoot> batches, int total,
