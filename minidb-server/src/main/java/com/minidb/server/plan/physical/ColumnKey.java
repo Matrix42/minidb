@@ -32,6 +32,16 @@ final class ColumnKey {
         return hash;
     }
 
+    /** The root this key refers to (for output copy). */
+    VectorSchemaRoot root() {
+        return root;
+    }
+
+    /** The row within {@link #root()} this key refers to. */
+    int row() {
+        return row;
+    }
+
     @Override
     public boolean equals(Object o) {
         if (!(o instanceof ColumnKey other)) {

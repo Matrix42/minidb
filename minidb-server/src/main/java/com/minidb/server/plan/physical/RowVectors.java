@@ -3,6 +3,7 @@ package com.minidb.server.plan.physical;
 import com.minidb.server.catalog.ArrowTypes;
 import com.minidb.server.exec.BatchIterator;
 import com.minidb.server.exec.ExecContext;
+import com.minidb.server.exec.RowCopier;
 import java.math.BigDecimal;
 import java.math.RoundingMode;
 import java.nio.charset.StandardCharsets;
@@ -165,6 +166,51 @@ public final class RowVectors {
         }
         // of() after setValueCount: the root's rowCount derives from the first
         // vector's valueCount.
+        return VectorSchemaRoot.of(vectors.toArray(new FieldVector[0]));
+    }
+
+    /**
+     * 把 RelNode 的输出物化成单个 VectorSchemaRoot(列式 copy,不装箱)。
+     * 空输入返回 0 行 root(schema 从 rowType 推)。供 SetOp 等需要跨 batch
+     * 稳定列式 key 的算子复用。
+     */
+    public static VectorSchemaRoot materializeToRoot(RelNode input, ExecContext ctx) {
+        List<VectorSchemaRoot> batches = new ArrayList<>();
+        int total = 0;
+        BatchIterator it = ((MiniDbRel) input).execute(ctx);
+        while (it.hasNext()) {
+            VectorSchemaRoot b = it.next();
+            batches.add(b);
+            total += b.getRowCount();
+        }
+        VectorSchemaRoot merged;
+        if (batches.isEmpty()) {
+            merged = emptyRoot(input.getRowType(), ctx.allocator());
+        } else {
+            merged = VectorSchemaRoot.create(batches.get(0).getSchema(), ctx.allocator());
+            merged.allocateNew();
+            int dst = 0;
+            for (VectorSchemaRoot batch : batches) {
+                for (int i = 0; i < batch.getRowCount(); i++) {
+                    RowCopier.copyRow(batch, i, merged, dst++);
+                }
+            }
+            merged.setRowCount(dst);
+        }
+        // close only AFTER copying: Filter/Project own their batches.
+        it.close();
+        return merged;
+    }
+
+    private static VectorSchemaRoot emptyRoot(RelDataType rowType, BufferAllocator allocator) {
+        List<FieldVector> vectors = new ArrayList<>();
+        for (RelDataTypeField f : rowType.getFieldList()) {
+            vectors.add(ArrowTypes.field(f).createVector(allocator));
+        }
+        for (FieldVector v : vectors) {
+            v.setInitialCapacity(0);
+            v.allocateNew();
+        }
         return VectorSchemaRoot.of(vectors.toArray(new FieldVector[0]));
     }
 }

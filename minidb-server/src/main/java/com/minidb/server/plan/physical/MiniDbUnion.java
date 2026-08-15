@@ -9,7 +9,6 @@ import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Set;
 import org.apache.arrow.vector.FieldVector;
-import org.apache.arrow.vector.ValueVector;
 import org.apache.arrow.vector.VectorSchemaRoot;
 import org.apache.calcite.plan.RelOptCluster;
 import org.apache.calcite.plan.RelTraitSet;
@@ -79,7 +78,12 @@ public class MiniDbUnion extends Union implements MiniDbRel {
     private VectorSchemaRoot mergeBatches(List<VectorSchemaRoot> batches, int total,
                                           ExecContext ctx) {
         boolean distinct = !all;
-        Set<List<Object>> seen = distinct ? new LinkedHashSet<>() : null;
+        // 去重 key 用 ColumnKey(列式 hash/equals),避免每行每列装箱成 List<Object>。
+        int[] allCols = new int[getRowType().getFieldCount()];
+        for (int i = 0; i < allCols.length; i++) {
+            allCols[i] = i;
+        }
+        Set<ColumnKey> seen = distinct ? new LinkedHashSet<>() : null;
         List<FieldVector> vectors = new ArrayList<>();
         for (RelDataTypeField f : getRowType().getFieldList()) {
             vectors.add(ArrowTypes.field(f).createVector(ctx.allocator()));
@@ -93,7 +97,7 @@ public class MiniDbUnion extends Union implements MiniDbRel {
             int dst = 0;
             for (VectorSchemaRoot batch : batches) {
                 for (int i = 0; i < batch.getRowCount(); i++) {
-                    if (distinct && !seen.add(rowKey(batch, i))) {
+                    if (distinct && !seen.add(new ColumnKey(batch, i, allCols))) {
                         continue;
                     }
                     RowCopier.copyRow(batch, i, out, dst++);
@@ -110,13 +114,4 @@ public class MiniDbUnion extends Union implements MiniDbRel {
             throw e;
         }
     }
-
-    private static List<Object> rowKey(VectorSchemaRoot batch, int row) {
-        List<Object> key = new ArrayList<>(batch.getFieldVectors().size());
-        for (ValueVector v : batch.getFieldVectors()) {
-            key.add(RowVectors.readObject(v, row));
-        }
-        return key;
-    }
-
 }
