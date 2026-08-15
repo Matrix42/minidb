@@ -3,7 +3,6 @@ package com.minidb.server.calcite;
 import com.minidb.parser.impl.MiniDbSqlParserImpl;
 import com.minidb.server.catalog.MiniDbCatalog;
 import java.util.List;
-import java.util.Locale;
 import java.util.Properties;
 import org.apache.calcite.avatica.util.Casing;
 import org.apache.calcite.avatica.util.Quoting;
