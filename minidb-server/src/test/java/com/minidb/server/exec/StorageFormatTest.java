@@ -3,7 +3,10 @@ package com.minidb.server.exec;
 import com.minidb.server.catalog.MiniDbCatalog;
 import com.minidb.server.stats.StatsManager;
 import com.minidb.server.storage.StorageManager;
+import com.minidb.storage.common.ColumnMeta;
+import com.minidb.storage.common.ColumnType;
 import com.minidb.storage.common.StorageFormat;
+import com.minidb.storage.common.TableSchema;
 import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.nio.file.Path;
@@ -27,6 +30,10 @@ import static org.junit.jupiter.api.Assertions.assertArrayEquals;
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
+/**
+ * 存储格式(Arrow/Parquet)的路由与读写。SQL 层不再暴露 FORMAT 子句(见 #P232),
+ * 存储格式由 {@link TableSchema#storageFormat()} 决定;parquet 表经程序化建表验证。
+ */
 class StorageFormatTest {
 
     @TempDir
@@ -52,6 +59,12 @@ class StorageFormatTest {
         allocator.close();
     }
 
+    /** 程序化建一张 parquet 表(SQL 层无 FORMAT 子句,引擎入口走 TableSchema.storageFormat)。 */
+    private void createParquetTable(String name, List<ColumnMeta> columns) {
+        storage.createTable(new TableSchema("public", name, columns)
+                .withStorageFormat(StorageFormat.PARQUET));
+    }
+
     @Test
     void defaultIsArrow() {
         executor.execute("CREATE TABLE t (id INTEGER)");
@@ -61,21 +74,12 @@ class StorageFormatTest {
     }
 
     @Test
-    void explicitArrowFormat() {
-        executor.execute("CREATE TABLE t (id INTEGER) FORMAT arrow");
-        assertEquals(StorageFormat.ARROW, catalog.getTable("public", "t").storageFormat());
-        executor.execute("INSERT INTO t VALUES (1)");
-    }
-
-    @Test
-    void parquetFormatRecorded() {
-        executor.execute("CREATE TABLE t (id INTEGER) FORMAT parquet");
-        assertEquals(StorageFormat.PARQUET, catalog.getTable("public", "t").storageFormat());
-    }
-
-    @Test
     void parquetInsertAndReadBack() {
-        executor.execute("CREATE TABLE t (id INTEGER, name VARCHAR) FORMAT parquet");
+        createParquetTable("t", List.of(
+                new ColumnMeta("id", ColumnType.INTEGER),
+                new ColumnMeta("name", ColumnType.VARCHAR)));
+        assertEquals(StorageFormat.PARQUET, catalog.getTable("public", "t").storageFormat());
+
         executor.execute("INSERT INTO t VALUES (1, 'alice'), (2, 'bob')");
         assertEquals(2, storage.getTable("public", "t").rowCount());
 
@@ -102,8 +106,14 @@ class StorageFormatTest {
 
     @Test
     void parquetRoundTripTypes() {
-        executor.execute("CREATE TABLE t (i INTEGER, b BIGINT, d DOUBLE, s VARCHAR,"
-                + " flag BOOLEAN, tm TIME, bin VARBINARY) FORMAT parquet");
+        createParquetTable("t", List.of(
+                new ColumnMeta("i", ColumnType.INTEGER),
+                new ColumnMeta("b", ColumnType.BIGINT),
+                new ColumnMeta("d", ColumnType.DOUBLE),
+                new ColumnMeta("s", ColumnType.VARCHAR),
+                new ColumnMeta("flag", ColumnType.BOOLEAN),
+                new ColumnMeta("tm", ColumnType.TIME),
+                new ColumnMeta("bin", ColumnType.VARBINARY)));
         executor.execute("INSERT INTO t VALUES"
                 + " (1, 10000000000, 1.5, '字符', TRUE, TIME '10:30:00', X'DEADBEEF'),"
                 + " (NULL, NULL, NULL, NULL, NULL, NULL, NULL)");
