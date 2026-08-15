@@ -1,6 +1,6 @@
 package com.minidb.server.stats;
 
-import com.minidb.server.catalog.TableSchema;
+import com.minidb.storage.common.TableSchema;
 import java.util.Locale;
 import org.apache.calcite.rex.RexCall;
 import org.apache.calcite.rex.RexInputRef;

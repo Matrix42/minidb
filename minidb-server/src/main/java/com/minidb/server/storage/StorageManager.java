@@ -2,7 +2,7 @@ package com.minidb.server.storage;
 
 import com.minidb.server.catalog.InformationSchemaCatalog;
 import com.minidb.server.catalog.MiniDbCatalog;
-import com.minidb.server.catalog.TableSchema;
+import com.minidb.storage.common.TableSchema;
 import java.io.IOException;
 import java.io.UncheckedIOException;
 import java.nio.file.Files;

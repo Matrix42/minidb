@@ -2,7 +2,7 @@ package com.minidb.server.exec;
 
 import com.minidb.server.calcite.MiniDbCalciteTable;
 import com.minidb.server.catalog.MiniDbCatalog;
-import com.minidb.server.catalog.TableSchema;
+import com.minidb.storage.common.TableSchema;
 import com.minidb.server.stats.StatsManager;
 import com.minidb.server.storage.StorageManager;
 import java.nio.file.Path;

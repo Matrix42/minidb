@@ -1,6 +1,6 @@
 package com.minidb.server.exec;
 
-import com.minidb.server.catalog.ArrowTypes;
+import com.minidb.storage.common.ArrowTypes;
 import com.minidb.server.exec.functions.BuiltInFunctions;
 import com.minidb.server.exec.functions.Function;
 import com.minidb.server.exec.functions.FunctionRegistry;

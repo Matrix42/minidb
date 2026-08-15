@@ -1,4 +1,7 @@
 package com.minidb.server.catalog;
+import com.minidb.storage.common.ColumnType;
+import com.minidb.storage.common.ColumnMeta;
+import com.minidb.storage.common.TableSchema;
 
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.minidb.server.stats.Histogram;

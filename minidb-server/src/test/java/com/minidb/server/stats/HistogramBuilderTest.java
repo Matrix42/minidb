@@ -26,7 +26,7 @@ class HistogramBuilderTest {
                 }
             }
             v.setValueCount(20);
-            Histogram h = HistogramBuilder.build(List.of(v), com.minidb.server.catalog.ColumnType.INTEGER);
+            Histogram h = HistogramBuilder.build(List.of(v), com.minidb.storage.common.ColumnType.INTEGER);
             assertEquals(20, h.totalRows());
             assertEquals(4, h.distinctCount());
             // each value appears 5 times; MCV should capture them
@@ -45,7 +45,7 @@ class HistogramBuilderTest {
             v.setNull(2);
             v.setNull(3);
             v.setValueCount(4);
-            Histogram h = HistogramBuilder.build(List.of(v), com.minidb.server.catalog.ColumnType.INTEGER);
+            Histogram h = HistogramBuilder.build(List.of(v), com.minidb.storage.common.ColumnType.INTEGER);
             assertEquals(2, h.nullCount());
             assertEquals(2, h.totalRows());
             assertEquals(2, h.distinctCount());
@@ -58,7 +58,7 @@ class HistogramBuilderTest {
              IntVector v = new IntVector("x", alloc)) {
             v.allocateNew(0);
             v.setValueCount(0);
-            Histogram h = HistogramBuilder.build(List.of(v), com.minidb.server.catalog.ColumnType.INTEGER);
+            Histogram h = HistogramBuilder.build(List.of(v), com.minidb.storage.common.ColumnType.INTEGER);
             assertEquals(0, h.totalRows());
             assertTrue(h.buckets().isEmpty());
         }
@@ -76,7 +76,7 @@ class HistogramBuilderTest {
             v.setSafe(4, "c".getBytes());
             v.setSafe(5, "c".getBytes());
             v.setValueCount(6);
-            Histogram h = HistogramBuilder.build(List.of(v), com.minidb.server.catalog.ColumnType.VARCHAR);
+            Histogram h = HistogramBuilder.build(List.of(v), com.minidb.storage.common.ColumnType.VARCHAR);
             assertEquals(6, h.totalRows());
             assertEquals(3, h.distinctCount());
         }

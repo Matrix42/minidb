@@ -1,6 +1,6 @@
 package com.minidb.server.exec.functions;
 
-import com.minidb.server.catalog.ArrowTypes;
+import com.minidb.storage.common.ArrowTypes;
 import java.util.ArrayList;
 import java.util.List;
 import org.apache.arrow.memory.BufferAllocator;

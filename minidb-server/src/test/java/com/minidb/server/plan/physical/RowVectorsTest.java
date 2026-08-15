@@ -4,9 +4,9 @@ import static org.junit.jupiter.api.Assertions.assertArrayEquals;
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
-import com.minidb.server.catalog.ArrowTypes;
-import com.minidb.server.catalog.ColumnMeta;
-import com.minidb.server.catalog.ColumnType;
+import com.minidb.storage.common.ArrowTypes;
+import com.minidb.storage.common.ColumnMeta;
+import com.minidb.storage.common.ColumnType;
 import com.minidb.server.exec.RowCopier;
 import java.math.BigDecimal;
 import java.util.List;

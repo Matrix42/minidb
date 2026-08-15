@@ -1,6 +1,6 @@
 package com.minidb.server.stats;
 
-import com.minidb.server.catalog.ColumnType;
+import com.minidb.storage.common.ColumnType;
 import java.util.ArrayList;
 import java.util.Comparator;
 import java.util.List;

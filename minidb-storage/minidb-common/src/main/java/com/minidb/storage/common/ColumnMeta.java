@@ -1,4 +1,4 @@
-package com.minidb.server.catalog;
+package com.minidb.storage.common;
 
 /**
  * 一列元数据。precision/scale 仅对 DECIMAL/NUMERIC 有意义,其余类型恒

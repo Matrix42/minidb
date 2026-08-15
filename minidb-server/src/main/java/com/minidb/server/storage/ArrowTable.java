@@ -1,8 +1,8 @@
 package com.minidb.server.storage;
 
-import com.minidb.server.catalog.ArrowTypes;
-import com.minidb.server.catalog.ColumnMeta;
-import com.minidb.server.catalog.TableSchema;
+import com.minidb.storage.common.ArrowTypes;
+import com.minidb.storage.common.ColumnMeta;
+import com.minidb.storage.common.TableSchema;
 import com.minidb.server.exec.BatchIterator;
 import com.minidb.server.exec.RowCopier;
 import java.io.IOException;

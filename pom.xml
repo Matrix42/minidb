@@ -10,6 +10,7 @@
 
   <modules>
     <module>minidb-parser</module>
+    <module>minidb-storage</module>
     <module>minidb-protocol</module>
     <module>minidb-server</module>
     <module>minidb-jdbc</module>
@@ -85,6 +86,21 @@
       <dependency>
         <groupId>com.minidb</groupId>
         <artifactId>minidb-parser</artifactId>
+        <version>${project.version}</version>
+      </dependency>
+      <dependency>
+        <groupId>com.minidb</groupId>
+        <artifactId>minidb-common</artifactId>
+        <version>${project.version}</version>
+      </dependency>
+      <dependency>
+        <groupId>com.minidb</groupId>
+        <artifactId>minidb-arrow</artifactId>
+        <version>${project.version}</version>
+      </dependency>
+      <dependency>
+        <groupId>com.minidb</groupId>
+        <artifactId>minidb-parquet</artifactId>
         <version>${project.version}</version>
       </dependency>
       <dependency>

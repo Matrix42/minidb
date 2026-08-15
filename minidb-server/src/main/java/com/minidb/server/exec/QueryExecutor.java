@@ -2,13 +2,13 @@ package com.minidb.server.exec;
 
 import com.minidb.parser.ddl.SqlForeignKeyConstraint;
 import com.minidb.server.calcite.CalciteContext;
-import com.minidb.server.catalog.ArrowTypes;
-import com.minidb.server.catalog.ColumnMeta;
-import com.minidb.server.catalog.ColumnType;
-import com.minidb.server.catalog.ForeignKey;
+import com.minidb.storage.common.ArrowTypes;
+import com.minidb.storage.common.ColumnMeta;
+import com.minidb.storage.common.ColumnType;
+import com.minidb.storage.common.ForeignKey;
 import com.minidb.server.catalog.InformationSchemaCatalog;
 import com.minidb.server.catalog.MiniDbCatalog;
-import com.minidb.server.catalog.TableSchema;
+import com.minidb.storage.common.TableSchema;
 import com.minidb.server.catalog.ViewDefinition;
 import com.minidb.server.plan.physical.MiniDbModify;
 import com.minidb.server.plan.physical.MiniDbRel;

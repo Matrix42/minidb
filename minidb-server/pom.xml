@@ -16,6 +16,10 @@
     </dependency>
     <dependency>
       <groupId>com.minidb</groupId>
+      <artifactId>minidb-common</artifactId>
+    </dependency>
+    <dependency>
+      <groupId>com.minidb</groupId>
       <artifactId>minidb-protocol</artifactId>
     </dependency>
     <dependency>

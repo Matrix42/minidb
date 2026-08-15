@@ -1,4 +1,4 @@
-package com.minidb.server.catalog;
+package com.minidb.storage.common;
 
 public enum ColumnType {
     SMALLINT, INTEGER, BIGINT, REAL, FLOAT, DOUBLE, DECIMAL, NUMERIC,

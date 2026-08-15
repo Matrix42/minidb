@@ -1,6 +1,6 @@
 package com.minidb.server.stats;
 
-import com.minidb.server.catalog.ColumnType;
+import com.minidb.storage.common.ColumnType;
 import java.math.BigDecimal;
 import java.util.List;
 import java.util.Objects;

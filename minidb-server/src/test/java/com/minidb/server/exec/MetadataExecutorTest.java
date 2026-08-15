@@ -52,11 +52,11 @@ class MetadataExecutorTest {
     void tablesReturnsAllTablesAcrossSchemas() throws Exception {
         try (RootAllocator alloc = new RootAllocator()) {
             MiniDbCatalog cat = new MiniDbCatalog();
-            cat.createTable(new com.minidb.server.catalog.TableSchema("public", "users",
-                    java.util.List.of(new com.minidb.server.catalog.ColumnMeta("id", com.minidb.server.catalog.ColumnType.INTEGER))));
+            cat.createTable(new com.minidb.storage.common.TableSchema("public", "users",
+                    java.util.List.of(new com.minidb.storage.common.ColumnMeta("id", com.minidb.storage.common.ColumnType.INTEGER))));
             cat.createSchema("other");
-            cat.createTable(new com.minidb.server.catalog.TableSchema("other", "t",
-                    java.util.List.of(new com.minidb.server.catalog.ColumnMeta("a", com.minidb.server.catalog.ColumnType.BIGINT))));
+            cat.createTable(new com.minidb.storage.common.TableSchema("other", "t",
+                    java.util.List.of(new com.minidb.storage.common.ColumnMeta("a", com.minidb.storage.common.ColumnType.BIGINT))));
             MetadataExecutor exec = new MetadataExecutor(cat, alloc);
             try (VectorSchemaRoot root = exec.tables(null, null, null)) {
                 // information_schema(3 张系统表) + other/t + public/users
@@ -80,8 +80,8 @@ class MetadataExecutorTest {
     void tablesFilterBySchemaAndType() throws Exception {
         try (RootAllocator alloc = new RootAllocator()) {
             MiniDbCatalog cat = new MiniDbCatalog();
-            cat.createTable(new com.minidb.server.catalog.TableSchema("public", "u",
-                    java.util.List.of(new com.minidb.server.catalog.ColumnMeta("id", com.minidb.server.catalog.ColumnType.INTEGER))));
+            cat.createTable(new com.minidb.storage.common.TableSchema("public", "u",
+                    java.util.List.of(new com.minidb.storage.common.ColumnMeta("id", com.minidb.storage.common.ColumnType.INTEGER))));
             MetadataExecutor exec = new MetadataExecutor(cat, alloc);
             try (VectorSchemaRoot root = exec.tables("public", null, new String[]{"VIEW"})) {
                 assertEquals(0, root.getRowCount()); // VIEW matches nothing
@@ -96,10 +96,10 @@ class MetadataExecutorTest {
     void columnsReturnsAllColumnsWithOrdinalAndType() throws Exception {
         try (RootAllocator alloc = new RootAllocator()) {
             MiniDbCatalog cat = new MiniDbCatalog();
-            cat.createTable(new com.minidb.server.catalog.TableSchema("public", "users",
+            cat.createTable(new com.minidb.storage.common.TableSchema("public", "users",
                     java.util.List.of(
-                            new com.minidb.server.catalog.ColumnMeta("id", com.minidb.server.catalog.ColumnType.INTEGER),
-                            new com.minidb.server.catalog.ColumnMeta("name", com.minidb.server.catalog.ColumnType.VARCHAR))));
+                            new com.minidb.storage.common.ColumnMeta("id", com.minidb.storage.common.ColumnType.INTEGER),
+                            new com.minidb.storage.common.ColumnMeta("name", com.minidb.storage.common.ColumnType.VARCHAR))));
             MetadataExecutor exec = new MetadataExecutor(cat, alloc);
             try (VectorSchemaRoot root = exec.columns("public", null, null)) {
                 assertEquals(2, root.getRowCount());
@@ -123,10 +123,10 @@ class MetadataExecutorTest {
     void columnsFilterByLikeColumnName() throws Exception {
         try (RootAllocator alloc = new RootAllocator()) {
             MiniDbCatalog cat = new MiniDbCatalog();
-            cat.createTable(new com.minidb.server.catalog.TableSchema("public", "users",
+            cat.createTable(new com.minidb.storage.common.TableSchema("public", "users",
                     java.util.List.of(
-                            new com.minidb.server.catalog.ColumnMeta("id", com.minidb.server.catalog.ColumnType.INTEGER),
-                            new com.minidb.server.catalog.ColumnMeta("username", com.minidb.server.catalog.ColumnType.VARCHAR))));
+                            new com.minidb.storage.common.ColumnMeta("id", com.minidb.storage.common.ColumnType.INTEGER),
+                            new com.minidb.storage.common.ColumnMeta("username", com.minidb.storage.common.ColumnType.VARCHAR))));
             MetadataExecutor exec = new MetadataExecutor(cat, alloc);
             try (VectorSchemaRoot root = exec.columns("public", null, "%name%")) {
                 assertEquals(1, root.getRowCount());
@@ -140,12 +140,12 @@ class MetadataExecutorTest {
     void columnsReportsNewTypesWithDecimalPrecisionAndScale() throws Exception {
         try (RootAllocator alloc = new RootAllocator()) {
             MiniDbCatalog cat = new MiniDbCatalog();
-            cat.createTable(new com.minidb.server.catalog.TableSchema("public", "t",
+            cat.createTable(new com.minidb.storage.common.TableSchema("public", "t",
                     java.util.List.of(
-                            new com.minidb.server.catalog.ColumnMeta("s", com.minidb.server.catalog.ColumnType.SMALLINT),
-                            new com.minidb.server.catalog.ColumnMeta("p", com.minidb.server.catalog.ColumnType.DECIMAL, 10, 2),
-                            new com.minidb.server.catalog.ColumnMeta("t", com.minidb.server.catalog.ColumnType.TIME),
-                            new com.minidb.server.catalog.ColumnMeta("b", com.minidb.server.catalog.ColumnType.VARBINARY))));
+                            new com.minidb.storage.common.ColumnMeta("s", com.minidb.storage.common.ColumnType.SMALLINT),
+                            new com.minidb.storage.common.ColumnMeta("p", com.minidb.storage.common.ColumnType.DECIMAL, 10, 2),
+                            new com.minidb.storage.common.ColumnMeta("t", com.minidb.storage.common.ColumnType.TIME),
+                            new com.minidb.storage.common.ColumnMeta("b", com.minidb.storage.common.ColumnType.VARBINARY))));
             MetadataExecutor exec = new MetadataExecutor(cat, alloc);
             try (VectorSchemaRoot root = exec.columns("public", null, null)) {
                 assertEquals(4, root.getRowCount());

@@ -1,4 +1,6 @@
 package com.minidb.server.catalog;
+import com.minidb.storage.common.ColumnMeta;
+import com.minidb.storage.common.TableSchema;
 
 import java.util.List;
 

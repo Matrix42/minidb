@@ -1,6 +1,6 @@
 package com.minidb.server.plan.physical;
 
-import com.minidb.server.catalog.ArrowTypes;
+import com.minidb.storage.common.ArrowTypes;
 import com.minidb.server.exec.ExecContext;
 import com.minidb.server.exec.RowCopier;
 import java.util.ArrayList;

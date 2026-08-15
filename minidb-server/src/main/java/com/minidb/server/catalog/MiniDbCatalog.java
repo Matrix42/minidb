@@ -1,4 +1,5 @@
 package com.minidb.server.catalog;
+import com.minidb.storage.common.TableSchema;
 
 import com.minidb.server.stats.TableStats;
 import java.util.ArrayList;

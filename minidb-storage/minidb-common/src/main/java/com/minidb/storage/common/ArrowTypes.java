@@ -1,4 +1,4 @@
-package com.minidb.server.catalog;
+package com.minidb.storage.common;
 
 import java.util.List;
 import java.util.Locale;

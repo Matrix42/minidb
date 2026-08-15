@@ -42,10 +42,10 @@ class ExplainExecutorTest {
         planner = new Planner(catalog);
         explain = new ExplainExecutor(planner, stats, storage, allocator);
 
-        storage.createTable(new com.minidb.server.catalog.TableSchema("t",
+        storage.createTable(new com.minidb.storage.common.TableSchema("t",
                 java.util.List.of(
-                        new com.minidb.server.catalog.ColumnMeta("id", com.minidb.server.catalog.ColumnType.INTEGER),
-                        new com.minidb.server.catalog.ColumnMeta("name", com.minidb.server.catalog.ColumnType.VARCHAR))));
+                        new com.minidb.storage.common.ColumnMeta("id", com.minidb.storage.common.ColumnType.INTEGER),
+                        new com.minidb.storage.common.ColumnMeta("name", com.minidb.storage.common.ColumnType.VARCHAR))));
         insertRows("t", new int[]{1, 2, 3}, new String[]{"a", "b", "c"});
     }
 

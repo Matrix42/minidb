@@ -1,9 +1,9 @@
 package com.minidb.server.plan;
 
-import com.minidb.server.catalog.ColumnMeta;
-import com.minidb.server.catalog.ColumnType;
+import com.minidb.storage.common.ColumnMeta;
+import com.minidb.storage.common.ColumnType;
 import com.minidb.server.catalog.MiniDbCatalog;
-import com.minidb.server.catalog.TableSchema;
+import com.minidb.storage.common.TableSchema;
 import java.util.List;
 import org.apache.calcite.plan.RelOptUtil;
 import org.junit.jupiter.api.Test;

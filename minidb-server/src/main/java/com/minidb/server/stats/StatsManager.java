@@ -1,9 +1,9 @@
 package com.minidb.server.stats;
 
-import com.minidb.server.catalog.ColumnType;
+import com.minidb.storage.common.ColumnType;
 import com.minidb.server.catalog.InformationSchemaCatalog;
 import com.minidb.server.catalog.MiniDbCatalog;
-import com.minidb.server.catalog.TableSchema;
+import com.minidb.storage.common.TableSchema;
 import com.minidb.server.exec.BatchIterator;
 import com.minidb.server.storage.ArrowTable;
 import com.minidb.server.storage.StorageManager;

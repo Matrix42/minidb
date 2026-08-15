@@ -1,4 +1,7 @@
 package com.minidb.server.catalog;
+import com.minidb.storage.common.ArrowTypes;
+import com.minidb.storage.common.ColumnType;
+import com.minidb.storage.common.ColumnMeta;
 
 import org.apache.arrow.memory.BufferAllocator;
 import org.apache.arrow.memory.RootAllocator;

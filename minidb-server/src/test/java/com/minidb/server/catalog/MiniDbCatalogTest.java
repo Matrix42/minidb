@@ -1,4 +1,7 @@
 package com.minidb.server.catalog;
+import com.minidb.storage.common.ColumnType;
+import com.minidb.storage.common.ColumnMeta;
+import com.minidb.storage.common.TableSchema;
 
 import java.util.List;
 import java.util.concurrent.atomic.AtomicInteger;

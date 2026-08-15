@@ -284,7 +284,7 @@ public class ExplainExecutor {
             return null;
         }
         ArrowTable arrowTable = storage.getTable(st[0], st[1]);
-        List<com.minidb.server.catalog.ColumnMeta> columns =
+        List<com.minidb.storage.common.ColumnMeta> columns =
                 arrowTable.schema().columns();
         if (firstCol < 0 || firstCol >= columns.size()) {
             return null;
@@ -304,7 +304,7 @@ public class ExplainExecutor {
             return null;
         }
         ArrowTable arrowTable = storage.getTable(st[0], st[1]);
-        List<com.minidb.server.catalog.ColumnMeta> columns =
+        List<com.minidb.storage.common.ColumnMeta> columns =
                 arrowTable.schema().columns();
         if (columns.isEmpty()) {
             return null;
