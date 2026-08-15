@@ -68,4 +68,33 @@ class StatsPersistenceTest {
         storage.close();
         allocator.close();
     }
+
+    @Test
+    void staleFlagSurvivesRestart() {
+        // 第一次会话:analyze 后 DML 置 stale,关闭(flush + persist catalog)。
+        {
+            BufferAllocator allocator = new RootAllocator();
+            MiniDbCatalog catalog = new MiniDbCatalog();
+            StorageManager storage = new StorageManager(catalog, allocator, dataDir);
+            StatsManager stats = new StatsManager(storage);
+            QueryExecutor q = new QueryExecutor(catalog, storage, allocator, stats);
+            q.execute("CREATE TABLE t (id INTEGER)");
+            q.execute("INSERT INTO t VALUES (1)");
+            stats.analyze("t");
+            q.execute("INSERT INTO t VALUES (2)"); // 置 stale
+            storage.close();
+            allocator.close();
+        }
+        // 第二次会话:loadAll 后 stale 标记应仍在(而非误判新鲜)。
+        {
+            BufferAllocator allocator = new RootAllocator();
+            MiniDbCatalog catalog = new MiniDbCatalog();
+            StorageManager storage = new StorageManager(catalog, allocator, dataDir);
+            storage.loadAll();
+            assertNotNull(catalog.getStats("public", "t"));
+            assertTrue(catalog.getStats("public", "t").stale());
+            storage.close();
+            allocator.close();
+        }
+    }
 }

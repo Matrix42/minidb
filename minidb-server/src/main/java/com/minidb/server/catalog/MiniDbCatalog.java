@@ -124,8 +124,10 @@ public class MiniDbCatalog {
         TableStats ts = stats.get(k);
         if (ts != null) {
             stats.put(k, new TableStats(ts.columnHistograms(), ts.rowCount(), true));
+            // 持久化 stale 标记:否则 DML 后重启会从 catalog.json 以 false 加载,
+            // 把过期统计误判为新鲜。代价是每次 DML 写一次 catalog.json,玩具库可接受。
+            notifyChange();
         }
-        // 不 notifyChange:避免每次 DML 都写 catalog.json(与旧 .stats 行为一致,stale 随重启丢)
     }
 
     private static String statsKey(String schemaName, String tableName) {
