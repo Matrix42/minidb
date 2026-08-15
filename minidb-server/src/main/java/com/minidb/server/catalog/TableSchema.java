@@ -2,10 +2,22 @@ package com.minidb.server.catalog;
 
 import java.util.List;
 
-public record TableSchema(String schemaName, String name, List<ColumnMeta> columns) {
+public record TableSchema(String schemaName, String name, List<ColumnMeta> columns,
+                          List<String> primaryKey, List<List<String>> uniqueKeys) {
+
+    public TableSchema {
+        // 旧 catalog.json 无约束字段,反序列化为 null;归一化为空(无约束,向后兼容)。
+        primaryKey = primaryKey == null ? List.of() : List.copyOf(primaryKey);
+        uniqueKeys = uniqueKeys == null ? List.of()
+                : uniqueKeys.stream().map(List::copyOf).toList();
+    }
 
     public TableSchema(String name, List<ColumnMeta> columns) {
-        this("public", name, columns);
+        this("public", name, columns, List.of(), List.of());
+    }
+
+    public TableSchema(String schemaName, String name, List<ColumnMeta> columns) {
+        this(schemaName, name, columns, List.of(), List.of());
     }
 
     public ColumnMeta column(String name) {

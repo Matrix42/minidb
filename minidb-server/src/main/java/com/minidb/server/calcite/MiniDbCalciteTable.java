@@ -7,6 +7,7 @@ import com.minidb.server.catalog.TableSchema;
 import com.minidb.server.stats.Histogram;
 import com.minidb.server.stats.StatsEstimator;
 import com.minidb.server.stats.TableStats;
+import java.util.ArrayList;
 import java.util.List;
 import java.util.Locale;
 import org.apache.calcite.rel.RelNode;
@@ -46,10 +47,29 @@ public class MiniDbCalciteTable extends AbstractTable {
     @Override
     public Statistic getStatistic() {
         TableStats ts = catalog.getStats(schema.schemaName(), schema.name());
-        if (ts == null || ts.stale()) {
-            return Statistics.UNKNOWN;
+        Double rowCount = (ts != null && !ts.stale()) ? (double) ts.rowCount() : null;
+        // 唯一键(主键 + UNIQUE 约束)来自 schema 定义、与统计无关:即使未 ANALYZE 也提供,
+        // 让 CBO 的 RelMdUniqueKeys → RelMdDistinctRowCount 得到更准的 distinct/join 基数。
+        return Statistics.of(rowCount, keys(), null, null);
+    }
+
+    private List<ImmutableBitSet> keys() {
+        List<ImmutableBitSet> keys = new ArrayList<>();
+        if (!schema.primaryKey().isEmpty()) {
+            keys.add(bitSetOf(schema.primaryKey()));
         }
-        return Statistics.of((double) ts.rowCount(), List.of());
+        for (List<String> unique : schema.uniqueKeys()) {
+            keys.add(bitSetOf(unique));
+        }
+        return keys;
+    }
+
+    private ImmutableBitSet bitSetOf(List<String> columnNames) {
+        ImmutableBitSet.Builder builder = ImmutableBitSet.builder();
+        for (String columnName : columnNames) {
+            builder.set(schema.columnIndex(columnName));
+        }
+        return builder.build();
     }
 
     /**
