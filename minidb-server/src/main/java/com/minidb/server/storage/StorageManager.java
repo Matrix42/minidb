@@ -6,13 +6,16 @@ import com.minidb.storage.arrow.ArrowPartFormat;
 import com.minidb.storage.arrow.IpcFileTableStorage;
 import com.minidb.storage.common.PartFormat;
 import com.minidb.storage.common.SimpleTable;
+import com.minidb.storage.common.StorageFormat;
 import com.minidb.storage.common.TableSchema;
 import com.minidb.storage.common.TableStorage;
+import com.minidb.storage.parquet.ParquetPartFormat;
 import java.io.IOException;
 import java.io.UncheckedIOException;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.util.ArrayList;
+import java.util.EnumMap;
 import java.util.List;
 import java.util.Locale;
 import java.util.Map;
@@ -34,7 +37,7 @@ public class StorageManager implements AutoCloseable {
     private final Path dataDir;
     private final CatalogStore catalogStore;
     private final TableStorage tableStorage;
-    private final PartFormat format = new ArrowPartFormat();
+    private final Map<StorageFormat, PartFormat> formats = new EnumMap<>(StorageFormat.class);
     private final Map<String, SimpleTable> tables = new ConcurrentHashMap<>();
 
     public StorageManager(MiniDbCatalog catalog, BufferAllocator allocator, Path dataDir) {
@@ -43,7 +46,17 @@ public class StorageManager implements AutoCloseable {
         this.dataDir = dataDir;
         this.catalogStore = new JsonCatalogStore(dataDir.resolve("catalog.json"));
         this.tableStorage = new IpcFileTableStorage(dataDir);
+        formats.put(StorageFormat.ARROW, new ArrowPartFormat());
+        formats.put(StorageFormat.PARQUET, new ParquetPartFormat());
         catalog.addListener(this::persistCatalog);
+    }
+
+    private PartFormat formatFor(TableSchema schema) {
+        PartFormat format = formats.get(schema.storageFormat());
+        if (format == null) {
+            throw new IllegalArgumentException("unknown storage format: " + schema.storageFormat());
+        }
+        return format;
     }
 
     private void persistCatalog() {
@@ -68,7 +81,7 @@ public class StorageManager implements AutoCloseable {
             for (String tableName : catalog.tableNames(schema)) {
                 TableSchema ts = catalog.getTable(schema, tableName);
                 tables.put(storageKey(schema, tableName),
-                        new SimpleTable(ts, allocator, tableStorage.tableDir(schema, tableName), format));
+                        new SimpleTable(ts, allocator, tableStorage.tableDir(schema, tableName), formatFor(ts)));
             }
         }
         LOG.info("loaded {} table(s)", tables.size());
@@ -95,7 +108,7 @@ public class StorageManager implements AutoCloseable {
 
     public SimpleTable createTable(TableSchema schema) {
         SimpleTable table = new SimpleTable(schema, allocator,
-                tableStorage.tableDir(schema.schemaName(), schema.name()), format);
+                tableStorage.tableDir(schema.schemaName(), schema.name()), formatFor(schema));
         String sk = storageKey(schema.schemaName(), schema.name());
         if (tables.putIfAbsent(sk, table) != null) {
             throw new IllegalArgumentException("table already exists: " + schema.name());

@@ -273,6 +273,7 @@ SqlCreate SqlCreateTable(Span s, boolean replace) :
     final SqlIdentifier id;
     SqlNodeList tableElementList = null;
     SqlNode query = null;
+    SqlIdentifier formatName = null;
 
     SqlCreate createTableLike = null;
 }
@@ -284,6 +285,12 @@ SqlCreate SqlCreateTable(Span s, boolean replace) :
         }
     |
         [ tableElementList = TableElementList() ]
+        [ <FORMAT> formatName = SimpleIdentifier() {
+            if (tableElementList == null) {
+                tableElementList = new SqlNodeList(getPos());
+            }
+            tableElementList.add(new SqlStorageFormat(s.end(this), formatName.getSimple()));
+        } ]
         [ <AS> query = OrderedQueryOrExpr(ExprContext.ACCEPT_QUERY) ]
         {
             return SqlDdlNodes.createTable(s.end(this), replace, ifNotExists, id, tableElementList, query);

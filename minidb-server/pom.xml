@@ -24,6 +24,10 @@
     </dependency>
     <dependency>
       <groupId>com.minidb</groupId>
+      <artifactId>minidb-parquet</artifactId>
+    </dependency>
+    <dependency>
+      <groupId>com.minidb</groupId>
       <artifactId>minidb-protocol</artifactId>
     </dependency>
     <dependency>

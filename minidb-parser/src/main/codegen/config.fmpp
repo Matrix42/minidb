@@ -27,6 +27,7 @@ data: {
     # List of import statements.
     imports: [
       "com.minidb.parser.ddl.SqlForeignKeyConstraint"
+      "com.minidb.parser.ddl.SqlStorageFormat"
       "org.apache.calcite.schema.ColumnStrategy"
       "org.apache.calcite.sql.SqlCreate"
       "org.apache.calcite.sql.SqlDrop"

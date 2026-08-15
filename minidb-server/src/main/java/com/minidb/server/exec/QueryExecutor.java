@@ -2,11 +2,13 @@ package com.minidb.server.exec;
 import com.minidb.storage.common.BatchIterator;
 
 import com.minidb.parser.ddl.SqlForeignKeyConstraint;
+import com.minidb.parser.ddl.SqlStorageFormat;
 import com.minidb.server.calcite.CalciteContext;
 import com.minidb.storage.common.ArrowTypes;
 import com.minidb.storage.common.ColumnMeta;
 import com.minidb.storage.common.ColumnType;
 import com.minidb.storage.common.ForeignKey;
+import com.minidb.storage.common.StorageFormat;
 import com.minidb.server.catalog.InformationSchemaCatalog;
 import com.minidb.server.catalog.MiniDbCatalog;
 import com.minidb.storage.common.TableSchema;
@@ -191,7 +193,12 @@ public class QueryExecutor {
         List<String> primaryKey = List.of();
         List<List<String>> uniqueKeys = new ArrayList<>();
         List<ForeignKey> foreignKeys = new ArrayList<>();
+        StorageFormat storageFormat = StorageFormat.ARROW;
         for (SqlNode node : create.columnList) {
+            if (node instanceof SqlStorageFormat fmt) {
+                storageFormat = StorageFormat.fromString(fmt.getFormat());
+                continue;
+            }
             if (node instanceof SqlKeyConstraint key) {
                 // 表级/列级 PRIMARY KEY (col, ...) / UNIQUE (col, ...)
                 SqlNodeList keyCols = (SqlNodeList) key.getOperandList().get(1);
@@ -250,7 +257,7 @@ public class QueryExecutor {
             columns.add(new ColumnMeta(column.name.getSimple(), type, precision, scale, nullable));
         }
         TableSchema schema = new TableSchema(schemaName, tableName, columns,
-                primaryKey, uniqueKeys, foreignKeys);
+                primaryKey, uniqueKeys, foreignKeys, storageFormat);
         storage.createTable(schema);
         return new QueryResult.Update(0);
     }

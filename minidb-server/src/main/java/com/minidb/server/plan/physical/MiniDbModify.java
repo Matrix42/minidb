@@ -82,8 +82,11 @@ public class MiniDbModify extends TableModify implements MiniDbRel {
                 }
                 copy.setRowCount(batch.getRowCount());
                 affected += batch.getRowCount();
-                target.writePart(copy); // 直接落盘成一个新 part
-                copy.close();
+                try {
+                    target.writePart(copy); // 直接落盘成一个新 part
+                } finally {
+                    copy.close();
+                }
             }
         } finally {
             input.close();
