@@ -5,6 +5,7 @@ import java.util.ArrayList;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
+import org.apache.arrow.vector.VectorSchemaRoot;
 import org.apache.calcite.plan.RelOptCluster;
 import org.apache.calcite.plan.RelOptCost;
 import org.apache.calcite.plan.RelOptPlanner;
@@ -51,48 +52,48 @@ public class MiniDbHashJoin extends MiniDbJoin {
     }
 
     @Override
-    protected List<Object[]> joinRows(List<Object[]> left, List<Object[]> right,
-                                      JoinInfo info, JoinRelType type, ExecContext ctx) {
+    protected List<int[]> joinPairs(VectorSchemaRoot left, VectorSchemaRoot right,
+                                    JoinInfo info, JoinRelType type, ExecContext ctx) {
         List<Integer> leftKeyCols = info.leftKeys;
         List<Integer> rightKeyCols = info.rightKeys;
+        int[] leftKeyArr = toIntArray(leftKeyCols);
+        int[] rightKeyArr = toIntArray(rightKeyCols);
         // Build: key -> row indices of the left input sharing that key.
         // Null-keyed rows are skipped (they can never match).
-        Map<List<Object>, List<Integer>> buildTable = new HashMap<>();
-        for (int leftIdx = 0; leftIdx < left.size(); leftIdx++) {
-            if (hasNullKey(left.get(leftIdx), leftKeyCols)) {
+        Map<ColumnKey, List<Integer>> buildTable = new HashMap<>();
+        for (int leftIdx = 0; leftIdx < left.getRowCount(); leftIdx++) {
+            if (hasNullKey(left, leftIdx, leftKeyCols)) {
                 continue;
             }
-            buildTable.computeIfAbsent(buildKey(left.get(leftIdx), leftKeyCols),
+            buildTable.computeIfAbsent(new ColumnKey(left, leftIdx, leftKeyArr),
                     k -> new ArrayList<>()).add(leftIdx);
         }
         boolean keepUnmatchedLeft = type == JoinRelType.LEFT || type == JoinRelType.FULL;
         boolean keepUnmatchedRight = type == JoinRelType.RIGHT || type == JoinRelType.FULL;
-        boolean[] matchedLeft = new boolean[left.size()];
-        Object[] nullRowLeft = new Object[leftColumnCount()];
-        Object[] nullRowRight = new Object[rightColumnCount()];
-        List<Object[]> outputRows = new ArrayList<>();
+        boolean[] matchedLeft = new boolean[left.getRowCount()];
+        List<int[]> outputRows = new ArrayList<>();
         // Probe: for each right row, join with every left row of the same key.
-        for (int rightIdx = 0; rightIdx < right.size(); rightIdx++) {
+        for (int rightIdx = 0; rightIdx < right.getRowCount(); rightIdx++) {
             List<Integer> matchingLeftRows;
-            if (hasNullKey(right.get(rightIdx), rightKeyCols)) {
+            if (hasNullKey(right, rightIdx, rightKeyCols)) {
                 matchingLeftRows = null;
             } else {
-                matchingLeftRows = buildTable.get(buildKey(right.get(rightIdx), rightKeyCols));
+                matchingLeftRows = buildTable.get(new ColumnKey(right, rightIdx, rightKeyArr));
             }
             if (matchingLeftRows != null) {
                 for (int leftIdx : matchingLeftRows) {
-                    outputRows.add(concat(left.get(leftIdx), right.get(rightIdx)));
+                    outputRows.add(new int[]{leftIdx, rightIdx});
                     matchedLeft[leftIdx] = true;
                 }
             } else if (keepUnmatchedRight) {
                 // Right-preserved outer join: emit the unmatched right row.
-                outputRows.add(concat(nullRowLeft, right.get(rightIdx)));
+                outputRows.add(new int[]{-1, rightIdx});
             }
         }
         if (keepUnmatchedLeft) {
-            for (int leftIdx = 0; leftIdx < left.size(); leftIdx++) {
+            for (int leftIdx = 0; leftIdx < left.getRowCount(); leftIdx++) {
                 if (!matchedLeft[leftIdx]) {
-                    outputRows.add(concat(left.get(leftIdx), nullRowRight));
+                    outputRows.add(new int[]{leftIdx, -1});
                 }
             }
         }

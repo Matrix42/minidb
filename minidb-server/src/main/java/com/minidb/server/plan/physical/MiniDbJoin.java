@@ -3,11 +3,14 @@ package com.minidb.server.plan.physical;
 import com.minidb.server.catalog.ArrowTypes;
 import com.minidb.server.exec.BatchIterator;
 import com.minidb.server.exec.ExecContext;
+import com.minidb.server.exec.RowCopier;
+import com.minidb.server.exec.ValueComparators;
 import java.util.ArrayList;
 import java.util.Comparator;
 import java.util.List;
 import java.util.Set;
 import org.apache.arrow.vector.FieldVector;
+import org.apache.arrow.vector.ValueVector;
 import org.apache.arrow.vector.VectorSchemaRoot;
 import org.apache.calcite.plan.RelOptCluster;
 import org.apache.calcite.plan.RelTraitSet;
@@ -22,9 +25,10 @@ import org.apache.calcite.rex.RexNode;
 
 /**
  * Join base class. Subclasses implement one strategy (MiniDbHashJoin,
- * MiniDbSortMergeJoin, MiniDbNestedLoopJoin); this class owns materialization
- * of both inputs, output building, and the single-batch lazy iterator.
- * Rows are normalized to Object[]; output is a single batch.
+ * MiniDbSortMergeJoin, MiniDbNestedLoopJoin); this class owns columnar
+ * materialization of both inputs (into a single {@link VectorSchemaRoot} each,
+ * no per-cell boxing), output building, and the single-batch lazy iterator.
+ * Join strategies work on row indices and columnar keys, never on Object[].
  */
 public abstract class MiniDbJoin extends Join implements MiniDbRel {
 
@@ -40,39 +44,47 @@ public abstract class MiniDbJoin extends Join implements MiniDbRel {
         if (type == JoinRelType.SEMI || type == JoinRelType.ANTI) {
             throw new UnsupportedOperationException("semi/anti join not supported");
         }
-        List<Object[]> leftRows = materialize(getLeft(), ctx);
-        List<Object[]> rightRows = materialize(getRight(), ctx);
-        JoinInfo info = analyzeCondition();
-        List<Object[]> out = joinRows(leftRows, rightRows, info, type, ctx);
-        VectorSchemaRoot root = buildOutput(out, ctx);
+        VectorSchemaRoot left = materializeColumns(getLeft(), ctx);
+        VectorSchemaRoot right = materializeColumns(getRight(), ctx);
+        try {
+            JoinInfo info = analyzeCondition();
+            List<int[]> pairs = joinPairs(left, right, info, type, ctx);
+            VectorSchemaRoot out = buildOutput(left, right, pairs, ctx);
+            left.close();
+            right.close();
+            boolean[] done = {false};
+            return new BatchIterator() {
+                @Override
+                public boolean hasNext() {
+                    return !done[0];
+                }
 
-        boolean[] done = {false};
-        return new BatchIterator() {
-            @Override
-            public boolean hasNext() {
-                return !done[0];
-            }
+                @Override
+                public VectorSchemaRoot next() {
+                    done[0] = true;
+                    return out;
+                }
 
-            @Override
-            public VectorSchemaRoot next() {
-                done[0] = true;
-                return root;
-            }
-
-            @Override
-            public void close() {
-                root.close();
-            }
-        };
+                @Override
+                public void close() {
+                    out.close();
+                }
+            };
+        } catch (RuntimeException e) {
+            left.close();
+            right.close();
+            throw e;
+        }
     }
 
-    /** Strategy-specific join implementation. */
-    protected abstract List<Object[]> joinRows(
-            List<Object[]> left, List<Object[]> right,
-            JoinInfo info, JoinRelType type, ExecContext ctx);
+    /**
+     * Strategy-specific join. Returns output row pairs {@code {leftIdx, rightIdx}},
+     * where -1 means the null-padded side (outer joins preserve unmatched rows).
+     */
+    protected abstract List<int[]> joinPairs(VectorSchemaRoot left, VectorSchemaRoot right,
+                                             JoinInfo info, JoinRelType type, ExecContext ctx);
 
-    /** Column count of the left input (from its row type, not the data), used to
-     *  size the null-padded row when the other side is empty. */
+    /** Column count of the left input (from its row type, not the data). */
     protected final int leftColumnCount() {
         return getLeft().getRowType().getFieldCount();
     }
@@ -82,106 +94,126 @@ public abstract class MiniDbJoin extends Join implements MiniDbRel {
         return getRight().getRowType().getFieldCount();
     }
 
-    // analyzeCondition() inherited from Join (Calcite provides it public).
-    // ---- shared helpers (verbatim from original MiniDbJoin.java) ----
-
-    protected final List<Object[]> materialize(RelNode input, ExecContext ctx) {
-        List<Object[]> rows = new ArrayList<>();
+    /** Pulls every batch of {@code input} into a single owned root, no per-cell boxing. */
+    private VectorSchemaRoot materializeColumns(RelNode input, ExecContext ctx) {
+        List<VectorSchemaRoot> batches = new ArrayList<>();
+        int total = 0;
         BatchIterator it = ((MiniDbRel) input).execute(ctx);
-        try {
-            while (it.hasNext()) {
-                VectorSchemaRoot batch = it.next();
-                for (int r = 0; r < batch.getRowCount(); r++) {
-                    Object[] row = new Object[batch.getFieldVectors().size()];
-                    for (int c = 0; c < row.length; c++) {
-                        row[c] = RowVectors.readObject(batch.getVector(c), r);
-                    }
-                    rows.add(row);
+        while (it.hasNext()) {
+            VectorSchemaRoot b = it.next();
+            batches.add(b);
+            total += b.getRowCount();
+        }
+        VectorSchemaRoot merged;
+        if (batches.isEmpty()) {
+            merged = emptyRoot(input, ctx);
+        } else {
+            merged = VectorSchemaRoot.create(batches.get(0).getSchema(), ctx.allocator());
+            merged.allocateNew();
+            int dst = 0;
+            for (VectorSchemaRoot batch : batches) {
+                for (int i = 0; i < batch.getRowCount(); i++) {
+                    RowCopier.copyRow(batch, i, merged, dst++);
                 }
             }
-        } finally {
-            it.close();
+            merged.setRowCount(dst);
         }
-        return rows;
+        // close input only AFTER copying: Filter/Project own their batches.
+        it.close();
+        return merged;
     }
 
-    protected VectorSchemaRoot buildOutput(List<Object[]> rows, ExecContext ctx) {
+    private static VectorSchemaRoot emptyRoot(RelNode input, ExecContext ctx) {
+        List<FieldVector> vectors = new ArrayList<>();
+        for (RelDataTypeField f : input.getRowType().getFieldList()) {
+            vectors.add(ArrowTypes.field(f).createVector(ctx.allocator()));
+        }
+        for (FieldVector v : vectors) {
+            v.setInitialCapacity(0);
+            v.allocateNew();
+        }
+        return VectorSchemaRoot.of(vectors.toArray(new FieldVector[0]));
+    }
+
+    /** Writes join output pairs back into a columnar root (null side = setNull). */
+    private VectorSchemaRoot buildOutput(VectorSchemaRoot left, VectorSchemaRoot right,
+                                         List<int[]> pairs, ExecContext ctx) {
         List<FieldVector> vectors = new ArrayList<>();
         for (RelDataTypeField f : getRowType().getFieldList()) {
             vectors.add(ArrowTypes.field(f).createVector(ctx.allocator()));
         }
+        int total = pairs.size();
         for (FieldVector v : vectors) {
-            v.setInitialCapacity(rows.size());
+            v.setInitialCapacity(total);
             v.allocateNew();
         }
-        for (int r = 0; r < rows.size(); r++) {
-            Object[] row = rows.get(r);
-            for (int c = 0; c < row.length; c++) {
-                RowVectors.writeObject(vectors.get(c), r, row[c]);
+        int leftCols = leftColumnCount();
+        int rightCols = rightColumnCount();
+        for (int r = 0; r < total; r++) {
+            int[] pair = pairs.get(r);
+            for (int c = 0; c < leftCols; c++) {
+                if (pair[0] >= 0) {
+                    RowCopier.copyRow(left.getVector(c), pair[0], vectors.get(c), r);
+                } else {
+                    vectors.get(c).setNull(r);
+                }
+            }
+            for (int c = 0; c < rightCols; c++) {
+                if (pair[1] >= 0) {
+                    RowCopier.copyRow(right.getVector(c), pair[1], vectors.get(leftCols + c), r);
+                } else {
+                    vectors.get(leftCols + c).setNull(r);
+                }
             }
         }
         for (FieldVector v : vectors) {
-            v.setValueCount(rows.size());
+            v.setValueCount(total);
         }
-        // of() after setValueCount: rowCount derives from first vector's valueCount
+        // of() after setValueCount: rowCount derives from first vector's valueCount.
         return VectorSchemaRoot.of(vectors.toArray(new FieldVector[0]));
     }
 
     /** True if any of the join-key columns in {@code row} is null. */
-    protected static boolean hasNullKey(Object[] row, List<Integer> keyCols) {
+    protected static boolean hasNullKey(VectorSchemaRoot root, int row, List<Integer> keyCols) {
         for (int colIdx : keyCols) {
-            if (row[colIdx] == null) {
+            if (root.getVector(colIdx).isNull(row)) {
                 return true;
             }
         }
         return false;
     }
 
-    /** The values of the join-key columns of {@code row}, as a hashable key. */
-    protected static List<Object> buildKey(Object[] row, List<Integer> keyCols) {
-        List<Object> key = new ArrayList<>(keyCols.size());
-        for (int colIdx : keyCols) {
-            key.add(row[colIdx]);
-        }
-        return key;
-    }
-
-    protected static Object[] concat(Object[] leftRow, Object[] rightRow) {
-        Object[] out = new Object[leftRow.length + rightRow.length];
-        System.arraycopy(leftRow, 0, out, 0, leftRow.length);
-        System.arraycopy(rightRow, 0, out, leftRow.length, rightRow.length);
-        return out;
-    }
-
-    /** Row indices of {@code rows} ordered by the key columns, nulls last. */
-    protected static List<Integer> sortedIndices(List<Object[]> rows, List<Integer> keyCols) {
-        List<Integer> order = new ArrayList<>(rows.size());
-        for (int rowIdx = 0; rowIdx < rows.size(); rowIdx++) {
+    /** Row indices of {@code root} ordered by the key columns, nulls last. */
+    protected static List<Integer> sortedIndices(VectorSchemaRoot root, List<Integer> keyCols) {
+        List<Integer> order = new ArrayList<>(root.getRowCount());
+        for (int rowIdx = 0; rowIdx < root.getRowCount(); rowIdx++) {
             order.add(rowIdx);
         }
-        order.sort(Comparator.comparingInt((Integer rowIdx) -> nullKeyFlag(rows.get(rowIdx), keyCols))
+        order.sort(Comparator.comparingInt((Integer rowIdx) -> nullKeyFlag(root, rowIdx, keyCols))
                 .thenComparing((Integer a, Integer b) ->
-                        compareKeys(rows.get(a), keyCols, rows.get(b), keyCols)));
+                        compareKeys(root, a, keyCols, root, b, keyCols)));
         return order;
     }
 
     /** 1 when the row has a null key, 0 otherwise — lets null-keyed rows sort last. */
-    protected static int nullKeyFlag(Object[] row, List<Integer> keyCols) {
-        return hasNullKey(row, keyCols) ? 1 : 0;
+    protected static int nullKeyFlag(VectorSchemaRoot root, int row, List<Integer> keyCols) {
+        return hasNullKey(root, row, keyCols) ? 1 : 0;
     }
 
-    protected static int compareKeys(Object[] leftRow, List<Integer> leftKeyCols,
-                                     Object[] rightRow, List<Integer> rightKeyCols) {
+    protected static int compareKeys(VectorSchemaRoot left, int leftRow, List<Integer> leftKeyCols,
+                                     VectorSchemaRoot right, int rightRow, List<Integer> rightKeyCols) {
         for (int k = 0; k < leftKeyCols.size(); k++) {
-            Object leftVal = leftRow[leftKeyCols.get(k)];
-            Object rightVal = rightRow[rightKeyCols.get(k)];
-            if (leftVal == null || rightVal == null) {
-                if (leftVal == null && rightVal == null) {
+            ValueVector lv = left.getVector(leftKeyCols.get(k));
+            ValueVector rv = right.getVector(rightKeyCols.get(k));
+            boolean leftNull = lv.isNull(leftRow);
+            boolean rightNull = rv.isNull(rightRow);
+            if (leftNull || rightNull) {
+                if (leftNull && rightNull) {
                     continue;
                 }
-                return leftVal == null ? 1 : -1;
+                return leftNull ? 1 : -1;
             }
-            int cmp = compareValues(leftVal, rightVal);
+            int cmp = ValueComparators.compare(lv, leftRow, rv, rightRow);
             if (cmp != 0) {
                 return cmp;
             }
@@ -189,9 +221,20 @@ public abstract class MiniDbJoin extends Join implements MiniDbRel {
         return 0;
     }
 
-    @SuppressWarnings({"rawtypes", "unchecked"})
-    protected static int compareValues(Object left, Object right) {
-        return ((Comparable) left).compareTo(right);
+    protected static List<Integer> identity(int n) {
+        List<Integer> order = new ArrayList<>(n);
+        for (int i = 0; i < n; i++) {
+            order.add(i);
+        }
+        return order;
+    }
+
+    protected static int[] toIntArray(List<Integer> cols) {
+        int[] arr = new int[cols.size()];
+        for (int i = 0; i < cols.size(); i++) {
+            arr[i] = cols.get(i);
+        }
+        return arr;
     }
 
     /** True if any collation covers {@code keys} as an ascending prefix.

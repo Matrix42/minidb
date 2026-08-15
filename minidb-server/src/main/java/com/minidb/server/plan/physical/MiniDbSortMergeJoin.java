@@ -3,6 +3,7 @@ package com.minidb.server.plan.physical;
 import com.minidb.server.exec.ExecContext;
 import java.util.ArrayList;
 import java.util.List;
+import org.apache.arrow.vector.VectorSchemaRoot;
 import org.apache.calcite.plan.RelOptCluster;
 import org.apache.calcite.plan.RelOptCost;
 import org.apache.calcite.plan.RelOptPlanner;
@@ -71,64 +72,64 @@ public class MiniDbSortMergeJoin extends MiniDbJoin {
     }
 
     @Override
-    protected List<Object[]> joinRows(List<Object[]> left, List<Object[]> right,
-                                      JoinInfo info, JoinRelType type, ExecContext ctx) {
+    protected List<int[]> joinPairs(VectorSchemaRoot left, VectorSchemaRoot right,
+                                    JoinInfo info, JoinRelType type, ExecContext ctx) {
         List<Integer> leftKeyCols = info.leftKeys;
         List<Integer> rightKeyCols = info.rightKeys;
         // Row indices in merge order: a pre-sorted input can be consumed in
         // its natural order (identity), otherwise sort internally by the keys.
-        List<Integer> leftScanOrder = leftSorted ? identity(left.size()) : sortedIndices(left, leftKeyCols);
-        List<Integer> rightScanOrder = rightSorted ? identity(right.size()) : sortedIndices(right, rightKeyCols);
+        List<Integer> leftScanOrder = leftSorted ? identity(left.getRowCount())
+                : sortedIndices(left, leftKeyCols);
+        List<Integer> rightScanOrder = rightSorted ? identity(right.getRowCount())
+                : sortedIndices(right, rightKeyCols);
         // Outer-join semantics: unmatched rows on the preserved side are padded
         // with nulls on the other side.
         boolean keepUnmatchedLeft = type == JoinRelType.LEFT || type == JoinRelType.FULL;
         boolean keepUnmatchedRight = type == JoinRelType.RIGHT || type == JoinRelType.FULL;
-        Object[] nullRowLeft = new Object[leftColumnCount()];
-        Object[] nullRowRight = new Object[rightColumnCount()];
-        List<Object[]> outputRows = new ArrayList<>();
+        List<int[]> outputRows = new ArrayList<>();
         int leftPos = 0;
         int rightPos = 0;
         while (leftPos < leftScanOrder.size() && rightPos < rightScanOrder.size()) {
             int leftRowIdx = leftScanOrder.get(leftPos);
             int rightRowIdx = rightScanOrder.get(rightPos);
-            boolean leftHasNullKey = hasNullKey(left.get(leftRowIdx), leftKeyCols);
-            boolean rightHasNullKey = hasNullKey(right.get(rightRowIdx), rightKeyCols);
+            boolean leftHasNullKey = hasNullKey(left, leftRowIdx, leftKeyCols);
+            boolean rightHasNullKey = hasNullKey(right, rightRowIdx, rightKeyCols);
             if (leftHasNullKey || rightHasNullKey) {
                 // Null keys never match. For outer joins each null-keyed row is
                 // emitted as a preserved row (padded with nulls on the other side);
                 // for inner joins it is simply skipped.
                 if (leftHasNullKey && rightHasNullKey) {
                     if (keepUnmatchedLeft) {
-                        outputRows.add(concat(left.get(leftRowIdx), nullRowRight));
+                        outputRows.add(new int[]{leftRowIdx, -1});
                     }
                     if (keepUnmatchedRight) {
-                        outputRows.add(concat(nullRowLeft, right.get(rightRowIdx)));
+                        outputRows.add(new int[]{-1, rightRowIdx});
                     }
                     leftPos++;
                     rightPos++;
                 } else if (leftHasNullKey) {
                     if (keepUnmatchedLeft) {
-                        outputRows.add(concat(left.get(leftRowIdx), nullRowRight));
+                        outputRows.add(new int[]{leftRowIdx, -1});
                     }
                     leftPos++;
                 } else {
                     if (keepUnmatchedRight) {
-                        outputRows.add(concat(nullRowLeft, right.get(rightRowIdx)));
+                        outputRows.add(new int[]{-1, rightRowIdx});
                     }
                     rightPos++;
                 }
                 continue;
             }
-            int cmp = compareKeys(left.get(leftRowIdx), leftKeyCols,
-                    right.get(rightRowIdx), rightKeyCols);
+            int cmp = compareKeys(left, leftRowIdx, leftKeyCols,
+                    right, rightRowIdx, rightKeyCols);
             if (cmp < 0) {
                 if (keepUnmatchedLeft) {
-                    outputRows.add(concat(left.get(leftRowIdx), nullRowRight));
+                    outputRows.add(new int[]{leftRowIdx, -1});
                 }
                 leftPos++;
             } else if (cmp > 0) {
                 if (keepUnmatchedRight) {
-                    outputRows.add(concat(nullRowLeft, right.get(rightRowIdx)));
+                    outputRows.add(new int[]{-1, rightRowIdx});
                 }
                 rightPos++;
             } else {
@@ -136,22 +137,21 @@ public class MiniDbSortMergeJoin extends MiniDbJoin {
                 // (contiguous, non-null, same key) and cross-product them.
                 int leftGroupEnd = leftPos;
                 while (leftGroupEnd < leftScanOrder.size()
-                        && !hasNullKey(left.get(leftScanOrder.get(leftGroupEnd)), leftKeyCols)
-                        && compareKeys(left.get(leftScanOrder.get(leftGroupEnd)), leftKeyCols,
-                        right.get(rightRowIdx), rightKeyCols) == 0) {
+                        && !hasNullKey(left, leftScanOrder.get(leftGroupEnd), leftKeyCols)
+                        && compareKeys(left, leftScanOrder.get(leftGroupEnd), leftKeyCols,
+                        right, rightRowIdx, rightKeyCols) == 0) {
                     leftGroupEnd++;
                 }
                 int rightGroupEnd = rightPos;
                 while (rightGroupEnd < rightScanOrder.size()
-                        && !hasNullKey(right.get(rightScanOrder.get(rightGroupEnd)), rightKeyCols)
-                        && compareKeys(right.get(rightScanOrder.get(rightGroupEnd)), rightKeyCols,
-                        left.get(leftRowIdx), leftKeyCols) == 0) {
+                        && !hasNullKey(right, rightScanOrder.get(rightGroupEnd), rightKeyCols)
+                        && compareKeys(right, rightScanOrder.get(rightGroupEnd), rightKeyCols,
+                        left, leftRowIdx, leftKeyCols) == 0) {
                     rightGroupEnd++;
                 }
                 for (int lp = leftPos; lp < leftGroupEnd; lp++) {
                     for (int rp = rightPos; rp < rightGroupEnd; rp++) {
-                        outputRows.add(concat(left.get(leftScanOrder.get(lp)),
-                                right.get(rightScanOrder.get(rp))));
+                        outputRows.add(new int[]{leftScanOrder.get(lp), rightScanOrder.get(rp)});
                     }
                 }
                 leftPos = leftGroupEnd;
@@ -162,24 +162,16 @@ public class MiniDbSortMergeJoin extends MiniDbJoin {
         // keys larger than the exhausted side's, or are null-keyed).
         while (leftPos < leftScanOrder.size()) {
             if (keepUnmatchedLeft) {
-                outputRows.add(concat(left.get(leftScanOrder.get(leftPos)), nullRowRight));
+                outputRows.add(new int[]{leftScanOrder.get(leftPos), -1});
             }
             leftPos++;
         }
         while (rightPos < rightScanOrder.size()) {
             if (keepUnmatchedRight) {
-                outputRows.add(concat(nullRowLeft, right.get(rightScanOrder.get(rightPos))));
+                outputRows.add(new int[]{-1, rightScanOrder.get(rightPos)});
             }
             rightPos++;
         }
         return outputRows;
-    }
-
-    private static List<Integer> identity(int n) {
-        List<Integer> order = new ArrayList<>(n);
-        for (int i = 0; i < n; i++) {
-            order.add(i);
-        }
-        return order;
     }
 }

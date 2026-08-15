@@ -2,6 +2,7 @@ package com.minidb.server.plan.physical;
 
 import com.minidb.server.catalog.ArrowTypes;
 import com.minidb.server.exec.ExecContext;
+import com.minidb.server.exec.RowCopier;
 import java.util.ArrayList;
 import java.util.List;
 import org.apache.arrow.vector.BitVector;
@@ -53,27 +54,24 @@ public class MiniDbNestedLoopJoin extends MiniDbJoin {
     }
 
     @Override
-    protected List<Object[]> joinRows(List<Object[]> left, List<Object[]> right,
-                                      JoinInfo info, JoinRelType type, ExecContext ctx) {
+    protected List<int[]> joinPairs(VectorSchemaRoot left, VectorSchemaRoot right,
+                                    JoinInfo info, JoinRelType type, ExecContext ctx) {
         boolean keepUnmatchedLeft = type == JoinRelType.LEFT || type == JoinRelType.FULL;
         boolean keepUnmatchedRight = type == JoinRelType.RIGHT || type == JoinRelType.FULL;
-        boolean[] matchedLeft = new boolean[left.size()];
-        boolean[] matchedRight = new boolean[right.size()];
-        Object[] nullRowLeft = new Object[leftColumnCount()];
-        Object[] nullRowRight = new Object[rightColumnCount()];
-        int totalCols = nullRowLeft.length + nullRowRight.length;
-        VectorSchemaRoot probeRoot = buildProbeRoot(totalCols, ctx);
-        List<Object[]> outputRows = new ArrayList<>();
+        boolean[] matchedLeft = new boolean[left.getRowCount()];
+        boolean[] matchedRight = new boolean[right.getRowCount()];
+        VectorSchemaRoot probeRoot = buildProbeRoot(ctx);
+        List<int[]> outputRows = new ArrayList<>();
         try {
-            for (int leftIdx = 0; leftIdx < left.size(); leftIdx++) {
-                for (int rightIdx = 0; rightIdx < right.size(); rightIdx++) {
-                    writeProbeRow(probeRoot, left.get(leftIdx), right.get(rightIdx));
+            for (int leftIdx = 0; leftIdx < left.getRowCount(); leftIdx++) {
+                for (int rightIdx = 0; rightIdx < right.getRowCount(); rightIdx++) {
+                    writeProbeRow(probeRoot, left, leftIdx, right, rightIdx);
                     ValueVector conditionResult = ctx.interpreter().eval(getCondition(), probeRoot);
                     try {
                         boolean matches = !conditionResult.isNull(0)
                                 && ((BitVector) conditionResult).get(0) == 1;
                         if (matches) {
-                            outputRows.add(concat(left.get(leftIdx), right.get(rightIdx)));
+                            outputRows.add(new int[]{leftIdx, rightIdx});
                             matchedLeft[leftIdx] = true;
                             matchedRight[rightIdx] = true;
                         }
@@ -87,23 +85,23 @@ public class MiniDbNestedLoopJoin extends MiniDbJoin {
         }
         // Emit rows that matched nothing, padded with nulls on the other side.
         if (keepUnmatchedLeft) {
-            for (int leftIdx = 0; leftIdx < left.size(); leftIdx++) {
+            for (int leftIdx = 0; leftIdx < left.getRowCount(); leftIdx++) {
                 if (!matchedLeft[leftIdx]) {
-                    outputRows.add(concat(left.get(leftIdx), nullRowRight));
+                    outputRows.add(new int[]{leftIdx, -1});
                 }
             }
         }
         if (keepUnmatchedRight) {
-            for (int rightIdx = 0; rightIdx < right.size(); rightIdx++) {
+            for (int rightIdx = 0; rightIdx < right.getRowCount(); rightIdx++) {
                 if (!matchedRight[rightIdx]) {
-                    outputRows.add(concat(nullRowLeft, right.get(rightIdx)));
+                    outputRows.add(new int[]{-1, rightIdx});
                 }
             }
         }
         return outputRows;
     }
 
-    private VectorSchemaRoot buildProbeRoot(int totalCols, ExecContext ctx) {
+    private VectorSchemaRoot buildProbeRoot(ExecContext ctx) {
         List<FieldVector> vectors = new ArrayList<>();
         for (RelDataTypeField f : getRowType().getFieldList()) {
             vectors.add(ArrowTypes.field(f).createVector(ctx.allocator()));
@@ -115,13 +113,15 @@ public class MiniDbNestedLoopJoin extends MiniDbJoin {
         return VectorSchemaRoot.of(vectors.toArray(new FieldVector[0]));
     }
 
-    private void writeProbeRow(VectorSchemaRoot probeRoot, Object[] leftRow, Object[] rightRow) {
+    private void writeProbeRow(VectorSchemaRoot probeRoot, VectorSchemaRoot left, int leftIdx,
+                               VectorSchemaRoot right, int rightIdx) {
         List<FieldVector> vectors = probeRoot.getFieldVectors();
-        for (int c = 0; c < leftRow.length; c++) {
-            RowVectors.writeObject(vectors.get(c), 0, leftRow[c]);
+        for (int c = 0; c < left.getFieldVectors().size(); c++) {
+            RowCopier.copyRow(left.getVector(c), leftIdx, vectors.get(c), 0);
         }
-        for (int c = 0; c < rightRow.length; c++) {
-            RowVectors.writeObject(vectors.get(leftRow.length + c), 0, rightRow[c]);
+        for (int c = 0; c < right.getFieldVectors().size(); c++) {
+            RowCopier.copyRow(right.getVector(c), rightIdx,
+                    vectors.get(left.getFieldVectors().size() + c), 0);
         }
         probeRoot.setRowCount(1);
     }
