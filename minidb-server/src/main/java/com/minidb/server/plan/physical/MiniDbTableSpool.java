@@ -1,6 +1,6 @@
 package com.minidb.server.plan.physical;
 
-import com.minidb.server.exec.BatchIterator;
+import com.minidb.storage.common.BatchIterator;
 import com.minidb.server.exec.ExecContext;
 import java.util.List;
 import org.apache.arrow.vector.VectorSchemaRoot;

@@ -1,10 +1,10 @@
 package com.minidb.server.plan.physical;
 
 import com.minidb.server.catalog.InformationSchemaCatalog;
-import com.minidb.server.exec.BatchIterator;
+import com.minidb.storage.common.BatchIterator;
 import com.minidb.server.exec.ExecContext;
 import com.minidb.server.exec.InformationSchema;
-import com.minidb.server.storage.ArrowTable;
+import com.minidb.storage.common.SimpleTable;
 import java.util.Iterator;
 import java.util.List;
 import org.apache.arrow.vector.VectorSchemaRoot;
@@ -37,7 +37,7 @@ public class MiniDbScan extends TableScan implements MiniDbRel {
                 return transientScan(transientRows, ctx);
             }
         }
-        ArrowTable arrowTable;
+        SimpleTable arrowTable;
         if (n >= 3) {
             String schemaName = qualified.get(n - 2);
             String tableName = qualified.get(n - 1);

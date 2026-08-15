@@ -1,4 +1,5 @@
 package com.minidb.server.exec;
+import com.minidb.storage.common.BatchIterator;
 
 import com.minidb.server.plan.physical.MiniDbAggregate;
 import com.minidb.server.plan.physical.MiniDbCalc;

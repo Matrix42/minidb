@@ -1,4 +1,4 @@
-package com.minidb.server.exec;
+package com.minidb.storage.common;
 
 import org.apache.arrow.vector.VectorSchemaRoot;
 

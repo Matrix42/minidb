@@ -1,7 +1,7 @@
 package com.minidb.server.exec;
 
 import com.minidb.server.catalog.MiniDbCatalog;
-import com.minidb.server.storage.ArrowTable;
+import com.minidb.storage.common.SimpleTable;
 import com.minidb.server.storage.StorageManager;
 import java.util.HashMap;
 import java.util.List;
@@ -53,7 +53,7 @@ public class ExecContext {
      * second-to-last segment, the table the last. Operators stay generic about
      * where the name came from; this is the storage-facing boundary.
      */
-    public ArrowTable getTable(String schemaName, String tableName) {
+    public SimpleTable getTable(String schemaName, String tableName) {
         return storage.getTable(schemaName, tableName);
     }
 
@@ -62,7 +62,7 @@ public class ExecContext {
      * paths that only have a bare name from {@code TableScan.getQualifiedName()}
      * last segment, without a live operator tree carrying the schema.
      */
-    public ArrowTable getTable(String tableName) {
+    public SimpleTable getTable(String tableName) {
         return storage.getTable(currentSchema, tableName);
     }
 

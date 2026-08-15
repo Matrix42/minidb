@@ -1,9 +1,11 @@
 package com.minidb.server.storage;
 
+import com.minidb.storage.arrow.ArrowPartFormat;
 import com.minidb.storage.common.ColumnMeta;
 import com.minidb.storage.common.ColumnType;
+import com.minidb.storage.common.SimpleTable;
 import com.minidb.storage.common.TableSchema;
-import com.minidb.server.exec.BatchIterator;
+import com.minidb.storage.common.BatchIterator;
 import java.nio.file.Path;
 import java.util.ArrayList;
 import java.util.List;
@@ -25,14 +27,15 @@ class ArrowTableTest {
     @TempDir
     Path tempDir;
     BufferAllocator allocator;
-    ArrowTable table;
+    SimpleTable table;
 
     @BeforeEach
     void setUp() {
         allocator = new RootAllocator();
-        table = new ArrowTable(new TableSchema("t", List.of(
+        table = new SimpleTable(new TableSchema("t", List.of(
                 new ColumnMeta("id", ColumnType.INTEGER),
-                new ColumnMeta("name", ColumnType.VARCHAR))), allocator, tempDir);
+                new ColumnMeta("name", ColumnType.VARCHAR))), allocator, tempDir,
+                new ArrowPartFormat());
     }
 
     @AfterEach
@@ -83,8 +86,9 @@ class ArrowTableTest {
 
     @Test
     void arrowSchemaCarriesSchemaMetadata() {
-        ArrowTable t = new ArrowTable(new TableSchema("other", "t", List.of(
-                new ColumnMeta("id", ColumnType.INTEGER))), allocator, tempDir.resolve("other"));
+        SimpleTable t = new SimpleTable(new TableSchema("other", "t", List.of(
+                new ColumnMeta("id", ColumnType.INTEGER))), allocator, tempDir.resolve("other"),
+                new ArrowPartFormat());
         java.util.Map<String, String> meta = t.arrowSchema().getCustomMetadata();
         assertNotNull(meta);
         assertEquals("other", meta.get("schema"));

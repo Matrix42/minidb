@@ -2,7 +2,12 @@ package com.minidb.server.storage;
 
 import com.minidb.server.catalog.InformationSchemaCatalog;
 import com.minidb.server.catalog.MiniDbCatalog;
+import com.minidb.storage.arrow.ArrowPartFormat;
+import com.minidb.storage.arrow.IpcFileTableStorage;
+import com.minidb.storage.common.PartFormat;
+import com.minidb.storage.common.SimpleTable;
 import com.minidb.storage.common.TableSchema;
+import com.minidb.storage.common.TableStorage;
 import java.io.IOException;
 import java.io.UncheckedIOException;
 import java.nio.file.Files;
@@ -18,7 +23,7 @@ import org.slf4j.LoggerFactory;
 
 /**
  * 表目录 + catalog 持久化。数据不驻留内存:每表一个目录,数据是目录里的 part 文件,
- * 由 {@link ArrowTable} 写入直接落盘、读取递归读 part。本类只持「目录句柄」。
+ * 由 {@link SimpleTable} 写入直接落盘、读取递归读 part。本类只持「目录句柄」。
  */
 public class StorageManager implements AutoCloseable {
 
@@ -29,7 +34,8 @@ public class StorageManager implements AutoCloseable {
     private final Path dataDir;
     private final CatalogStore catalogStore;
     private final TableStorage tableStorage;
-    private final Map<String, ArrowTable> tables = new ConcurrentHashMap<>();
+    private final PartFormat format = new ArrowPartFormat();
+    private final Map<String, SimpleTable> tables = new ConcurrentHashMap<>();
 
     public StorageManager(MiniDbCatalog catalog, BufferAllocator allocator, Path dataDir) {
         this.catalog = catalog;
@@ -62,7 +68,7 @@ public class StorageManager implements AutoCloseable {
             for (String tableName : catalog.tableNames(schema)) {
                 TableSchema ts = catalog.getTable(schema, tableName);
                 tables.put(storageKey(schema, tableName),
-                        new ArrowTable(ts, allocator, tableStorage.tableDir(schema, tableName)));
+                        new SimpleTable(ts, allocator, tableStorage.tableDir(schema, tableName), format));
             }
         }
         LOG.info("loaded {} table(s)", tables.size());
@@ -79,17 +85,17 @@ public class StorageManager implements AutoCloseable {
         }
     }
 
-    public ArrowTable getTable(String schemaName, String tableName) {
-        ArrowTable table = tables.get(storageKey(schemaName, tableName));
+    public SimpleTable getTable(String schemaName, String tableName) {
+        SimpleTable table = tables.get(storageKey(schemaName, tableName));
         if (table == null) {
             throw new IllegalArgumentException("table not found: " + tableName);
         }
         return table;
     }
 
-    public ArrowTable createTable(TableSchema schema) {
-        ArrowTable table = new ArrowTable(schema, allocator,
-                tableStorage.tableDir(schema.schemaName(), schema.name()));
+    public SimpleTable createTable(TableSchema schema) {
+        SimpleTable table = new SimpleTable(schema, allocator,
+                tableStorage.tableDir(schema.schemaName(), schema.name()), format);
         String sk = storageKey(schema.schemaName(), schema.name());
         if (tables.putIfAbsent(sk, table) != null) {
             throw new IllegalArgumentException("table already exists: " + schema.name());
@@ -123,7 +129,7 @@ public class StorageManager implements AutoCloseable {
     }
 
     public void truncateTable(String schemaName, String tableName) {
-        ArrowTable table = tables.get(storageKey(schemaName, tableName));
+        SimpleTable table = tables.get(storageKey(schemaName, tableName));
         if (table == null) {
             throw new IllegalArgumentException("table not found: " + tableName);
         }

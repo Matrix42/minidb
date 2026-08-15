@@ -1,10 +1,11 @@
 package com.minidb.server.storage;
+import com.minidb.storage.common.SimpleTable;
 
 import com.minidb.storage.common.ColumnMeta;
 import com.minidb.storage.common.ColumnType;
 import com.minidb.server.catalog.MiniDbCatalog;
 import com.minidb.storage.common.TableSchema;
-import com.minidb.server.exec.BatchIterator;
+import com.minidb.storage.common.BatchIterator;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.util.ArrayList;
@@ -29,7 +30,7 @@ class StorageManagerTest {
                 new ColumnMeta("name", ColumnType.VARCHAR)));
     }
 
-    private void writeRow(ArrowTable table, int id, String name) {
+    private void writeRow(SimpleTable table, int id, String name) {
         VectorSchemaRoot batch = table.newBatchRoot();
         batch.allocateNew();
         ((IntVector) batch.getVector("id")).setSafe(0, id);
@@ -39,7 +40,7 @@ class StorageManagerTest {
         batch.close();
     }
 
-    private List<Integer> readIds(ArrowTable table) {
+    private List<Integer> readIds(SimpleTable table) {
         List<Integer> ids = new ArrayList<>();
         try (BatchIterator it = table.scan()) {
             while (it.hasNext()) {
@@ -57,7 +58,7 @@ class StorageManagerTest {
         MiniDbCatalog catalog = new MiniDbCatalog();
         try (BufferAllocator allocator = new RootAllocator()) {
             StorageManager storage = new StorageManager(catalog, allocator, dir);
-            ArrowTable table = storage.createTable(schema());
+            SimpleTable table = storage.createTable(schema());
             writeRow(table, 7, "hello");
             storage.close();
         }
@@ -68,7 +69,7 @@ class StorageManagerTest {
         try (BufferAllocator allocator = new RootAllocator()) {
             StorageManager storage2 = new StorageManager(catalog2, allocator, dir);
             storage2.loadAll();
-            ArrowTable reloaded = storage2.getTable("public", "t");
+            SimpleTable reloaded = storage2.getTable("public", "t");
             assertEquals(1, reloaded.rowCount());
             assertEquals(List.of(7), readIds(reloaded));
             storage2.close();
@@ -80,7 +81,7 @@ class StorageManagerTest {
         MiniDbCatalog catalog = new MiniDbCatalog();
         try (BufferAllocator allocator = new RootAllocator()) {
             StorageManager storage = new StorageManager(catalog, allocator, dir);
-            ArrowTable table = storage.createTable(schema());
+            SimpleTable table = storage.createTable(schema());
             writeRow(table, 1, "a");
             assertTrue(Files.exists(dir.resolve("public").resolve("t")));
             storage.dropTable("public", "t");
@@ -94,7 +95,7 @@ class StorageManagerTest {
         MiniDbCatalog catalog = new MiniDbCatalog();
         try (BufferAllocator allocator = new RootAllocator()) {
             StorageManager storage = new StorageManager(catalog, allocator, dir);
-            ArrowTable table = storage.createTable(schema());
+            SimpleTable table = storage.createTable(schema());
             writeRow(table, 7, "hello");
             storage.truncateTable("public", "t");
             storage.close();
@@ -104,7 +105,7 @@ class StorageManagerTest {
         try (BufferAllocator allocator = new RootAllocator()) {
             StorageManager storage2 = new StorageManager(catalog2, allocator, dir);
             storage2.loadAll();
-            ArrowTable reloaded = storage2.getTable("public", "t");
+            SimpleTable reloaded = storage2.getTable("public", "t");
             assertEquals(0, reloaded.rowCount());
             VectorSchemaRoot fresh = reloaded.newBatchRoot();
             fresh.allocateNew();

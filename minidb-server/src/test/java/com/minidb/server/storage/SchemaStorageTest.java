@@ -1,10 +1,11 @@
 package com.minidb.server.storage;
+import com.minidb.storage.common.SimpleTable;
 
 import com.minidb.storage.common.ColumnMeta;
 import com.minidb.storage.common.ColumnType;
 import com.minidb.server.catalog.MiniDbCatalog;
 import com.minidb.storage.common.TableSchema;
-import com.minidb.server.exec.BatchIterator;
+import com.minidb.storage.common.BatchIterator;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.util.List;
@@ -28,7 +29,7 @@ class SchemaStorageTest {
     }
 
     private void insertRow(StorageManager storage, String schema, String table, int id) {
-        ArrowTable t = storage.getTable(schema, table);
+        SimpleTable t = storage.getTable(schema, table);
         VectorSchemaRoot root = t.newBatchRoot();
         root.allocateNew();
         ((IntVector) root.getVector(0)).setSafe(0, id);
@@ -37,7 +38,7 @@ class SchemaStorageTest {
         root.close();
     }
 
-    private int readFirstId(ArrowTable table) {
+    private int readFirstId(SimpleTable table) {
         try (BatchIterator it = table.scan()) {
             while (it.hasNext()) {
                 IntVector v = (IntVector) it.next().getVector(0);

@@ -20,6 +20,10 @@
     </dependency>
     <dependency>
       <groupId>com.minidb</groupId>
+      <artifactId>minidb-arrow</artifactId>
+    </dependency>
+    <dependency>
+      <groupId>com.minidb</groupId>
       <artifactId>minidb-protocol</artifactId>
     </dependency>
     <dependency>

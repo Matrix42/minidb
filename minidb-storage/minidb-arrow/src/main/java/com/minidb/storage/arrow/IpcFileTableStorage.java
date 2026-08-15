@@ -1,5 +1,6 @@
-package com.minidb.server.storage;
+package com.minidb.storage.arrow;
 
+import com.minidb.storage.common.TableStorage;
 import java.io.IOException;
 import java.io.UncheckedIOException;
 import java.nio.file.DirectoryStream;

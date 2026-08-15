@@ -1,4 +1,5 @@
 package com.minidb.server.exec;
+import com.minidb.storage.common.BatchIterator;
 
 import com.minidb.parser.ddl.SqlForeignKeyConstraint;
 import com.minidb.server.calcite.CalciteContext;

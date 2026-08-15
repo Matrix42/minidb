@@ -4,10 +4,10 @@ import com.minidb.storage.common.ColumnMeta;
 import com.minidb.storage.common.ForeignKey;
 import com.minidb.server.catalog.MiniDbCatalog;
 import com.minidb.storage.common.TableSchema;
-import com.minidb.server.exec.BatchIterator;
+import com.minidb.storage.common.BatchIterator;
 import com.minidb.server.exec.ExecContext;
 import com.minidb.server.exec.RowCopier;
-import com.minidb.server.storage.ArrowTable;
+import com.minidb.storage.common.SimpleTable;
 import java.util.ArrayList;
 import java.util.HashMap;
 import java.util.HashSet;
@@ -55,7 +55,7 @@ public class MiniDbModify extends TableModify implements MiniDbRel {
         // size==2: [minidb, t] (promoted table) → bare name resolves via ctx's
         // current schema.
         String schemaName = n >= 3 ? qualified.get(n - 2) : ctx.currentSchema();
-        ArrowTable target = ctx.getTable(schemaName, tableName);
+        SimpleTable target = ctx.getTable(schemaName, tableName);
         BatchIterator input = ((MiniDbRel) getInput()).execute(ctx);
         if (getOperation() == Operation.INSERT) {
             appendRows(ctx, target, input);
@@ -67,7 +67,7 @@ public class MiniDbModify extends TableModify implements MiniDbRel {
         return BatchIterator.empty();
     }
 
-    private void appendRows(ExecContext ctx, ArrowTable target, BatchIterator input) {
+    private void appendRows(ExecContext ctx, SimpleTable target, BatchIterator input) {
         affected = 0;
         try {
             while (input.hasNext()) {
@@ -91,7 +91,7 @@ public class MiniDbModify extends TableModify implements MiniDbRel {
     }
 
     /** INSERT 前的约束校验:NOT NULL + 主键/唯一冲突 + 外键引用存在。 */
-    private void validateInsert(ExecContext ctx, ArrowTable target, VectorSchemaRoot batch) {
+    private void validateInsert(ExecContext ctx, SimpleTable target, VectorSchemaRoot batch) {
         TableSchema schema = target.schema();
         for (ColumnMeta column : schema.columns()) {
             if (!column.nullable()) {
@@ -115,9 +115,9 @@ public class MiniDbModify extends TableModify implements MiniDbRel {
     }
 
     /** 外键 INSERT 校验:child 行的外键列值必须存在于引用表(含 null 的键不校验)。 */
-    private void validateForeignKeys(ExecContext ctx, ArrowTable target, VectorSchemaRoot batch) {
+    private void validateForeignKeys(ExecContext ctx, SimpleTable target, VectorSchemaRoot batch) {
         for (ForeignKey fk : target.schema().foreignKeys()) {
-            ArrowTable refTable = ctx.getTable(fk.refSchema(), fk.refTable());
+            SimpleTable refTable = ctx.getTable(fk.refSchema(), fk.refTable());
             List<String> refColumns = fk.refColumns().isEmpty()
                     ? refTable.schema().primaryKey()
                     : fk.refColumns();
@@ -159,7 +159,7 @@ public class MiniDbModify extends TableModify implements MiniDbRel {
      * 引用本表主键的常见情况(引用非主键唯一列暂不校验);UPDATE 本表被引用列(如改主键)
      * 的外键校验暂未覆盖。
      */
-    private void validateDeleteRestrict(ExecContext ctx, ArrowTable target, VectorSchemaRoot matched) {
+    private void validateDeleteRestrict(ExecContext ctx, SimpleTable target, VectorSchemaRoot matched) {
         TableSchema schema = target.schema();
         if (schema.primaryKey().isEmpty()) {
             return;
@@ -186,7 +186,7 @@ public class MiniDbModify extends TableModify implements MiniDbRel {
                     if (!refColumns.equals(schema.primaryKey())) {
                         continue; // 引用非主键列,暂不校验
                     }
-                    ArrowTable childTable = ctx.getTable(schemaName, tableName);
+                    SimpleTable childTable = ctx.getTable(schemaName, tableName);
                     List<Integer> childIdx = columnIndexes(childSchema, fk.columns());
                     try (BatchIterator it = childTable.scan()) {
                         while (it.hasNext()) {
@@ -207,7 +207,7 @@ public class MiniDbModify extends TableModify implements MiniDbRel {
     }
 
     /** 主键/唯一冲突校验:新行的键值不能与现有行(或同批早前行)重复。含 null 的键不参与(唯一约束允许多 null)。 */
-    private void validateUnique(ArrowTable target, VectorSchemaRoot batch,
+    private void validateUnique(SimpleTable target, VectorSchemaRoot batch,
                                 List<String> columns, String constraintName) {
         List<Integer> idxs = new ArrayList<>(columns.size());
         for (String column : columns) {
@@ -251,7 +251,7 @@ public class MiniDbModify extends TableModify implements MiniDbRel {
      * only produces the matched rows, so we read all parts, keep unmatched rows
      * and replace (UPDATE) or drop (DELETE) matched ones, then rewrite the parts.
      */
-    private void rewriteTable(ExecContext ctx, ArrowTable target, BatchIterator input) {
+    private void rewriteTable(ExecContext ctx, SimpleTable target, BatchIterator input) {
         int numTableCols = target.schema().columns().size();
         List<String> updateCols = getOperation() == Operation.UPDATE
                 ? getUpdateColumnList() : List.of();

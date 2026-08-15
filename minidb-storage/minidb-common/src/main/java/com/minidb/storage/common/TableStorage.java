@@ -1,4 +1,4 @@
-package com.minidb.server.storage;
+package com.minidb.storage.common;
 
 import java.nio.file.Path;
 import java.util.List;

@@ -1,7 +1,7 @@
 package com.minidb.server.plan.physical;
 
 import com.minidb.storage.common.ArrowTypes;
-import com.minidb.server.exec.BatchIterator;
+import com.minidb.storage.common.BatchIterator;
 import com.minidb.server.exec.ExecContext;
 import com.minidb.server.exec.RowCopier;
 

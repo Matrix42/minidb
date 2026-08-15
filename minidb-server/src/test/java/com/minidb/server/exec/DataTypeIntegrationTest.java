@@ -1,4 +1,5 @@
 package com.minidb.server.exec;
+import com.minidb.storage.common.BatchIterator;
 
 import com.minidb.storage.common.ColumnMeta;
 import com.minidb.storage.common.ColumnType;

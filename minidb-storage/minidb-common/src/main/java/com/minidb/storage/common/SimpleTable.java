@@ -1,17 +1,10 @@
-package com.minidb.server.storage;
+package com.minidb.storage.common;
 
-import com.minidb.storage.common.ArrowTypes;
-import com.minidb.storage.common.ColumnMeta;
-import com.minidb.storage.common.TableSchema;
-import com.minidb.server.exec.BatchIterator;
-import com.minidb.server.exec.RowCopier;
 import java.io.IOException;
 import java.io.UncheckedIOException;
-import java.nio.channels.SeekableByteChannel;
 import java.nio.file.DirectoryStream;
 import java.nio.file.Files;
 import java.nio.file.Path;
-import java.nio.file.StandardOpenOption;
 import java.util.ArrayList;
 import java.util.Comparator;
 import java.util.List;
@@ -19,27 +12,29 @@ import java.util.Map;
 import java.util.concurrent.atomic.AtomicInteger;
 import org.apache.arrow.memory.BufferAllocator;
 import org.apache.arrow.vector.VectorSchemaRoot;
-import org.apache.arrow.vector.ipc.ArrowFileReader;
-import org.apache.arrow.vector.ipc.ArrowFileWriter;
 import org.apache.arrow.vector.types.pojo.Field;
 import org.apache.arrow.vector.types.pojo.Schema;
 
 /**
- * 一张表:一个目录,目录(可嵌套)里是若干 part 文件(.arrow)。数据不驻留内存——
- * 写入把 batch 直接落成一个新 part 文件,读取递归读所有 part 逐个返回 batch(用完释放)。
+ * 一张表:一个目录,目录(可嵌套)里是若干 part 文件。数据不驻留内存——写入把 batch 直接
+ * 落成一个新 part,读取递归读所有 part 逐个返回 batch(用完释放)。part 的物理编码由
+ * {@link PartFormat} 决定(arrow/parquet),本类只负责目录组织与分段。
  */
-public class ArrowTable {
+public class SimpleTable {
 
     private final TableSchema schema;
     private final BufferAllocator allocator;
     private final Path tableDir;
+    private final PartFormat format;
     private final Schema arrowSchema;
     private final AtomicInteger partSeq;
 
-    public ArrowTable(TableSchema schema, BufferAllocator allocator, Path tableDir) {
+    public SimpleTable(TableSchema schema, BufferAllocator allocator, Path tableDir,
+                       PartFormat format) {
         this.schema = schema;
         this.allocator = allocator;
         this.tableDir = tableDir;
+        this.format = format;
         List<Field> fields = new ArrayList<>();
         for (ColumnMeta column : schema.columns()) {
             fields.add(ArrowTypes.field(column));
@@ -74,7 +69,7 @@ public class ArrowTable {
 
             @Override
             public VectorSchemaRoot next() {
-                VectorSchemaRoot batch = readPart(parts.get(idx++));
+                VectorSchemaRoot batch = format.read(parts.get(idx++), allocator);
                 read.add(batch);
                 return batch;
             }
@@ -92,20 +87,7 @@ public class ArrowTable {
     /** 把一个 batch 直接落成一个新 part 文件。 */
     public void writePart(VectorSchemaRoot batch) {
         int seq = partSeq.incrementAndGet();
-        Path part = tableDir.resolve(String.format("part-%06d.arrow", seq));
-        try {
-            Files.createDirectories(tableDir);
-            try (SeekableByteChannel channel = Files.newByteChannel(part,
-                    StandardOpenOption.CREATE, StandardOpenOption.WRITE,
-                    StandardOpenOption.TRUNCATE_EXISTING);
-                 ArrowFileWriter writer = new ArrowFileWriter(batch, null, channel)) {
-                writer.start();
-                writer.writeBatch();
-                writer.end();
-            }
-        } catch (IOException e) {
-            throw new UncheckedIOException(e);
-        }
+        format.write(tableDir.resolve(String.format("part-%06d.arrow", seq)), batch);
     }
 
     /** 删除所有 part 文件(truncate)。 */
@@ -122,7 +104,7 @@ public class ArrowTable {
     public long rowCount() {
         long count = 0;
         for (Path part : partFiles()) {
-            count += rowCountOf(part);
+            count += format.rowCount(part, allocator);
         }
         return count;
     }
@@ -130,40 +112,6 @@ public class ArrowTable {
     /** part 文件数(EXPLAIN 的 batches 列用)。 */
     public int partCount() {
         return partFiles().size();
-    }
-
-    private VectorSchemaRoot readPart(Path part) {
-        try (SeekableByteChannel channel = Files.newByteChannel(part, StandardOpenOption.READ);
-             ArrowFileReader reader = new ArrowFileReader(channel, allocator)) {
-            VectorSchemaRoot src = reader.getVectorSchemaRoot();
-            VectorSchemaRoot out = VectorSchemaRoot.create(arrowSchema, allocator);
-            out.allocateNew();
-            int dst = 0;
-            while (reader.loadNextBatch()) {
-                int batchRows = src.getRowCount();
-                for (int i = 0; i < batchRows; i++) {
-                    RowCopier.copyRow(src, i, out, dst + i);
-                }
-                dst += batchRows;
-            }
-            out.setRowCount(dst);
-            return out;
-        } catch (IOException e) {
-            throw new UncheckedIOException(e);
-        }
-    }
-
-    private long rowCountOf(Path part) {
-        try (SeekableByteChannel channel = Files.newByteChannel(part, StandardOpenOption.READ);
-             ArrowFileReader reader = new ArrowFileReader(channel, allocator)) {
-            long count = 0;
-            while (reader.loadNextBatch()) {
-                count += reader.getVectorSchemaRoot().getRowCount();
-            }
-            return count;
-        } catch (IOException e) {
-            throw new UncheckedIOException(e);
-        }
     }
 
     /** 递归列出目录下所有 .arrow 文件,按名排序保证稳定顺序。 */
