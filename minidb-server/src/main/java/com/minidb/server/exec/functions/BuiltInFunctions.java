@@ -31,6 +31,7 @@ public final class BuiltInFunctions {
         arithmetic(registry);
         comparison(registry);
         stringFunctions(registry);
+        likeFunctions(registry);
         mathFunctions(registry);
         return registry;
     }
@@ -232,10 +233,60 @@ public final class BuiltInFunctions {
         return new String(codePoints, 0, codePoints.length);
     }
 
+    /**
+     * LIKE / NOT LIKE:% 匹配任意序列、_ 匹配单个字符,其余字面量按正则转义后原样。
+     * 模式经 likeToRegex 转正则后整体匹配(非部分匹配)。NOT LIKE 是独立算子(SqlLikeOperator
+     * negated=true),故分别注册;ESCAPE 子句(3 参形式)暂不支持。
+     */
+    private static void likeFunctions(FunctionRegistry r) {
+        r.register(SqlStdOperatorTable.LIKE, likeFunction(SqlStdOperatorTable.LIKE, false));
+        r.register(SqlStdOperatorTable.NOT_LIKE, likeFunction(SqlStdOperatorTable.NOT_LIKE, true));
+    }
+
+    private static Function likeFunction(SqlOperator op, boolean negate) {
+        Kernel kernel = (args, out) -> like(args, out, negate);
+        return new Function(op.getName(), List.of(new Overload(
+                List.of(VarCharVector.class, VarCharVector.class), BitVector.class, kernel)));
+    }
+
+    private static void like(List<ValueVector> args, FieldVector out, boolean negate) {
+        VarCharVector str = (VarCharVector) args.get(0);
+        VarCharVector pattern = (VarCharVector) args.get(1);
+        BitVector result = (BitVector) out;
+        for (int i = 0; i < str.getValueCount(); i++) {
+            if (str.isNull(i) || pattern.isNull(i)) {
+                result.setNull(i);
+                continue;
+            }
+            String s = new String(str.get(i), StandardCharsets.UTF_8);
+            String p = new String(pattern.get(i), StandardCharsets.UTF_8);
+            boolean matches = likeToRegex(p).matcher(s).matches();
+            result.setSafe(i, (negate ? !matches : matches) ? 1 : 0);
+        }
+    }
+
+    /** 把 SQL LIKE 模式转正则:% → .*、_ → .、其余正则元字符转义后原样。 */
+    private static java.util.regex.Pattern likeToRegex(String pattern) {
+        StringBuilder regex = new StringBuilder();
+        for (int i = 0; i < pattern.length(); i++) {
+            char c = pattern.charAt(i);
+            if (c == '%') {
+                regex.append(".*");
+            } else if (c == '_') {
+                regex.append('.');
+            } else {
+                if ("\\.^$|?*+()[]{}".indexOf(c) >= 0) {
+                    regex.append('\\');
+                }
+                regex.append(c);
+            }
+        }
+        return java.util.regex.Pattern.compile(regex.toString());
+    }
+
     private static void comparison(FunctionRegistry r) {
         r.register(SqlStdOperatorTable.EQUALS,
-                comparisonFunction(SqlStdOperatorTable.EQUALS, SqlKind.EQUALS));
-        r.register(SqlStdOperatorTable.NOT_EQUALS,
+                comparisonFunction(SqlStdOperatorTable.EQUALS, SqlKind.EQUALS));        r.register(SqlStdOperatorTable.NOT_EQUALS,
                 comparisonFunction(SqlStdOperatorTable.NOT_EQUALS, SqlKind.NOT_EQUALS));
         r.register(SqlStdOperatorTable.LESS_THAN,
                 comparisonFunction(SqlStdOperatorTable.LESS_THAN, SqlKind.LESS_THAN));
