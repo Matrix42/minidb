@@ -28,7 +28,8 @@ class PersistenceTest {
         }
         server.close();
 
-        assertTrue(Files.exists(dataDir.resolve("public").resolve("keep.arrow")));
+        // 存储已改为目录 + part 分段(d49b913):数据落在 public/keep/ 目录下,不再有扁平 keep.arrow 文件。
+        assertTrue(Files.isDirectory(dataDir.resolve("public").resolve("keep")));
 
         MiniDbServer server2 = new MiniDbServer();
         server2.start(0, dataDir);
