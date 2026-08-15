@@ -1,5 +1,6 @@
 package com.minidb.server.exec;
 
+import com.minidb.parser.ddl.SqlForeignKeyConstraint;
 import com.minidb.server.calcite.CalciteContext;
 import com.minidb.server.catalog.ArrowTypes;
 import com.minidb.server.catalog.ColumnMeta;
@@ -92,14 +93,6 @@ public class QueryExecutor {
             }
             return new QueryResult.UseSchema(resolved);
         }
-        List<ForeignKey> foreignKeys = List.of();
-        if (upper.startsWith("CREATE TABLE ")) {
-            // 列级 PRIMARY KEY / UNIQUE Calcite 不支持,parse 前提升为表级约束;
-            // 外键 Calcite 完全不支持,parse 前剥离并单独记录。
-            TableRewrite rewrite = rewriteColumnConstraints(trimmed, currentSchema);
-            trimmed = rewrite.sql();
-            foreignKeys = rewrite.foreignKeys();
-        }
         SqlNode parsed = calcite.parse(trimmed);
         if (parsed instanceof SqlCreateSchema create) {
             return handleCreateSchema(create);
@@ -108,7 +101,7 @@ public class QueryExecutor {
             return handleDropSchema(drop);
         }
         if (parsed instanceof SqlCreateTable create) {
-            return handleCreate(create, currentSchema, foreignKeys);
+            return handleCreate(create, currentSchema);
         }
         if (parsed instanceof SqlCreateView create) {
             return handleCreateView(create, currentSchema);
@@ -163,17 +156,17 @@ public class QueryExecutor {
         return new QueryResult.Update(0);
     }
 
-    private QueryResult handleCreate(SqlCreateTable create, String currentSchema,
-                                     List<ForeignKey> foreignKeys) {
+    private QueryResult handleCreate(SqlCreateTable create, String currentSchema) {
         List<String> parts = create.name.names;
         String schemaName = parts.size() > 1 ? parts.get(0) : currentSchema;
         String tableName = parts.get(parts.size() - 1);
         List<ColumnMeta> columns = new ArrayList<>();
         List<String> primaryKey = List.of();
         List<List<String>> uniqueKeys = new ArrayList<>();
+        List<ForeignKey> foreignKeys = new ArrayList<>();
         for (SqlNode node : create.columnList) {
             if (node instanceof SqlKeyConstraint key) {
-                // 表级 PRIMARY KEY (col, ...) / UNIQUE (col, ...)
+                // 表级/列级 PRIMARY KEY (col, ...) / UNIQUE (col, ...)
                 SqlNodeList keyCols = (SqlNodeList) key.getOperandList().get(1);
                 List<String> cols = new ArrayList<>();
                 for (SqlNode col : keyCols) {
@@ -184,6 +177,24 @@ public class QueryExecutor {
                 } else {
                     uniqueKeys.add(cols);
                 }
+                continue;
+            }
+            if (node instanceof SqlForeignKeyConstraint fk) {
+                // 表级 FOREIGN KEY / 列级 REFERENCES,由 minidb-parser 原生解析。
+                List<String> cols = new ArrayList<>();
+                for (SqlNode col : fk.getColumnList()) {
+                    cols.add(((SqlIdentifier) col).getSimple());
+                }
+                List<String> refNames = fk.getRefTable().names;
+                String refTable = refNames.get(refNames.size() - 1);
+                String refSchema = refNames.size() > 1 ? refNames.get(0) : schemaName;
+                List<String> refCols = new ArrayList<>();
+                if (fk.getRefColumns() != null) {
+                    for (SqlNode col : fk.getRefColumns()) {
+                        refCols.add(((SqlIdentifier) col).getSimple());
+                    }
+                }
+                foreignKeys.add(new ForeignKey(cols, refSchema, refTable, refCols));
                 continue;
             }
             SqlColumnDeclaration column = (SqlColumnDeclaration) node;
@@ -349,224 +360,4 @@ public class QueryExecutor {
         return root;
     }
 
-    private record TableRewrite(String sql, List<ForeignKey> foreignKeys) {}
-
-    /**
-     * 预处理 CREATE TABLE 的列定义列表:
-     * <ul>
-     *   <li>列级 PRIMARY KEY / UNIQUE 提升为表级(Calcite 只认表级)。</li>
-     *   <li>外键(表级 FOREIGN KEY / 列级 REFERENCES)Calcite 完全不支持,剥离并单独记录。</li>
-     * </ul>
-     * 仅处理顶层元素,类型括号(DECIMAL(10,2))与 DEFAULT 表达式里的逗号/括号不误判。
-     */
-    private static TableRewrite rewriteColumnConstraints(String sql, String defaultSchema) {
-        int open = sql.indexOf('(');
-        if (open < 0) {
-            return new TableRewrite(sql, List.of());
-        }
-        int close = matchingParen(sql, open);
-        if (close < 0) {
-            return new TableRewrite(sql, List.of());
-        }
-        String prefix = sql.substring(0, open + 1);
-        String body = sql.substring(open + 1, close);
-        String suffix = sql.substring(close);
-
-        List<String> elements = splitTopLevel(body);
-        List<String> tableConstraints = new ArrayList<>();
-        List<ForeignKey> foreignKeys = new ArrayList<>();
-        StringBuilder out = new StringBuilder(body.length() + 64);
-        for (String raw : elements) {
-            String element = raw.strip();
-            if (isForeignKeyConstraint(element)) {
-                foreignKeys.add(parseTableForeignKey(element, defaultSchema));
-                continue;
-            }
-            String normalized = element;
-            if (!isTableConstraint(element)) {
-                String columnName = firstIdentifier(element);
-                int refIdx = indexOfIgnoreCase(element, "REFERENCES");
-                if (refIdx >= 0) {
-                    foreignKeys.add(parseColumnForeignKey(element, columnName, refIdx, defaultSchema));
-                    normalized = element.substring(0, refIdx).strip();
-                }
-                if (endsWithIgnoreCase(normalized, "PRIMARY KEY")) {
-                    normalized = normalized.substring(0, normalized.length() - "PRIMARY KEY".length()).strip();
-                    tableConstraints.add("PRIMARY KEY (" + columnName + ")");
-                } else if (endsWithIgnoreCase(normalized, "UNIQUE")) {
-                    normalized = normalized.substring(0, normalized.length() - "UNIQUE".length()).strip();
-                    tableConstraints.add("UNIQUE (" + columnName + ")");
-                }
-            }
-            if (out.length() > 0) {
-                out.append(", ");
-            }
-            out.append(normalized);
-        }
-        for (String constraint : tableConstraints) {
-            out.append(", ").append(constraint);
-        }
-        return new TableRewrite(prefix + out + suffix, foreignKeys);
-    }
-
-    private static boolean isForeignKeyConstraint(String element) {
-        String upper = element.toUpperCase(Locale.ROOT);
-        return upper.startsWith("FOREIGN KEY")
-                || (upper.startsWith("CONSTRAINT") && indexOfIgnoreCase(upper, "FOREIGN KEY") >= 0);
-    }
-
-    /** 表级 FOREIGN KEY (col, ...) REFERENCES ref(col, ...) / CONSTRAINT name FOREIGN KEY ... */
-    private static ForeignKey parseTableForeignKey(String element, String defaultSchema) {
-        int fkIdx = indexOfIgnoreCase(element, "FOREIGN KEY");
-        int open = element.indexOf('(', fkIdx);
-        int close = matchingParen(element, open);
-        List<String> columns = splitParenContent(element.substring(open + 1, close));
-        int refIdx = indexOfIgnoreCase(element, "REFERENCES", close);
-        String refSpec = element.substring(refIdx + "REFERENCES".length()).strip();
-        return parseRefSpec(refSpec, columns, defaultSchema);
-    }
-
-    /** 列级 col TYPE REFERENCES ref(col, ...) */
-    private static ForeignKey parseColumnForeignKey(String element, String columnName,
-                                                    int refIdx, String defaultSchema) {
-        String refSpec = element.substring(refIdx + "REFERENCES".length()).strip();
-        return parseRefSpec(refSpec, List.of(columnName), defaultSchema);
-    }
-
-    /** 解析 REFERENCES 后的 "schema.table (col, ...)"。refColumns 空 = 引用 refTable 主键。 */
-    private static ForeignKey parseRefSpec(String refSpec, List<String> columns, String defaultSchema) {
-        int paren = refSpec.indexOf('(');
-        String tableRef = paren < 0 ? refSpec.strip() : refSpec.substring(0, paren).strip();
-        List<String> refColumns = paren < 0 ? List.of()
-                : splitParenContent(refSpec.substring(paren + 1, matchingParen(refSpec, paren)));
-        String[] parts = tableRef.split("\\.");
-        String refTable = unquote(parts[parts.length - 1].strip());
-        String refSchema = parts.length > 1 ? unquote(parts[0].strip()) : defaultSchema;
-        List<String> cols = columns.stream().map(QueryExecutor::unquote).toList();
-        List<String> refCols = refColumns.stream().map(QueryExecutor::unquote).toList();
-        return new ForeignKey(cols, refSchema, refTable, refCols);
-    }
-
-    private static int indexOfIgnoreCase(String s, String sub) {
-        return indexOfIgnoreCase(s, sub, 0);
-    }
-
-    private static int indexOfIgnoreCase(String s, String sub, int from) {
-        return s.toLowerCase(Locale.ROOT).indexOf(sub.toLowerCase(Locale.ROOT), from);
-    }
-
-    private static List<String> splitParenContent(String content) {
-        List<String> result = new ArrayList<>();
-        for (String part : splitTopLevel(content)) {
-            if (!part.isBlank()) {
-                result.add(part.strip());
-            }
-        }
-        return result;
-    }
-
-    private static String unquote(String name) {
-        String s = name.strip();
-        if (s.length() >= 2 && s.startsWith("\"") && s.endsWith("\"")) {
-            return s.substring(1, s.length() - 1);
-        }
-        return s;
-    }
-
-    /** 从 open 处 '(' 找匹配的 ')' (跟踪括号深度与字符串/引号字面量)。 */
-    private static int matchingParen(String sql, int open) {
-        int depth = 0;
-        boolean inString = false;
-        boolean inQuoted = false;
-        for (int i = open; i < sql.length(); i++) {
-            char c = sql.charAt(i);
-            if (inString) {
-                if (c == '\'') {
-                    inString = false;
-                }
-                continue;
-            }
-            if (inQuoted) {
-                if (c == '"') {
-                    inQuoted = false;
-                }
-                continue;
-            }
-            if (c == '\'') {
-                inString = true;
-            } else if (c == '"') {
-                inQuoted = true;
-            } else if (c == '(') {
-                depth++;
-            } else if (c == ')') {
-                depth--;
-                if (depth == 0) {
-                    return i;
-                }
-            }
-        }
-        return -1;
-    }
-
-    /** 按顶层逗号(括号深度 0、非字符串/引号)分割列定义列表。 */
-    private static List<String> splitTopLevel(String body) {
-        List<String> parts = new ArrayList<>();
-        int depth = 0;
-        boolean inString = false;
-        boolean inQuoted = false;
-        int start = 0;
-        for (int i = 0; i < body.length(); i++) {
-            char c = body.charAt(i);
-            if (inString) {
-                if (c == '\'') {
-                    inString = false;
-                }
-                continue;
-            }
-            if (inQuoted) {
-                if (c == '"') {
-                    inQuoted = false;
-                }
-                continue;
-            }
-            if (c == '\'') {
-                inString = true;
-            } else if (c == '"') {
-                inQuoted = true;
-            } else if (c == '(') {
-                depth++;
-            } else if (c == ')') {
-                depth--;
-            } else if (c == ',' && depth == 0) {
-                parts.add(body.substring(start, i));
-                start = i + 1;
-            }
-        }
-        parts.add(body.substring(start));
-        return parts;
-    }
-
-    private static boolean isTableConstraint(String element) {
-        String s = element.toUpperCase(Locale.ROOT);
-        return s.startsWith("CONSTRAINT") || s.startsWith("PRIMARY")
-                || s.startsWith("UNIQUE") || s.startsWith("CHECK")
-                || s.startsWith("FOREIGN");
-    }
-
-    private static String firstIdentifier(String element) {
-        String s = element.strip();
-        if (s.startsWith("\"")) {
-            int end = s.indexOf('"', 1);
-            return end < 0 ? s.substring(1) : s.substring(1, end);
-        }
-        int space = s.indexOf(' ');
-        return space < 0 ? s : s.substring(0, space);
-    }
-
-    private static boolean endsWithIgnoreCase(String s, String suffix) {
-        if (s.length() < suffix.length()) {
-            return false;
-        }
-        return s.regionMatches(true, s.length() - suffix.length(), suffix, 0, suffix.length());
-    }
 }

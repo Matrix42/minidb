@@ -125,6 +125,8 @@ void TableElement(List<SqlNode> list) :
     final SqlNodeList columnList;
     final Span s = Span.of();
     final ColumnStrategy strategy;
+    SqlIdentifier refTable = null;
+    SqlNodeList refColumns = null;
 }
 {
     LOOKAHEAD(2) id = SimpleIdentifier()
@@ -152,6 +154,22 @@ void TableElement(List<SqlNode> list) :
                     : ColumnStrategy.NOT_NULLABLE;
             }
         )
+        (
+            <PRIMARY> <KEY> {
+                list.add(SqlDdlNodes.primary(s.add(id).end(this), null, SqlNodeList.of(id)));
+            }
+        |
+            <UNIQUE> {
+                list.add(SqlDdlNodes.unique(s.add(id).end(this), null, SqlNodeList.of(id)));
+            }
+        |
+            <REFERENCES> refTable = CompoundIdentifier()
+            [ refColumns = ParenthesizedSimpleIdentifierList() ]
+            {
+                list.add(new SqlForeignKeyConstraint(s.add(id).end(this), null,
+                    SqlNodeList.of(id), refTable, refColumns));
+            }
+        )?
         {
             list.add(
                 SqlDdlNodes.column(s.add(id).end(this), id,
@@ -180,6 +198,14 @@ void TableElement(List<SqlNode> list) :
         <PRIMARY>  { s.add(this); } <KEY>
         columnList = ParenthesizedSimpleIdentifierList() {
             list.add(SqlDdlNodes.primary(s.end(columnList), name, columnList));
+        }
+    |
+        <FOREIGN> { s.add(this); } <KEY>
+        columnList = ParenthesizedSimpleIdentifierList()
+        <REFERENCES> refTable = CompoundIdentifier()
+        [ refColumns = ParenthesizedSimpleIdentifierList() ]
+        {
+            list.add(new SqlForeignKeyConstraint(s.end(this), name, columnList, refTable, refColumns));
         }
     )
 }
