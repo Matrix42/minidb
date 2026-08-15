@@ -1,7 +1,7 @@
 package com.minidb.server.plan.physical;
 
-import com.minidb.server.exec.BatchIterator;
 import com.minidb.server.exec.ExecContext;
+import com.minidb.server.exec.ValueComparators;
 import java.math.BigDecimal;
 import java.util.ArrayList;
 import java.util.Arrays;
@@ -9,6 +9,7 @@ import java.util.Comparator;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
+import org.apache.arrow.vector.ValueVector;
 import org.apache.arrow.vector.VectorSchemaRoot;
 import org.apache.calcite.rel.RelFieldCollation;
 import org.apache.calcite.rel.RelNode;
@@ -24,58 +25,45 @@ import org.apache.calcite.sql.type.SqlTypeName;
 
 /**
  * Window function evaluation shared by the Project/Calc operators' RexOver
- * path. Rows are normalized {@code Object[]}; the window's partition keys and
- * order keys are resolved against the input row type. RANGE and ROWS frames
- * both use row positions (no peer expansion). Supports aggregates
- * SUM/AVG/COUNT/MIN/MAX, ROW_NUMBER/RANK/DENSE_RANK, LEAD/LAG (with optional
- * offset and default) and FIRST_VALUE/LAST_VALUE.
+ * path. Input is materialized into a single columnar root (no per-cell
+ * boxing); sorting/peer comparison use {@link ValueComparators}, and only the
+ * window aggregate's operand is read boxed (its domain dispatch needs the
+ * runtime type). RANGE and ROWS frames both use row positions (no peer
+ * expansion). Supports aggregates SUM/AVG/COUNT/MIN/MAX, ROW_NUMBER/RANK/
+ * DENSE_RANK, LEAD/LAG (with optional offset and default) and
+ * FIRST_VALUE/LAST_VALUE.
  */
 public final class WindowFunctions {
 
     private WindowFunctions() {
     }
 
-    public static List<Object[]> materialize(RelNode input, ExecContext ctx) {
-        List<Object[]> rows = new ArrayList<>();
-        BatchIterator iterator = ((MiniDbRel) input).execute(ctx);
-        try {
-            while (iterator.hasNext()) {
-                VectorSchemaRoot batch = iterator.next();
-                for (int rowIdx = 0; rowIdx < batch.getRowCount(); rowIdx++) {
-                    Object[] row = new Object[batch.getFieldVectors().size()];
-                    for (int colIdx = 0; colIdx < row.length; colIdx++) {
-                        row[colIdx] = RowVectors.readObject(batch.getVector(colIdx), rowIdx);
-                    }
-                    rows.add(row);
-                }
-            }
-        } finally {
-            iterator.close();
-        }
-        return rows;
+    public static VectorSchemaRoot materialize(RelNode input, ExecContext ctx) {
+        return RowVectors.materializeToRoot(input, ctx);
     }
 
     /** Computes the window value for every row of {@code rows}.
      *  The result is indexed by the ORIGINAL row position, so it lines up with
      *  the input rows regardless of how the window's ORDER BY reorders them. */
-    public static List<Object> computeOver(RexOver over, List<Object[]> rows) {
+    public static List<Object> computeOver(RexOver over, VectorSchemaRoot rows) {
         RexWindow window = over.getWindow();
         List<Integer> partitionKeyCols = new ArrayList<>();
         for (RexNode key : window.partitionKeys) {
             partitionKeyCols.add(((RexInputRef) key).getIndex());
         }
-        Object[] result = new Object[rows.size()];
-        if (rows.isEmpty()) {
+        int[] partKeyArr = new int[partitionKeyCols.size()];
+        for (int i = 0; i < partKeyArr.length; i++) {
+            partKeyArr[i] = partitionKeyCols.get(i);
+        }
+        Object[] result = new Object[rows.getRowCount()];
+        if (rows.getRowCount() == 0) {
             return Arrays.asList(result);
         }
-        int inputCols = rows.get(0).length;
+        int inputCols = rows.getFieldVectors().size();
         // Group row indices by partition-key values (LinkedHashMap keeps first-seen order).
-        Map<List<Object>, List<Integer>> partitions = new LinkedHashMap<>();
-        for (int rowIdx = 0; rowIdx < rows.size(); rowIdx++) {
-            List<Object> partitionKey = new ArrayList<>(partitionKeyCols.size());
-            for (int keyCol : partitionKeyCols) {
-                partitionKey.add(rows.get(rowIdx)[keyCol]);
-            }
+        Map<ColumnKey, List<Integer>> partitions = new LinkedHashMap<>();
+        for (int rowIdx = 0; rowIdx < rows.getRowCount(); rowIdx++) {
+            ColumnKey partitionKey = new ColumnKey(rows, rowIdx, partKeyArr);
             partitions.computeIfAbsent(partitionKey, k -> new ArrayList<>()).add(rowIdx);
         }
         SqlKind aggKind = over.getAggOperator().kind;
@@ -84,7 +72,8 @@ public final class WindowFunctions {
             orderedRows.sort(comparator(window, rows));
             for (int rowPos = 0; rowPos < orderedRows.size(); rowPos++) {
                 int originalRowIdx = orderedRows.get(rowPos);
-                result[originalRowIdx] = computeRow(over, aggKind, window, orderedRows, rowPos, rows, inputCols);
+                result[originalRowIdx] =
+                        computeRow(over, aggKind, window, orderedRows, rowPos, rows, inputCols);
             }
         }
         return Arrays.asList(result);
@@ -92,7 +81,7 @@ public final class WindowFunctions {
 
     private static Object computeRow(RexOver over, SqlKind aggKind, RexWindow window,
                                      List<Integer> orderedRows, int position,
-                                     List<Object[]> rows, int inputCols) {
+                                     VectorSchemaRoot rows, int inputCols) {
         switch (aggKind) {
             case ROW_NUMBER:
                 return (long) (position + 1);
@@ -120,7 +109,7 @@ public final class WindowFunctions {
                 }
                 int targetPos = position + (aggKind == SqlKind.LEAD ? offset : -offset);
                 if (targetPos >= 0 && targetPos < orderedRows.size()) {
-                    return operandOf(over, rows.get(orderedRows.get(targetPos)), inputCols);
+                    return operandOf(over, rows, orderedRows.get(targetPos));
                 }
                 return defaultValue;
             }
@@ -128,14 +117,14 @@ public final class WindowFunctions {
             case LAST_VALUE: {
                 int[] frame = frameBounds(window, position, orderedRows.size());
                 int boundPos = aggKind == SqlKind.FIRST_VALUE ? frame[0] : frame[1];
-                return operandOf(over, rows.get(orderedRows.get(boundPos)), inputCols);
+                return operandOf(over, rows, orderedRows.get(boundPos));
             }
             case SUM:
             case AVG:
             case COUNT:
             case MIN:
             case MAX:
-                return aggregateOver(over, aggKind, window, orderedRows, position, rows, inputCols);
+                return aggregateOver(over, aggKind, window, orderedRows, position, rows);
             default:
                 throw new UnsupportedOperationException(
                         "window function not supported: " + aggKind);
@@ -144,7 +133,7 @@ public final class WindowFunctions {
 
     private static Object aggregateOver(RexOver over, SqlKind aggKind, RexWindow window,
                                         List<Integer> orderedRows, int position,
-                                        List<Object[]> rows, int inputCols) {
+                                        VectorSchemaRoot rows) {
         int[] frame = frameBounds(window, position, orderedRows.size());
         boolean isCountStar = over.getOperands().isEmpty();
         boolean isDecimal = over.getType().getSqlTypeName() == SqlTypeName.DECIMAL;
@@ -155,7 +144,7 @@ public final class WindowFunctions {
         long count = 0;
         Object bestValue = null;
         for (int i = frame[0]; i <= frame[1]; i++) {
-            Object value = isCountStar ? null : operandOf(over, rows.get(orderedRows.get(i)), inputCols);
+            Object value = isCountStar ? null : operandOf(over, rows, orderedRows.get(i));
             if (!isCountStar && value == null) {
                 continue;
             }
@@ -163,10 +152,6 @@ public final class WindowFunctions {
             switch (aggKind) {
                 case SUM:
                 case AVG:
-                    // DECIMAL accumulates as BigDecimal (exact); only true floating
-                    // types (DOUBLE/FLOAT/REAL) go through double, and integers go
-                    // through long. Treating DECIMAL as floating here would round
-                    // 0.1+0.2 to a double and lose precision.
                     if (isDecimal) {
                         decimalSum = (decimalSum == null ? BigDecimal.ZERO : decimalSum)
                                 .add((BigDecimal) value);
@@ -209,13 +194,14 @@ public final class WindowFunctions {
         }
     }
 
-    private static Object operandOf(RexOver over, Object[] row, int inputCols) {
+    /** Reads the window aggregate's operand as a boxed value (single cell; needed for domain dispatch). */
+    private static Object operandOf(RexOver over, VectorSchemaRoot rows, int rowIdx) {
         if (over.getOperands().isEmpty()) {
             return null; // COUNT(*)
         }
         RexNode operand = over.getOperands().get(0);
         if (operand instanceof RexInputRef ref) {
-            return row[ref.getIndex()];
+            return RowVectors.readObject(rows.getVector(ref.getIndex()), rowIdx);
         }
         return literalValue(operand);
     }
@@ -239,16 +225,19 @@ public final class WindowFunctions {
 
     /** True when the two rows at positions {@code posA}/{@code posB} are peers
      *  (equal on every window order key; nulls treated as equal to nulls only). */
-    private static boolean peers(RexWindow window, List<Object[]> rows,
+    private static boolean peers(RexWindow window, VectorSchemaRoot rows,
                                  List<Integer> orderedRows, int posA, int posB) {
         for (RexFieldCollation fieldCollation : window.orderKeys) {
-            Object leftVal = rows.get(orderedRows.get(posA))[((RexInputRef) fieldCollation.left).getIndex()];
-            Object rightVal = rows.get(orderedRows.get(posB))[((RexInputRef) fieldCollation.left).getIndex()];
-            if (leftVal == null || rightVal == null) {
-                if (leftVal != rightVal) {
+            ValueVector v = rows.getVector(((RexInputRef) fieldCollation.left).getIndex());
+            int rowA = orderedRows.get(posA);
+            int rowB = orderedRows.get(posB);
+            boolean nullA = v.isNull(rowA);
+            boolean nullB = v.isNull(rowB);
+            if (nullA || nullB) {
+                if (nullA != nullB) {
                     return false;
                 }
-            } else if (compareValues(leftVal, rightVal) != 0) {
+            } else if (ValueComparators.compare(v, rowA, v, rowB) != 0) {
                 return false;
             }
         }
@@ -278,25 +267,23 @@ public final class WindowFunctions {
 
     /** Orders row indices by the window's ORDER BY keys; row index is only a
      *  stable tiebreaker among peers (preserves input order). */
-    private static Comparator<Integer> comparator(RexWindow window, List<Object[]> rows) {
+    private static Comparator<Integer> comparator(RexWindow window, VectorSchemaRoot rows) {
         Comparator<Integer> comparator = null;
         for (RexFieldCollation fieldCollation : window.orderKeys) {
             int fieldIndex = ((RexInputRef) fieldCollation.left).getIndex();
             boolean descending = fieldCollation.getDirection() == RelFieldCollation.Direction.DESCENDING
                     || fieldCollation.getDirection() == RelFieldCollation.Direction.STRICTLY_DESCENDING;
             Comparator<Integer> fieldComparator = (a, b) -> {
-                Object leftVal = rows.get(a)[fieldIndex];
-                Object rightVal = rows.get(b)[fieldIndex];
-                if (leftVal == null && rightVal == null) {
-                    return 0;
+                ValueVector v = rows.getVector(fieldIndex);
+                boolean nullA = v.isNull(a);
+                boolean nullB = v.isNull(b);
+                if (nullA || nullB) {
+                    if (nullA && nullB) {
+                        return 0;
+                    }
+                    return nullA ? 1 : -1; // nulls last
                 }
-                if (leftVal == null) {
-                    return 1; // nulls last
-                }
-                if (rightVal == null) {
-                    return -1;
-                }
-                return compareValues(leftVal, rightVal);
+                return ValueComparators.compare(v, a, v, b);
             };
             if (descending) {
                 fieldComparator = fieldComparator.reversed();

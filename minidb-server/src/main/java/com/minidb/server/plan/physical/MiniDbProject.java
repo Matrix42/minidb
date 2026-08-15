@@ -3,6 +3,7 @@ package com.minidb.server.plan.physical;
 import com.minidb.server.catalog.ArrowTypes;
 import com.minidb.server.exec.BatchIterator;
 import com.minidb.server.exec.ExecContext;
+import com.minidb.server.exec.RowCopier;
 
 import java.util.ArrayDeque;
 import java.util.ArrayList;
@@ -68,7 +69,7 @@ public class MiniDbProject extends Project implements MiniDbRel {
      * projections, then evaluate the rewritten expressions row-wise.
      */
     private BatchIterator windowExecute(ExecContext ctx) {
-        List<Object[]> rows = WindowFunctions.materialize(getInput(), ctx);
+        VectorSchemaRoot rows = WindowFunctions.materialize(getInput(), ctx);
         int inputCols = getInput().getRowType().getFieldCount();
         List<RexOver> windowOvers = new ArrayList<>();
         RexShuttle overExtractor = new RexShuttle() {
@@ -95,7 +96,7 @@ public class MiniDbProject extends Project implements MiniDbRel {
                 outputVectors.add(rename(evaluated, field.getName(), ctx));
             }
             VectorSchemaRoot outputRoot = VectorSchemaRoot.of(outputVectors.toArray(new FieldVector[0]));
-            outputRoot.setRowCount(rows.size());
+            outputRoot.setRowCount(rows.getRowCount());
             boolean[] done = {false};
             return new BatchIterator() {
                 @Override
@@ -116,10 +117,11 @@ public class MiniDbProject extends Project implements MiniDbRel {
             };
         } finally {
             windowBatch.close();
+            rows.close();
         }
     }
 
-    private VectorSchemaRoot buildWindowBatch(List<Object[]> rows,
+    private VectorSchemaRoot buildWindowBatch(VectorSchemaRoot rows,
                                               List<List<Object>> windowColumns,
                                               int inputCols,
                                               List<RexOver> windowOvers,
@@ -133,15 +135,16 @@ public class MiniDbProject extends Project implements MiniDbRel {
                     .createVector(ctx.allocator()));
         }
         for (FieldVector vector : vectors) {
-            vector.setInitialCapacity(rows.size());
+            vector.setInitialCapacity(rows.getRowCount());
             vector.allocateNew();
         }
-        for (int rowIdx = 0; rowIdx < rows.size(); rowIdx++) {
-            Object[] row = rows.get(rowIdx);
-            for (int colIdx = 0; colIdx < inputCols; colIdx++) {
-                RowVectors.writeObject(vectors.get(colIdx), rowIdx, row[colIdx]);
+        // 输入列:从物化的列式 root 逐列 copy(不装箱)。
+        for (int colIdx = 0; colIdx < inputCols; colIdx++) {
+            for (int rowIdx = 0; rowIdx < rows.getRowCount(); rowIdx++) {
+                RowCopier.copyRow(rows.getVector(colIdx), rowIdx, vectors.get(colIdx), rowIdx);
             }
         }
+        // 窗口列:窗口结果是每行一个装箱标量,writeObject 写回。
         for (int windowColIdx = 0; windowColIdx < windowColumns.size(); windowColIdx++) {
             List<Object> windowColumn = windowColumns.get(windowColIdx);
             for (int rowIdx = 0; rowIdx < windowColumn.size(); rowIdx++) {
@@ -149,7 +152,7 @@ public class MiniDbProject extends Project implements MiniDbRel {
             }
         }
         for (FieldVector vector : vectors) {
-            vector.setValueCount(rows.size());
+            vector.setValueCount(rows.getRowCount());
         }
         return VectorSchemaRoot.of(vectors.toArray(new FieldVector[0]));
     }

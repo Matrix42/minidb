@@ -3,6 +3,7 @@ package com.minidb.server.plan.physical;
 import com.minidb.server.catalog.ArrowTypes;
 import com.minidb.server.exec.BatchIterator;
 import com.minidb.server.exec.ExecContext;
+import com.minidb.server.exec.RowCopier;
 import java.util.ArrayDeque;
 import java.util.ArrayList;
 import java.util.Deque;
@@ -94,7 +95,7 @@ public class MiniDbCalc extends Calc implements MiniDbRel {
                                         ExecContext ctx) {
         // WHERE runs before window functions, so filter the materialized rows
         // before computing the windows.
-        List<Object[]> rows = filterRows(WindowFunctions.materialize(getInput(), ctx), condition, ctx);
+        VectorSchemaRoot rows = filterRows(WindowFunctions.materialize(getInput(), ctx), condition, ctx);
 
         int inputCols = getInput().getRowType().getFieldCount();
         List<RexOver> overs = new ArrayList<>();
@@ -123,7 +124,7 @@ public class MiniDbCalc extends Calc implements MiniDbRel {
                 outVectors.add(rename(evaluated, field.getName(), ctx));
             }
             VectorSchemaRoot out = VectorSchemaRoot.of(outVectors.toArray(new FieldVector[0]));
-            out.setRowCount(rows.size());
+            out.setRowCount(rows.getRowCount());
             boolean[] done = {false};
             return new BatchIterator() {
                 @Override
@@ -144,54 +145,54 @@ public class MiniDbCalc extends Calc implements MiniDbRel {
             };
         } finally {
             joined.close();
+            rows.close();
         }
     }
 
-    private List<Object[]> filterRows(List<Object[]> rows, RexNode condition, ExecContext ctx) {
+    /** 用 condition 过滤列式 root,返回新 root(不装箱);condition 为 null 时原样返回。 */
+    private VectorSchemaRoot filterRows(VectorSchemaRoot rows, RexNode condition, ExecContext ctx) {
         if (condition == null) {
             return rows;
         }
-        VectorSchemaRoot inputBatch = buildInputBatch(rows, ctx);
+        ValueVector cond = ctx.interpreter().eval(condition, rows);
         try {
-            ValueVector cond = ctx.interpreter().eval(condition, inputBatch);
-            try {
-                List<Object[]> kept = new ArrayList<>();
-                for (int i = 0; i < rows.size(); i++) {
-                    if (!cond.isNull(i) && ((BitVector) cond).get(i) == 1) {
-                        kept.add(rows.get(i));
-                    }
+            int kept = 0;
+            for (int i = 0; i < rows.getRowCount(); i++) {
+                if (!cond.isNull(i) && ((BitVector) cond).get(i) == 1) {
+                    kept++;
                 }
-                return kept;
-            } finally {
-                cond.close();
             }
+            if (kept == rows.getRowCount()) {
+                return rows;
+            }
+            List<FieldVector> vectors = new ArrayList<>();
+            for (RelDataTypeField field : getInput().getRowType().getFieldList()) {
+                vectors.add(ArrowTypes.field(field).createVector(ctx.allocator()));
+            }
+            for (FieldVector v : vectors) {
+                v.setInitialCapacity(kept);
+                v.allocateNew();
+            }
+            int dst = 0;
+            for (int i = 0; i < rows.getRowCount(); i++) {
+                if (!cond.isNull(i) && ((BitVector) cond).get(i) == 1) {
+                    for (int c = 0; c < vectors.size(); c++) {
+                        RowCopier.copyRow(rows.getVector(c), i, vectors.get(c), dst);
+                    }
+                    dst++;
+                }
+            }
+            for (FieldVector v : vectors) {
+                v.setValueCount(dst);
+            }
+            rows.close();
+            return VectorSchemaRoot.of(vectors.toArray(new FieldVector[0]));
         } finally {
-            inputBatch.close();
+            cond.close();
         }
     }
 
-    private VectorSchemaRoot buildInputBatch(List<Object[]> rows, ExecContext ctx) {
-        List<FieldVector> vectors = new ArrayList<>();
-        for (RelDataTypeField field : getInput().getRowType().getFieldList()) {
-            vectors.add(ArrowTypes.field(field).createVector(ctx.allocator()));
-        }
-        for (FieldVector vector : vectors) {
-            vector.setInitialCapacity(rows.size());
-            vector.allocateNew();
-        }
-        for (int rowIdx = 0; rowIdx < rows.size(); rowIdx++) {
-            Object[] row = rows.get(rowIdx);
-            for (int colIdx = 0; colIdx < row.length; colIdx++) {
-                RowVectors.writeObject(vectors.get(colIdx), rowIdx, row[colIdx]);
-            }
-        }
-        for (FieldVector vector : vectors) {
-            vector.setValueCount(rows.size());
-        }
-        return VectorSchemaRoot.of(vectors.toArray(new FieldVector[0]));
-    }
-
-    private VectorSchemaRoot buildWindowBatch(List<Object[]> rows, List<List<Object>> windowCols,
+    private VectorSchemaRoot buildWindowBatch(VectorSchemaRoot rows, List<List<Object>> windowCols,
                                               int inputCols, List<RexOver> overs, ExecContext ctx) {
         List<FieldVector> vectors = new ArrayList<>();
         for (RelDataTypeField field : getInput().getRowType().getFieldList()) {
@@ -202,13 +203,12 @@ public class MiniDbCalc extends Calc implements MiniDbRel {
                     .createVector(ctx.allocator()));
         }
         for (FieldVector vector : vectors) {
-            vector.setInitialCapacity(rows.size());
+            vector.setInitialCapacity(rows.getRowCount());
             vector.allocateNew();
         }
-        for (int rowIdx = 0; rowIdx < rows.size(); rowIdx++) {
-            Object[] row = rows.get(rowIdx);
-            for (int colIdx = 0; colIdx < inputCols; colIdx++) {
-                RowVectors.writeObject(vectors.get(colIdx), rowIdx, row[colIdx]);
+        for (int colIdx = 0; colIdx < inputCols; colIdx++) {
+            for (int rowIdx = 0; rowIdx < rows.getRowCount(); rowIdx++) {
+                RowCopier.copyRow(rows.getVector(colIdx), rowIdx, vectors.get(colIdx), rowIdx);
             }
         }
         for (int w = 0; w < windowCols.size(); w++) {
@@ -218,7 +218,7 @@ public class MiniDbCalc extends Calc implements MiniDbRel {
             }
         }
         for (FieldVector vector : vectors) {
-            vector.setValueCount(rows.size());
+            vector.setValueCount(rows.getRowCount());
         }
         return VectorSchemaRoot.of(vectors.toArray(new FieldVector[0]));
     }
