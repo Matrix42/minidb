@@ -1,13 +1,17 @@
 package com.minidb.server.plan.physical;
 
+import com.minidb.server.catalog.ColumnMeta;
+import com.minidb.server.catalog.TableSchema;
 import com.minidb.server.exec.BatchIterator;
 import com.minidb.server.exec.ExecContext;
 import com.minidb.server.exec.RowCopier;
 import com.minidb.server.storage.ArrowTable;
 import java.util.ArrayList;
 import java.util.HashMap;
+import java.util.HashSet;
 import java.util.List;
 import java.util.Map;
+import java.util.Set;
 import org.apache.arrow.vector.VectorSchemaRoot;
 import org.apache.calcite.plan.RelOptCluster;
 import org.apache.calcite.plan.RelOptTable;
@@ -64,25 +68,89 @@ public class MiniDbModify extends TableModify implements MiniDbRel {
     private void appendRows(ExecContext ctx, ArrowTable target, BatchIterator input,
                             String schemaName, String tableName) {
         affected = 0;
-        while (input.hasNext()) {
-            VectorSchemaRoot batch = input.next();
-            // copy rows into a table-owned root; never take ownership of
-            // batches that may belong to another table (Scan) or the iterator
-            VectorSchemaRoot copy = target.newBatchRoot();
-            copy.allocateNew();
-            for (int i = 0; i < batch.getRowCount(); i++) {
-                RowCopier.copyRow(batch, i, copy, i);
+        try {
+            while (input.hasNext()) {
+                VectorSchemaRoot batch = input.next();
+                validateInsert(target, batch);
+                // copy rows into a table-owned root; never take ownership of
+                // batches that may belong to another table (Scan) or the iterator
+                VectorSchemaRoot copy = target.newBatchRoot();
+                copy.allocateNew();
+                for (int i = 0; i < batch.getRowCount(); i++) {
+                    RowCopier.copyRow(batch, i, copy, i);
+                }
+                copy.setRowCount(batch.getRowCount());
+                affected += batch.getRowCount();
+                target.appendBatch(copy);
             }
-            copy.setRowCount(batch.getRowCount());
-            affected += batch.getRowCount();
-            target.appendBatch(copy);
+        } finally {
+            input.close();
         }
-        input.close();
         if (schemaName != null) {
             ctx.markDirty(schemaName, tableName);
         } else {
             ctx.markDirty(tableName);
         }
+    }
+
+    /** INSERT 前的约束校验:NOT NULL + 主键/唯一冲突。 */
+    private void validateInsert(ArrowTable target, VectorSchemaRoot batch) {
+        TableSchema schema = target.schema();
+        for (ColumnMeta column : schema.columns()) {
+            if (!column.nullable()) {
+                int idx = schema.columnIndex(column.name());
+                for (int i = 0; i < batch.getRowCount(); i++) {
+                    if (batch.getVector(idx).isNull(i)) {
+                        throw new IllegalArgumentException(
+                                "null value in column \"" + column.name()
+                                        + "\" violates not-null constraint");
+                    }
+                }
+            }
+        }
+        if (!schema.primaryKey().isEmpty()) {
+            validateUnique(target, batch, schema.primaryKey(), "primary key");
+        }
+        for (List<String> unique : schema.uniqueKeys()) {
+            validateUnique(target, batch, unique, "unique");
+        }
+    }
+
+    /** 主键/唯一冲突校验:新行的键值不能与现有行(或同批早前行)重复。含 null 的键不参与(唯一约束允许多 null)。 */
+    private void validateUnique(ArrowTable target, VectorSchemaRoot batch,
+                                List<String> columns, String constraintName) {
+        List<Integer> idxs = new ArrayList<>(columns.size());
+        for (String column : columns) {
+            idxs.add(target.schema().columnIndex(column));
+        }
+        Set<List<Object>> existing = new HashSet<>();
+        for (VectorSchemaRoot b : target.batches()) {
+            for (int i = 0; i < b.getRowCount(); i++) {
+                List<Object> key = keyOf(b, i, idxs);
+                if (key != null) {
+                    existing.add(key);
+                }
+            }
+        }
+        for (int i = 0; i < batch.getRowCount(); i++) {
+            List<Object> key = keyOf(batch, i, idxs);
+            if (key != null && !existing.add(key)) {
+                throw new IllegalArgumentException(
+                        constraintName + " constraint violation: " + columns);
+            }
+        }
+    }
+
+    /** 读一行的键值(按列索引);任一列 null 返回 null(该行不参与唯一性)。 */
+    private static List<Object> keyOf(VectorSchemaRoot root, int row, List<Integer> idxs) {
+        List<Object> key = new ArrayList<>(idxs.size());
+        for (int idx : idxs) {
+            if (root.getVector(idx).isNull(row)) {
+                return null;
+            }
+            key.add(root.getVector(idx).getObject(row));
+        }
+        return key;
     }
 
     /**

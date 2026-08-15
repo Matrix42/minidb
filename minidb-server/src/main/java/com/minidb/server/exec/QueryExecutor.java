@@ -24,7 +24,9 @@ import org.apache.calcite.rel.type.RelDataType;
 import org.apache.calcite.rel.type.RelDataTypeField;
 import org.apache.calcite.sql.SqlBasicTypeNameSpec;
 import org.apache.calcite.sql.SqlIdentifier;
+import org.apache.calcite.sql.SqlKind;
 import org.apache.calcite.sql.SqlNode;
+import org.apache.calcite.sql.SqlNodeList;
 import org.apache.calcite.sql.ddl.SqlColumnDeclaration;
 import org.apache.calcite.sql.ddl.SqlCreateSchema;
 import org.apache.calcite.sql.ddl.SqlCreateTable;
@@ -32,6 +34,7 @@ import org.apache.calcite.sql.ddl.SqlCreateView;
 import org.apache.calcite.sql.ddl.SqlDropSchema;
 import org.apache.calcite.sql.ddl.SqlDropTable;
 import org.apache.calcite.sql.ddl.SqlDropView;
+import org.apache.calcite.sql.ddl.SqlKeyConstraint;
 import org.apache.calcite.sql.ddl.SqlTruncateTable;
 import org.apache.calcite.sql.dialect.CalciteSqlDialect;
 
@@ -88,7 +91,11 @@ public class QueryExecutor {
             }
             return new QueryResult.UseSchema(resolved);
         }
-        SqlNode parsed = calcite.parse(sql);
+        if (upper.startsWith("CREATE TABLE ")) {
+            // 列级 PRIMARY KEY / UNIQUE Calcite 不支持,parse 前提升为表级约束。
+            trimmed = rewriteColumnConstraints(trimmed);
+        }
+        SqlNode parsed = calcite.parse(trimmed);
         if (parsed instanceof SqlCreateSchema create) {
             return handleCreateSchema(create);
         }
@@ -156,8 +163,24 @@ public class QueryExecutor {
         String schemaName = parts.size() > 1 ? parts.get(0) : currentSchema;
         String tableName = parts.get(parts.size() - 1);
         List<ColumnMeta> columns = new ArrayList<>();
-        for (SqlNode columnNode : create.columnList) {
-            SqlColumnDeclaration column = (SqlColumnDeclaration) columnNode;
+        List<String> primaryKey = List.of();
+        List<List<String>> uniqueKeys = new ArrayList<>();
+        for (SqlNode node : create.columnList) {
+            if (node instanceof SqlKeyConstraint key) {
+                // 表级 PRIMARY KEY (col, ...) / UNIQUE (col, ...)
+                SqlNodeList keyCols = (SqlNodeList) key.getOperandList().get(1);
+                List<String> cols = new ArrayList<>();
+                for (SqlNode col : keyCols) {
+                    cols.add(((SqlIdentifier) col).getSimple());
+                }
+                if (key.getOperator().getKind() == SqlKind.PRIMARY_KEY) {
+                    primaryKey = cols;
+                } else {
+                    uniqueKeys.add(cols);
+                }
+                continue;
+            }
+            SqlColumnDeclaration column = (SqlColumnDeclaration) node;
             String typeName = column.dataType.getTypeName().getSimple();
             ColumnType type = ArrowTypes.fromSqlTypeName(typeName);
             int precision = ColumnMeta.PRECISION_UNSET;
@@ -178,9 +201,11 @@ public class QueryExecutor {
                     }
                 }
             }
-            columns.add(new ColumnMeta(column.name.getSimple(), type, precision, scale));
+            // dataType.getNullable() 为 FALSE 表示列级 NOT NULL;null/TRUE 均可空。
+            boolean nullable = !Boolean.FALSE.equals(column.dataType.getNullable());
+            columns.add(new ColumnMeta(column.name.getSimple(), type, precision, scale, nullable));
         }
-        TableSchema schema = new TableSchema(schemaName, tableName, columns);
+        TableSchema schema = new TableSchema(schemaName, tableName, columns, primaryKey, uniqueKeys);
         storage.createTable(schema);
         return new QueryResult.Update(0);
     }
@@ -315,5 +340,147 @@ public class QueryExecutor {
         root.allocateNew();
         root.setRowCount(0);
         return root;
+    }
+
+    /**
+     * 把列级 PRIMARY KEY / UNIQUE 提升为表级(Calcite DDL parser 只认表级 PRIMARY KEY (col) /
+     * UNIQUE (col),不支持 col TYPE PRIMARY KEY)。仅处理列定义列表的顶层元素,类型括号
+     * (DECIMAL(10,2)) 与 DEFAULT 表达式里的逗号/括号不误判。
+     */
+    private static String rewriteColumnConstraints(String sql) {
+        int open = sql.indexOf('(');
+        if (open < 0) {
+            return sql;
+        }
+        int close = matchingParen(sql, open);
+        if (close < 0) {
+            return sql;
+        }
+        String prefix = sql.substring(0, open + 1);
+        String body = sql.substring(open + 1, close);
+        String suffix = sql.substring(close);
+
+        List<String> elements = splitTopLevel(body);
+        List<String> tableConstraints = new ArrayList<>();
+        StringBuilder out = new StringBuilder(body.length() + 64);
+        for (String raw : elements) {
+            String element = raw.strip();
+            String normalized = element;
+            if (!isTableConstraint(element)) {
+                String columnName = firstIdentifier(element);
+                if (endsWithIgnoreCase(element, "PRIMARY KEY")) {
+                    normalized = element.substring(0, element.length() - "PRIMARY KEY".length()).strip();
+                    tableConstraints.add("PRIMARY KEY (" + columnName + ")");
+                } else if (endsWithIgnoreCase(element, "UNIQUE")) {
+                    normalized = element.substring(0, element.length() - "UNIQUE".length()).strip();
+                    tableConstraints.add("UNIQUE (" + columnName + ")");
+                }
+            }
+            if (out.length() > 0) {
+                out.append(", ");
+            }
+            out.append(normalized);
+        }
+        for (String constraint : tableConstraints) {
+            out.append(", ").append(constraint);
+        }
+        return prefix + out + suffix;
+    }
+
+    /** 从 open 处 '(' 找匹配的 ')' (跟踪括号深度与字符串/引号字面量)。 */
+    private static int matchingParen(String sql, int open) {
+        int depth = 0;
+        boolean inString = false;
+        boolean inQuoted = false;
+        for (int i = open; i < sql.length(); i++) {
+            char c = sql.charAt(i);
+            if (inString) {
+                if (c == '\'') {
+                    inString = false;
+                }
+                continue;
+            }
+            if (inQuoted) {
+                if (c == '"') {
+                    inQuoted = false;
+                }
+                continue;
+            }
+            if (c == '\'') {
+                inString = true;
+            } else if (c == '"') {
+                inQuoted = true;
+            } else if (c == '(') {
+                depth++;
+            } else if (c == ')') {
+                depth--;
+                if (depth == 0) {
+                    return i;
+                }
+            }
+        }
+        return -1;
+    }
+
+    /** 按顶层逗号(括号深度 0、非字符串/引号)分割列定义列表。 */
+    private static List<String> splitTopLevel(String body) {
+        List<String> parts = new ArrayList<>();
+        int depth = 0;
+        boolean inString = false;
+        boolean inQuoted = false;
+        int start = 0;
+        for (int i = 0; i < body.length(); i++) {
+            char c = body.charAt(i);
+            if (inString) {
+                if (c == '\'') {
+                    inString = false;
+                }
+                continue;
+            }
+            if (inQuoted) {
+                if (c == '"') {
+                    inQuoted = false;
+                }
+                continue;
+            }
+            if (c == '\'') {
+                inString = true;
+            } else if (c == '"') {
+                inQuoted = true;
+            } else if (c == '(') {
+                depth++;
+            } else if (c == ')') {
+                depth--;
+            } else if (c == ',' && depth == 0) {
+                parts.add(body.substring(start, i));
+                start = i + 1;
+            }
+        }
+        parts.add(body.substring(start));
+        return parts;
+    }
+
+    private static boolean isTableConstraint(String element) {
+        String s = element.toUpperCase(Locale.ROOT);
+        return s.startsWith("CONSTRAINT") || s.startsWith("PRIMARY")
+                || s.startsWith("UNIQUE") || s.startsWith("CHECK")
+                || s.startsWith("FOREIGN");
+    }
+
+    private static String firstIdentifier(String element) {
+        String s = element.strip();
+        if (s.startsWith("\"")) {
+            int end = s.indexOf('"', 1);
+            return end < 0 ? s.substring(1) : s.substring(1, end);
+        }
+        int space = s.indexOf(' ');
+        return space < 0 ? s : s.substring(0, space);
+    }
+
+    private static boolean endsWithIgnoreCase(String s, String suffix) {
+        if (s.length() < suffix.length()) {
+            return false;
+        }
+        return s.regionMatches(true, s.length() - suffix.length(), suffix, 0, suffix.length());
     }
 }
