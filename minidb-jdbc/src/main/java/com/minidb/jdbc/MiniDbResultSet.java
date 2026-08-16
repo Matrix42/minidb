@@ -52,6 +52,7 @@ public class MiniDbResultSet implements ResultSet {
     private int fetchSize;
     private boolean lastBatch;
     private int rowNumber;
+    private boolean exhausted;
 
     public MiniDbResultSet(MiniDbStatement statement, VectorSchemaRoot root) {
         this.statement = statement;
@@ -82,6 +83,7 @@ public class MiniDbResultSet implements ResultSet {
                 return true;
             }
             if (lastBatch) {
+                exhausted = true;
                 return false;
             }
             MiniDbClient.ClientResult.Rows page = client.fetch(cursorId, fetchSize);
@@ -656,21 +658,24 @@ public class MiniDbResultSet implements ResultSet {
 
     @Override
     public boolean isBeforeFirst() {
-        return cursor < 0;
+        return !exhausted && rowNumber == 0;
     }
 
     @Override
     public boolean isAfterLast() {
-        return cursor >= root.getRowCount();
+        return exhausted;
     }
 
     @Override
     public boolean isFirst() {
-        return cursor == 0;
+        return !exhausted && rowNumber == 1;
     }
 
     @Override
     public boolean isLast() {
+        // Page-local: the absolute last row isn't knowable for a forward-only
+        // cursor without lookahead (fetching the next page to see if it's empty).
+        // JDBC is lenient about isLast() for TYPE_FORWARD_ONLY.
         return cursor == root.getRowCount() - 1;
     }
 
