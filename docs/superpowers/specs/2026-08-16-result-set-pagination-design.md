@@ -38,15 +38,12 @@
 ### 2. minidb-server(游标化执行)
 
 **QueryExecutor**:
-- DQL SELECT 不再调 `materialize`,改返回新变体 `QueryResult.Cursor(CursorHandle)`:
-  ```
-  record CursorHandle(BatchIterator it, ExecContext ctx, Schema schema)
-  ```
-  `openCursor(sql, currentSchema)` 复用现有 `planner.plan` + `MiniDbRel.execute(ctx)`,但**不消费**迭代器;`ctx` 随游标存活(迭代器 lazy 拉取时要用,含 allocator 与瞬态表状态);`schema` 从 `plan.getRowType()` 派生,供空结果页构建。
-- `QueryResult`(sealed interface)增加 `Cursor` 变体(需更新 `permits` 列表)。
-- `QueryResult.Rows` **保留**,只给 EXPLAIN 用(`tryHandleCommand` 里 `ExplainExecutor` 返回它,EXPLAIN 结果极小,保持全量物化)。
-- DDL / `MiniDbModify`(INSERT/UPDATE/DELETE)/ `UseSchema` 路径完全不变。
-- `materialize` 变死代码,删除。
+- 新增 `executeCursor(sql, currentSchema)`:DQL SELECT 返回新变体 `QueryResult.Cursor(CursorHandle)`(**不消费**迭代器),DDL/DML/UseSchema 路径与 `execute` 相同。SessionHandler(生产)走此入口。
+- 新增 `record CursorHandle(BatchIterator it, ExecContext ctx, Schema schema)`:复用现有 `planner.plan` + `MiniDbRel.execute(ctx)` 但**不拉取**;`ctx` 随游标存活(迭代器 lazy 拉取时要用,含 allocator 与瞬态表状态);`schema` 从 `plan.getRowType()` 派生,供空结果页构建。`CursorHandle.materialize()` 全量拉取合并成一个 root(供测试路径用)。
+- 现有 `execute(sql, currentSchema)` **保留**:委托 `executeCursor`,若得 `Cursor` 则 `handle.materialize()` 成 `QueryResult.Rows` 返回。这样 30 个测试文件里约 80 处 `((QueryResult.Rows) execute(...)).data()` **零改动**。`execute` 本质是「运行并物化」的便利入口(测试/EXPLAIN 消费者),`executeCursor` 是「运行并流式」的生产入口。
+- `QueryResult`(sealed interface)增加 `Cursor` 变体(嵌套 record,无需显式 `permits`)。
+- `QueryResult.Rows` **保留**,给 EXPLAIN(`ExplainExecutor`)与 `execute` 物化路径用。
+- 旧私有 `materialize`/`emptyRoot` 删除,逻辑迁入 `CursorHandle.materialize()` + `schemaFromRowType(RelDataType)`。
 
 **SessionHandler**(per-channel 单线程,Netty 事件循环保证串行,无需锁):
 - 新增 `Map<Long, Cursor> cursors`;`Cursor = (Paginator paginator)`(Paginator 内部持 iterator/ctx/schema/allocator)。
@@ -96,12 +93,12 @@ MiniDbResultSet.next() 读到底:
 
 **Paginator** 字段:`BatchIterator it`、`Schema schema`、`BufferAllocator allocator`、`VectorSchemaRoot current`(当前输入批)、`int offset`、`boolean done`、`boolean emitted`、`VectorSchemaRoot out`(复用单棵输出 root)。
 
-- `nextPage(int maxRows)`:从 `current` 批(及后续批)用 `RowCopier` 逐行拷入 `out`,拷满 `maxRows` 或迭代器耗尽为止;**每耗尽一个输入批就 `close()` 它**(释放表 owned / 算子 owned 批,见坑 5/25);返回 `out`(已 `setValueCount`)。若已 `done` 且 `emitted` 已置位 → 返回 `null`(无更多页)。
+- `nextPage(int maxRows)`:每次分配**新**输出 root(按 `schema`),从 `current` 批(及后续批)用 `RowCopier` 逐行拷入,拷满 `maxRows` 或迭代器耗尽为止;**每耗尽一个输入批就 `close()` 它**(释放表 owned / 算子 owned 批,见坑 5/25);返回该页(已 `setValueCount`)。若已 `done` 且 `emitted` 已置位 → 返回 `null`(无更多页)。
 - 空结果/首 fetch:迭代器立即耗尽且 `emitted==false` → 返回 0 行但**带 schema** 的 `out`(复用现有 `emptyRoot` 逻辑),保证客户端拿到列元数据;`emitted` 置位,避免重复返回空页。
 - `isDone()`:返回 `done`(底层迭代器是否耗尽),供 SessionHandler 设 `lastBatch`。
 - `close()`:关闭 `current`(若有残留)+ `it.close()`。
 
-**批次所有权**:`out` 由 Paginator 持有并复用(每页重置 valueCount),**每页序列化后不关**(SessionHandler 只 `ArrowStreamWriter` 写当前 valueCount 行到 byte[],不 close root);`out` 在游标 `close()` 时统一关。输入批逐批随消费关闭。分页只关「尚未消费完」的批与迭代器,与现有 eager 算子「merge 后 close」的所有权语义对齐。
+**批次所有权**:`nextPage` 每页分配新 root、**序列化后由调用方关闭**(SessionHandler 序列化到 byte[] 后 `page.close()`),不跨页复用(避免 VarChar offset 缓冲跨页累积);输入批逐批随消费关闭。分页只关「尚未消费完」的批与迭代器,与现有 eager 算子「merge 后 close」的所有权语义对齐。
 
 **内存**:lazy 算子服务端最多持 1 个输入批 + 1 页;eager 算子首次 `next()` 已物化整棵 root,分页只省客户端+网络。
 
