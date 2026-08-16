@@ -33,30 +33,40 @@ public final class Paginator implements AutoCloseable {
         }
         VectorSchemaRoot out = VectorSchemaRoot.create(schema, allocator);
         out.allocateNew();
-        int dst = 0;
-        while (dst < maxRows) {
-            if (current == null || offset >= current.getRowCount()) {
-                if (!advance()) {
-                    done = true;
-                    break;
+        boolean returned = false;
+        try {
+            int dst = 0;
+            while (dst < maxRows) {
+                if (current == null || offset >= current.getRowCount()) {
+                    if (!advance()) {
+                        done = true;
+                        break;
+                    }
+                    continue;
                 }
-                continue;
+                RowCopier.copyRow(current, offset, out, dst);
+                offset++;
+                dst++;
             }
-            RowCopier.copyRow(current, offset, out, dst);
-            offset++;
-            dst++;
+            // A page can fill to exactly maxRows on the last row of the final
+            // batch, in which case the loop above never observes exhaustion.
+            // Re-check here so isDone() is accurate immediately after the final
+            // page is emitted.
+            if (!done && current != null && offset >= current.getRowCount() && !advance()) {
+                done = true;
+            }
+            // setRowCount sets the root row count AND every vector's valueCount.
+            out.setRowCount(dst);
+            emitted = true;
+            returned = true;
+            return out;
+        } finally {
+            // On a mid-page failure (advance() or copyRow threw) the caller
+            // never gets `out`, so release it here rather than leaking it.
+            if (!returned) {
+                out.close();
+            }
         }
-        // A page can fill to exactly maxRows on the last row of the final
-        // batch, in which case the loop above never observes exhaustion.
-        // Re-check here so isDone() is accurate immediately after the final
-        // page is emitted.
-        if (!done && current != null && offset >= current.getRowCount() && !advance()) {
-            done = true;
-        }
-        // setRowCount sets the root row count AND every vector's valueCount.
-        out.setRowCount(dst);
-        emitted = true;
-        return out;
     }
 
     public boolean isDone() {
