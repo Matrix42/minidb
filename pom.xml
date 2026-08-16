@@ -14,6 +14,7 @@
     <module>minidb-protocol</module>
     <module>minidb-server</module>
     <module>minidb-jdbc</module>
+    <module>minidb-integration-tests</module>
   </modules>
 
   <properties>
@@ -117,6 +118,11 @@
       <dependency>
         <groupId>com.minidb</groupId>
         <artifactId>minidb-server</artifactId>
+        <version>${project.version}</version>
+      </dependency>
+      <dependency>
+        <groupId>com.minidb</groupId>
+        <artifactId>minidb-jdbc</artifactId>
         <version>${project.version}</version>
       </dependency>
     </dependencies>

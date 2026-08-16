@@ -34,11 +34,6 @@
       <groupId>org.junit.jupiter</groupId>
       <artifactId>junit-jupiter</artifactId>
     </dependency>
-    <dependency>
-      <groupId>com.minidb</groupId>
-      <artifactId>minidb-server</artifactId>
-      <scope>test</scope>
-    </dependency>
   </dependencies>
   <build>
     <plugins>
