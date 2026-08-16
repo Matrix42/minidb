@@ -1,7 +1,6 @@
 package com.minidb.server.exec;
 
 import com.minidb.storage.common.BatchIterator;
-import org.apache.arrow.memory.BufferAllocator;
 import org.apache.arrow.vector.VectorSchemaRoot;
 import org.apache.arrow.vector.types.pojo.Schema;
 

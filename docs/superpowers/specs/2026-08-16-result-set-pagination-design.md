@@ -13,7 +13,7 @@
 ## 关键决策(已与用户确认)
 
 1. **模型**: 服务端游标(拉取式)。客户端 `setFetchSize(n)` 后,`ResultSet.next()` 读到页底时发 `FetchRequest` 拉下一页;服务端持有游标。**不是**推送式(服务端边执行边推)也**不是**仅切块(全量物化后切)。
-2. **粒度**: 固定行数分页。`setFetchSize(n)` → 每页恰好 ≤n 行,服务端在批边界间切片重块(真 JDBC fetchSize 语义)。lazy 算子(Scan/Filter/Project)省服务端内存;eager 算子(Sort/Aggregate/Join)首次 `next()` 已物化整棵 root,分页只省客户端+网络,不省服务端(是 SQL 语义无法绕开的)。
+2. **粒度**: 固定行数分页。`setFetchSize(n)` → 每页恰好 ≤n 行,服务端在批边界间切片重块(真 JDBC fetchSize 语义)。分页主要省**客户端 + 网络**内存;服务端内存不因分页显著下降——eager 算子(Sort/Aggregate/Join)首次 `next()` 已物化整棵 root,lazy 算子(Scan/Filter/Project)也因迭代器在 `close()` 前累积所有产出批而不省(见坑 5/25 的批所有权模型)。
 3. **默认分页**: `fetchSize=0`(JDBC 默认)也分页,客户端把它解析为固定默认页大小 `DEFAULT_FETCH_SIZE = 4096`(对齐 `ArrowTable.MAX_BATCH_ROWS`)。小结果集(≤4096 行)仍单条 `ArrowBatch` 返回(`lastBatch=true`),一次往返拿全、零性能损失;大结果集逐页流式,防客户端 OOM。
 4. **游标 id**: 复用 `ExecuteRequest` 的 `requestId`(客户端生成的 per-connection 单调递增 id,天然唯一)。
 5. **首页随 execute 返回**: `ExecuteRequest` 立即回第一页(而非先只建游标再拉),保持「单往返拿到首行 + 列元数据」。
@@ -100,7 +100,7 @@ MiniDbResultSet.next() 读到底:
 
 **批次所有权**:`nextPage` 每页分配新 root、**序列化后由调用方关闭**(SessionHandler 序列化到 byte[] 后 `page.close()`),不跨页复用(避免 VarChar offset 缓冲跨页累积);输入批逐批随消费关闭。分页只关「尚未消费完」的批与迭代器,与现有 eager 算子「merge 后 close」的所有权语义对齐。
 
-**内存**:lazy 算子服务端最多持 1 个输入批 + 1 页;eager 算子首次 `next()` 已物化整棵 root,分页只省客户端+网络。
+**内存**:分页省的是客户端与网络内存(客户端只持 1 页);服务端内存不因分页下降——eager 算子已物化整棵 root,lazy 算子(Scan/Filter/Project)也因迭代器在 `close()` 前累积所有产出批而不省(见坑 5/25 的批所有权模型)。游标本身只持有尚未消费的迭代器与当前批引用。
 
 ## 资源管理与清理兜底
 

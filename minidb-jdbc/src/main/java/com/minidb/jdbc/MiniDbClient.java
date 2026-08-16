@@ -164,6 +164,7 @@ public class MiniDbClient implements AutoCloseable {
         long id = nextRequestId.getAndIncrement();
         CompletableFuture<ClientResult> fut = new CompletableFuture<>();
         pending.put(id, fut);
+        // Race guard: the channel may have died between the connected check and the put.
         if (!connected) {
             pending.remove(id, fut);
             throw new SQLException("connection is closed");

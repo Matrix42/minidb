@@ -325,7 +325,7 @@ public class MiniDbResultSet implements ResultSet {
         if (!closed) {
             closed = true;
             root.close();
-            if (cursorId != 0 && !lastBatch && client != null) {
+            if (client != null && !lastBatch) {
                 client.closeCursor(cursorId);
             }
         }
