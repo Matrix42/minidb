@@ -88,18 +88,30 @@ public class SessionHandler extends SimpleChannelInboundHandler<Message> {
                 CursorHandle handle = cursor.handle();
                 BufferAllocator allocator = handle.context().allocator();
                 Paginator paginator = new Paginator(handle.iterator(), handle.schema(), allocator);
-                int pageSize = req.fetchSize() > 0 ? req.fetchSize() : DEFAULT_FETCH_SIZE;
-                VectorSchemaRoot page = paginator.nextPage(pageSize);
-                boolean last = paginator.isDone();
-                LOG.info("query ok: first page {} rows (last={}) in {} ms",
-                        page.getRowCount(), last, elapsedMs);
-                sendRows(ctx, req.requestId(), page, last);
-                page.close();
-                if (last) {
-                    // Single page exhausted the result: nothing left to fetch.
-                    paginator.close();
-                } else {
-                    cursors.put(req.requestId(), paginator);
+                boolean retained = false;
+                try {
+                    int pageSize = req.fetchSize() > 0 ? req.fetchSize() : DEFAULT_FETCH_SIZE;
+                    VectorSchemaRoot page = paginator.nextPage(pageSize);
+                    boolean last = paginator.isDone();
+                    LOG.info("query ok: first page {} rows (last={}) in {} ms",
+                            page.getRowCount(), last, elapsedMs);
+                    sendRows(ctx, req.requestId(), page, last);
+                    page.close();
+                    if (last) {
+                        // Single page exhausted the result: nothing left to fetch.
+                        paginator.close();
+                    } else {
+                        cursors.put(req.requestId(), paginator);
+                        retained = true;
+                    }
+                } catch (Exception e) {
+                    // nextPage (and thus iterator.next) can throw lazily; if it did,
+                    // the paginator was never retained, so release it here. The
+                    // rethrown exception is handled by the outer catch below.
+                    if (!retained) {
+                        paginator.close();
+                    }
+                    throw e;
                 }
             }
         } catch (Exception e) {

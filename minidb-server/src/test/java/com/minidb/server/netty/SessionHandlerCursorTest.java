@@ -70,4 +70,37 @@ class SessionHandlerCursorTest {
             ch.close();
         }
     }
+
+    @Test
+    void closeCursorRemovesOpenCursor(@TempDir Path dir) throws Exception {
+        MiniDbCatalog catalog = new MiniDbCatalog();
+        RootAllocator allocator = new RootAllocator();
+        StorageManager storage = new StorageManager(catalog, allocator, dir);
+        StatsManager stats = new StatsManager(storage);
+        QueryExecutor executor = new QueryExecutor(catalog, storage, allocator, stats);
+        EmbeddedChannel ch = new EmbeddedChannel(
+                new SessionHandler(executor, new MetadataExecutor(catalog, allocator)));
+        try {
+            ch.writeInbound(new Message.ExecuteRequest(1, "CREATE TABLE t (id INTEGER)"));
+            ch.outboundMessages().poll(); // UpdateCount
+            ch.writeInbound(new Message.ExecuteRequest(2, "INSERT INTO t VALUES (1), (2), (3)"));
+            ch.outboundMessages().poll(); // UpdateCount
+            // open a cursor: fetchSize=2 over 3 rows → first page, not done
+            ch.writeInbound(new Message.ExecuteRequest(3, "SELECT id FROM t ORDER BY id", 2));
+            Message.ArrowBatch first = (Message.ArrowBatch) ch.outboundMessages().poll();
+            assertFalse(first.lastBatch());
+
+            // close the still-open cursor
+            ch.writeInbound(new Message.CloseCursorRequest(3));
+            assertNull(ch.outboundMessages().poll()); // no response
+
+            // fetching a closed cursor reports unknown-cursor
+            ch.writeInbound(new Message.FetchRequest(10, 3, 2));
+            assertTrue(ch.outboundMessages().poll() instanceof Message.ExecuteResponse);
+        } finally {
+            storage.close();
+            allocator.close();
+            ch.close();
+        }
+    }
 }
