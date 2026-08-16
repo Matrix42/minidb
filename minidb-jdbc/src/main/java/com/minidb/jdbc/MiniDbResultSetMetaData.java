@@ -2,7 +2,10 @@ package com.minidb.jdbc;
 
 import java.sql.ResultSetMetaData;
 import java.sql.SQLException;
+import java.util.ArrayList;
+import java.util.List;
 import java.util.Map;
+import org.apache.arrow.vector.FieldVector;
 import org.apache.arrow.vector.VectorSchemaRoot;
 import org.apache.arrow.vector.types.FloatingPointPrecision;
 import org.apache.arrow.vector.types.pojo.ArrowType;
@@ -10,20 +13,28 @@ import org.apache.arrow.vector.types.pojo.Field;
 
 public class MiniDbResultSetMetaData implements ResultSetMetaData {
 
-    private final VectorSchemaRoot root;
+    // Immutable snapshots taken at construction so this object stays valid after
+    // the source root is closed (the result set swaps pages and closes old pages).
+    private final List<Field> fields;
+    private final Map<String, String> customMetadata;
 
     public MiniDbResultSetMetaData(VectorSchemaRoot root) {
-        this.root = root;
+        List<Field> extracted = new ArrayList<>(root.getFieldVectors().size());
+        for (FieldVector v : root.getFieldVectors()) {
+            extracted.add(v.getField());
+        }
+        this.fields = extracted;
+        this.customMetadata = root.getSchema().getCustomMetadata();
     }
 
     @Override
     public int getColumnCount() {
-        return root.getFieldVectors().size();
+        return fields.size();
     }
 
     @Override
     public String getColumnName(int column) {
-        return root.getFieldVectors().get(column - 1).getName();
+        return fields.get(column - 1).getName();
     }
 
     @Override
@@ -33,7 +44,7 @@ public class MiniDbResultSetMetaData implements ResultSetMetaData {
 
     @Override
     public String getColumnTypeName(int column) {
-        Field f = root.getFieldVectors().get(column - 1).getField();
+        Field f = fields.get(column - 1);
         Map<String, String> meta = f.getMetadata();
         if (meta != null && meta.containsKey("minidb.type")) {
             return meta.get("minidb.type");
@@ -65,7 +76,7 @@ public class MiniDbResultSetMetaData implements ResultSetMetaData {
 
     @Override
     public int getColumnType(int column) throws SQLException {
-        Field f = root.getFieldVectors().get(column - 1).getField();
+        Field f = fields.get(column - 1);
         switch (f.getType().getTypeID()) {
             case Int: {
                 int bitWidth = ((ArrowType.Int) f.getType()).getBitWidth();
@@ -106,8 +117,7 @@ public class MiniDbResultSetMetaData implements ResultSetMetaData {
 
     @Override
     public String getSchemaName(int column) {
-        Map<String, String> meta = root.getSchema().getCustomMetadata();
-        return meta != null ? meta.getOrDefault("schema", "") : "";
+        return customMetadata != null ? customMetadata.getOrDefault("schema", "") : "";
     }
 
     @Override
@@ -122,13 +132,13 @@ public class MiniDbResultSetMetaData implements ResultSetMetaData {
 
     @Override
     public int getPrecision(int column) {
-        ArrowType type = root.getFieldVectors().get(column - 1).getField().getType();
+        ArrowType type = fields.get(column - 1).getType();
         return type instanceof ArrowType.Decimal decimal ? decimal.getPrecision() : 0;
     }
 
     @Override
     public int getScale(int column) {
-        ArrowType type = root.getFieldVectors().get(column - 1).getField().getType();
+        ArrowType type = fields.get(column - 1).getType();
         return type instanceof ArrowType.Decimal decimal ? decimal.getScale() : 0;
     }
 
