@@ -42,21 +42,54 @@ import org.apache.arrow.vector.VectorSchemaRoot;
 public class MiniDbResultSet implements ResultSet {
 
     private final MiniDbStatement statement;
-    private final VectorSchemaRoot root;
+    private final MiniDbClient client;
+    private final java.sql.ResultSetMetaData metaData;
+    private VectorSchemaRoot root;
     private int cursor = -1;
     private boolean wasNull;
     private boolean closed;
+    private long cursorId;
+    private int fetchSize;
+    private boolean lastBatch;
+    private int rowNumber;
 
     public MiniDbResultSet(MiniDbStatement statement, VectorSchemaRoot root) {
         this.statement = statement;
+        this.client = null;
         this.root = root;
+        this.lastBatch = true;
+        this.metaData = new MiniDbResultSetMetaData(root);
+    }
+
+    public MiniDbResultSet(MiniDbStatement statement, MiniDbClient client,
+                           MiniDbClient.ClientResult.Cursor cursor) {
+        this.statement = statement;
+        this.client = client;
+        this.root = cursor.firstPage();
+        this.cursorId = cursor.cursorId();
+        this.fetchSize = cursor.fetchSize();
+        this.lastBatch = cursor.lastBatch();
+        this.metaData = new MiniDbResultSetMetaData(this.root);
     }
 
     @Override
     public boolean next() throws SQLException {
         checkClosed();
-        cursor++;
-        return cursor < root.getRowCount();
+        while (true) {
+            cursor++;
+            if (cursor < root.getRowCount()) {
+                rowNumber++;
+                return true;
+            }
+            if (lastBatch) {
+                return false;
+            }
+            MiniDbClient.ClientResult.Rows page = client.fetch(cursorId, fetchSize);
+            root.close();
+            root = page.data();
+            lastBatch = page.lastBatch();
+            cursor = -1;
+        }
     }
 
     private void checkClosed() throws SQLException {
@@ -279,7 +312,7 @@ public class MiniDbResultSet implements ResultSet {
 
     @Override
     public ResultSetMetaData getMetaData() {
-        return new MiniDbResultSetMetaData(root);
+        return metaData;
     }
 
     @Override
@@ -292,6 +325,9 @@ public class MiniDbResultSet implements ResultSet {
         if (!closed) {
             closed = true;
             root.close();
+            if (cursorId != 0 && !lastBatch && client != null) {
+                client.closeCursor(cursorId);
+            }
         }
     }
 
@@ -302,7 +338,7 @@ public class MiniDbResultSet implements ResultSet {
 
     @Override
     public int getRow() {
-        return cursor + 1;
+        return rowNumber;
     }
 
     @Override

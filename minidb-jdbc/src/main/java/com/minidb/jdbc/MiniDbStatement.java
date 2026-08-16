@@ -9,10 +9,13 @@ import java.sql.Statement;
 
 public class MiniDbStatement implements Statement {
 
+    private static final int DEFAULT_FETCH_SIZE = 4096;
+
     private final MiniDbConnection connection;
     private final MiniDbClient client;
     private MiniDbResultSet current;
     private long updateCount = -1;
+    private int fetchSize = 0;
     private boolean closed;
 
     public MiniDbStatement(MiniDbConnection connection, MiniDbClient client) {
@@ -24,9 +27,9 @@ public class MiniDbStatement implements Statement {
     public boolean execute(String sql) throws SQLException {
         checkClosed();
         closeCurrent();
-        MiniDbClient.ClientResult result = client.execute(sql);
-        if (result instanceof MiniDbClient.ClientResult.Rows rows) {
-            current = new MiniDbResultSet(this, rows.data());
+        MiniDbClient.ClientResult result = client.execute(sql, effectiveFetchSize());
+        if (result instanceof MiniDbClient.ClientResult.Cursor cursor) {
+            current = new MiniDbResultSet(this, client, cursor);
             updateCount = -1;
             return true;
         } else {
@@ -105,6 +108,10 @@ public class MiniDbStatement implements Statement {
         }
     }
 
+    private int effectiveFetchSize() {
+        return fetchSize > 0 ? fetchSize : DEFAULT_FETCH_SIZE;
+    }
+
     @Override
     public int getMaxFieldSize() {
         return 0;
@@ -166,11 +173,12 @@ public class MiniDbStatement implements Statement {
 
     @Override
     public void setFetchSize(int rows) {
+        this.fetchSize = rows;
     }
 
     @Override
     public int getFetchSize() {
-        return 0;
+        return fetchSize;
     }
 
     @Override

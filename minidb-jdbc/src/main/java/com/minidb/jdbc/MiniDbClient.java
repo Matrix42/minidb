@@ -33,7 +33,11 @@ import org.apache.arrow.vector.ipc.ArrowStreamReader;
 public class MiniDbClient implements AutoCloseable {
 
     public sealed interface ClientResult {
-        record Rows(VectorSchemaRoot data) implements ClientResult {
+        record Cursor(long cursorId, int fetchSize, VectorSchemaRoot firstPage,
+                      boolean lastBatch) implements ClientResult {
+        }
+
+        record Rows(VectorSchemaRoot data, boolean lastBatch) implements ClientResult {
         }
 
         record Update(long count) implements ClientResult {
@@ -110,7 +114,7 @@ public class MiniDbClient implements AutoCloseable {
         }
     }
 
-    public ClientResult execute(String sql) throws SQLException {
+    public ClientResult execute(String sql, int fetchSize) throws SQLException {
         if (!connected) {
             throw new SQLException("connection is closed");
         }
@@ -125,13 +129,17 @@ public class MiniDbClient implements AutoCloseable {
             throw new SQLException("connection is closed");
         }
         try {
-            channel.writeAndFlush(new Message.ExecuteRequest(id, sql)).sync();
+            channel.writeAndFlush(new Message.ExecuteRequest(id, sql, fetchSize)).sync();
         } catch (Exception e) {
             pending.remove(id, fut);
             throw new SQLException("failed to send request", e);
         }
         try {
-            return fut.get(timeoutSeconds, TimeUnit.SECONDS);
+            ClientResult result = fut.get(timeoutSeconds, TimeUnit.SECONDS);
+            if (result instanceof ClientResult.Rows rows) {
+                return new ClientResult.Cursor(id, fetchSize, rows.data(), rows.lastBatch());
+            }
+            return result;
         } catch (InterruptedException e) {
             Thread.currentThread().interrupt();
             throw new SQLException("interrupted during execute", e);
@@ -146,6 +154,52 @@ public class MiniDbClient implements AutoCloseable {
                     cause != null ? cause : e);
         } finally {
             pending.remove(id, fut);
+        }
+    }
+
+    public ClientResult.Rows fetch(long cursorId, int maxRows) throws SQLException {
+        if (!connected) {
+            throw new SQLException("connection is closed");
+        }
+        long id = nextRequestId.getAndIncrement();
+        CompletableFuture<ClientResult> fut = new CompletableFuture<>();
+        pending.put(id, fut);
+        if (!connected) {
+            pending.remove(id, fut);
+            throw new SQLException("connection is closed");
+        }
+        try {
+            channel.writeAndFlush(new Message.FetchRequest(id, cursorId, maxRows)).sync();
+        } catch (Exception e) {
+            pending.remove(id, fut);
+            throw new SQLException("failed to send fetch", e);
+        }
+        try {
+            ClientResult result = fut.get(timeoutSeconds, TimeUnit.SECONDS);
+            if (result instanceof ClientResult.Rows rows) {
+                return rows;
+            }
+            throw new SQLException("unexpected response to fetch");
+        } catch (InterruptedException e) {
+            Thread.currentThread().interrupt();
+            throw new SQLException("interrupted during fetch", e);
+        } catch (java.util.concurrent.TimeoutException e) {
+            throw new SQLException("timeout waiting for server response");
+        } catch (ExecutionException e) {
+            Throwable cause = e.getCause();
+            if (cause instanceof SQLException sqle) {
+                throw sqle;
+            }
+            throw new SQLException(cause != null ? cause.getMessage() : "fetch failed",
+                    cause != null ? cause : e);
+        } finally {
+            pending.remove(id, fut);
+        }
+    }
+
+    public void closeCursor(long cursorId) {
+        if (connected && channel != null) {
+            channel.writeAndFlush(new Message.CloseCursorRequest(cursorId));
         }
     }
 
@@ -307,7 +361,7 @@ public class MiniDbClient implements AutoCloseable {
                     return;
                 }
                 try {
-                    f.complete(new ClientResult.Rows(arrowDecoder.decode(b.data())));
+                    f.complete(new ClientResult.Rows(arrowDecoder.decode(b.data()), b.lastBatch()));
                 } catch (SQLException e) {
                     f.completeExceptionally(e);
                 }
