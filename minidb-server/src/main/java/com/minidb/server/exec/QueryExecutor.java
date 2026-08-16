@@ -23,8 +23,8 @@ import java.util.List;
 import java.util.Locale;
 import java.util.Map;
 import org.apache.arrow.memory.BufferAllocator;
-import org.apache.arrow.vector.VectorSchemaRoot;
 import org.apache.arrow.vector.types.pojo.Field;
+import org.apache.arrow.vector.types.pojo.Schema;
 import org.apache.calcite.rel.RelNode;
 import org.apache.calcite.rel.type.RelDataType;
 import org.apache.calcite.rel.type.RelDataTypeField;
@@ -71,6 +71,15 @@ public class QueryExecutor {
     }
 
     public QueryResult execute(String sql, String currentSchema) {
+        QueryResult result = executeCursor(sql, currentSchema);
+        if (result instanceof QueryResult.Cursor cursor) {
+            return new QueryResult.Rows(cursor.handle().materialize());
+        }
+        return result;
+    }
+
+    /** Like {@link #execute}, but leaves SELECT results as an unmaterialized cursor for paging. */
+    public QueryResult executeCursor(String sql, String currentSchema) {
         String trimmed = sql.strip();
         // ① 命令:ANALYZE/EXPLAIN/USE SCHEMA,Calcite 不解析,parse 前前缀拦截。
         QueryResult command = tryHandleCommand(trimmed, currentSchema);
@@ -84,6 +93,10 @@ public class QueryExecutor {
         }
         // ③ DQL/DML:SELECT/INSERT/UPDATE/DELETE。
         return executeQuery(trimmed, currentSchema);
+    }
+
+    public QueryResult executeCursor(String sql) {
+        return executeCursor(sql, MiniDbCatalog.DEFAULT_SCHEMA);
     }
 
     /** 命令:Calcite 不解析(ANALYZE/EXPLAIN/USE SCHEMA),parse 前前缀拦截;非命令返回 null。 */
@@ -165,9 +178,8 @@ public class QueryExecutor {
                 return new QueryResult.Update(modify.affected());
             }
         }
-        try (BatchIterator it = ((MiniDbRel) plan).execute(ctx)) {
-            return new QueryResult.Rows(materialize(it, plan));
-        }
+        BatchIterator it = ((MiniDbRel) plan).execute(ctx);
+        return new QueryResult.Cursor(new CursorHandle(it, ctx, schemaFromRowType(plan.getRowType())));
     }
 
     private QueryResult handleCreateSchema(SqlCreateSchema create) {
@@ -392,39 +404,12 @@ public class QueryExecutor {
         return new QueryResult.Update(0);
     }
 
-    private VectorSchemaRoot materialize(BatchIterator it, RelNode plan) {
-        VectorSchemaRoot merged = null;
-        int dst = 0;
-        while (it.hasNext()) {
-            VectorSchemaRoot batch = it.next();
-            if (merged == null) {
-                merged = VectorSchemaRoot.create(batch.getSchema(), allocator);
-                merged.allocateNew();
-            }
-            for (int i = 0; i < batch.getRowCount(); i++) {
-                RowCopier.copyRow(batch, i, merged, dst++);
-            }
-        }
-        if (merged == null) {
-            // No batches were produced (e.g. SELECT over an empty table, or a
-            // filter that matched nothing). Build an empty root carrying the
-            // plan's schema so the result still describes its columns.
-            return emptyRoot(plan);
-        }
-        merged.setRowCount(dst);
-        return merged;
-    }
-
-    private VectorSchemaRoot emptyRoot(RelNode plan) {
+    private Schema schemaFromRowType(RelDataType rowType) {
         List<Field> fields = new ArrayList<>();
-        for (RelDataTypeField f : plan.getRowType().getFieldList()) {
+        for (RelDataTypeField f : rowType.getFieldList()) {
             fields.add(ArrowTypes.field(f));
         }
-        VectorSchemaRoot root = VectorSchemaRoot.create(
-                new org.apache.arrow.vector.types.pojo.Schema(fields), allocator);
-        root.allocateNew();
-        root.setRowCount(0);
-        return root;
+        return new Schema(fields);
     }
 
 }
