@@ -3,6 +3,7 @@ package com.minidb.server.plan.physical;
 import com.minidb.storage.common.ColumnMeta;
 import com.minidb.storage.common.ForeignKey;
 import com.minidb.server.catalog.MiniDbCatalog;
+import com.minidb.server.config.MiniDbConfig;
 import com.minidb.storage.common.TableSchema;
 import com.minidb.storage.common.BatchIterator;
 import com.minidb.server.exec.ExecContext;
@@ -90,6 +91,11 @@ public class MiniDbModify extends TableModify implements MiniDbRel {
             }
         } finally {
             input.close();
+        }
+        // 自动合并:part 数超过阈值时按配置目标大小合并。
+        MiniDbConfig config = ctx.storage().config();
+        if (target.partCount() > config.compactionAutoPartThreshold()) {
+            target.compact(config.compactionTargetSizeBytes());
         }
     }
 

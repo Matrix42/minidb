@@ -2,6 +2,7 @@ package com.minidb.server.storage;
 
 import com.minidb.server.catalog.InformationSchemaCatalog;
 import com.minidb.server.catalog.MiniDbCatalog;
+import com.minidb.server.config.MiniDbConfig;
 import com.minidb.storage.arrow.ArrowPartFormat;
 import com.minidb.storage.arrow.IpcFileTableStorage;
 import com.minidb.storage.common.PartFormat;
@@ -12,6 +13,7 @@ import com.minidb.storage.common.TableStorage;
 import com.minidb.storage.parquet.ParquetPartFormat;
 import java.io.IOException;
 import java.io.UncheckedIOException;
+import java.nio.file.DirectoryStream;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.util.ArrayList;
@@ -35,6 +37,7 @@ public class StorageManager implements AutoCloseable {
     private final MiniDbCatalog catalog;
     private final BufferAllocator allocator;
     private final Path dataDir;
+    private final MiniDbConfig config;
     private final CatalogStore catalogStore;
     private final TableStorage tableStorage;
     private final Map<StorageFormat, PartFormat> formats = new EnumMap<>(StorageFormat.class);
@@ -44,11 +47,16 @@ public class StorageManager implements AutoCloseable {
         this.catalog = catalog;
         this.allocator = allocator;
         this.dataDir = dataDir;
+        this.config = MiniDbConfig.load(dataDir);
         this.catalogStore = new JsonCatalogStore(dataDir.resolve("catalog.json"));
         this.tableStorage = new IpcFileTableStorage(dataDir);
         formats.put(StorageFormat.ARROW, new ArrowPartFormat());
         formats.put(StorageFormat.PARQUET, new ParquetPartFormat());
         catalog.addListener(this::persistCatalog);
+    }
+
+    public MiniDbConfig config() {
+        return config;
     }
 
     private PartFormat formatFor(TableSchema schema) {
@@ -71,8 +79,9 @@ public class StorageManager implements AutoCloseable {
         return catalog;
     }
 
-    /** 启动:恢复元数据,并为每张表挂一个「目录句柄」(不加载数据)。 */
+    /** 启动:先恢复中断的 compaction,再恢复元数据,并为每张表挂「目录句柄」。 */
     public void loadAll() {
+        recoverCompaction();
         restoreCatalog();
         for (String schema : catalog.schemaNames()) {
             if (InformationSchemaCatalog.isSystemSchema(schema)) {
@@ -147,6 +156,72 @@ public class StorageManager implements AutoCloseable {
             throw new IllegalArgumentException("table not found: " + tableName);
         }
         table.clearParts();
+    }
+
+    /** 合并一张表的所有 part(按配置的目标大小切分)。 */
+    public void compactTable(String schemaName, String tableName) {
+        SimpleTable table = tables.get(storageKey(schemaName, tableName));
+        if (table == null) {
+            throw new IllegalArgumentException("table not found: " + tableName);
+        }
+        table.compact(config.compactionTargetSizeBytes());
+    }
+
+    /**
+     * 恢复上次 compaction 中断留下的交换目录:表目录缺失时回滚 .bak,已存在时删 .bak,
+     * 残留 .tmp 直接删。保证表目录要么是旧数据要么是新数据。
+     */
+    private void recoverCompaction() {
+        if (!Files.exists(dataDir)) {
+            return;
+        }
+        try (DirectoryStream<Path> schemaDirs = Files.newDirectoryStream(dataDir)) {
+            for (Path schemaDir : schemaDirs) {
+                if (!Files.isDirectory(schemaDir)) {
+                    continue;
+                }
+                recoverSchemaCompaction(schemaDir);
+            }
+        } catch (IOException e) {
+            throw new UncheckedIOException(e);
+        }
+    }
+
+    private static void recoverSchemaCompaction(Path schemaDir) throws IOException {
+        try (DirectoryStream<Path> entries = Files.newDirectoryStream(schemaDir)) {
+            for (Path entry : entries) {
+                String name = entry.getFileName().toString();
+                if (name.endsWith(SimpleTable.COMPACT_BACKUP_SUFFIX)) {
+                    String table = name.substring(0, name.length() - SimpleTable.COMPACT_BACKUP_SUFFIX.length());
+                    Path tableDir = schemaDir.resolve(table);
+                    if (Files.exists(tableDir)) {
+                        deleteRecursively(entry);
+                    } else {
+                        Files.move(entry, tableDir);
+                    }
+                } else if (name.endsWith(SimpleTable.COMPACT_TMP_SUFFIX)) {
+                    deleteRecursively(entry);
+                }
+            }
+        }
+    }
+
+    private static void deleteRecursively(Path dir) {
+        if (!Files.exists(dir)) {
+            return;
+        }
+        try (DirectoryStream<Path> ds = Files.newDirectoryStream(dir)) {
+            for (Path p : ds) {
+                if (Files.isDirectory(p)) {
+                    deleteRecursively(p);
+                } else {
+                    Files.deleteIfExists(p);
+                }
+            }
+            Files.deleteIfExists(dir);
+        } catch (IOException e) {
+            throw new UncheckedIOException(e);
+        }
     }
 
     @Override

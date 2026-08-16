@@ -116,6 +116,14 @@ public class QueryExecutor {
             }
             return new QueryResult.UseSchema(resolved);
         }
+        if (upper.startsWith("COMPACT TABLE ")) {
+            String table = trimmed.substring("COMPACT TABLE ".length()).strip();
+            int dot = table.indexOf('.');
+            String schemaName = dot >= 0 ? table.substring(0, dot).strip() : currentSchema;
+            String tableName = dot >= 0 ? table.substring(dot + 1).strip() : table;
+            storage.compactTable(schemaName, tableName);
+            return new QueryResult.Update(0);
+        }
         return null;
     }
 

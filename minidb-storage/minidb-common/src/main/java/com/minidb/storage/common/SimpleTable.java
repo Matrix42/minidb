@@ -10,7 +10,9 @@ import java.util.Comparator;
 import java.util.List;
 import java.util.Map;
 import java.util.concurrent.atomic.AtomicInteger;
+import org.apache.arrow.memory.ArrowBuf;
 import org.apache.arrow.memory.BufferAllocator;
+import org.apache.arrow.vector.FieldVector;
 import org.apache.arrow.vector.VectorSchemaRoot;
 import org.apache.arrow.vector.types.pojo.Field;
 import org.apache.arrow.vector.types.pojo.Schema;
@@ -21,6 +23,10 @@ import org.apache.arrow.vector.types.pojo.Schema;
  * {@link PartFormat} 决定(arrow/parquet),本类只负责目录组织与分段。
  */
 public class SimpleTable {
+
+    /** compaction 交换目录的后缀:新 part 先写 .tmp,交换时旧目录暂存 .bak。 */
+    public static final String COMPACT_TMP_SUFFIX = ".compact.tmp";
+    public static final String COMPACT_BACKUP_SUFFIX = ".compact.bak";
 
     private final TableSchema schema;
     private final BufferAllocator allocator;
@@ -108,6 +114,147 @@ public class SimpleTable {
             } catch (IOException e) {
                 throw new UncheckedIOException(e);
             }
+        }
+    }
+
+    /**
+     * 合并所有 part:按大小(近似 buffer 字节和)切分,目标单个 part ≤ {@code targetSizeBytes}。
+     * 合并后 part 文件被整体替换;交换是「旧目录 → .bak、.tmp → 表目录、删 .bak」的原子改名,
+     * 任意时刻崩溃要么是旧数据要么是新数据(不会混读或空目录)。
+     *
+     * @return 合并后的 part 数
+     */
+    public int compact(long targetSizeBytes) {
+        cleanupStaleArtifacts();
+        List<Path> parts = partFiles();
+        if (parts.size() <= 1) {
+            return parts.size();
+        }
+        Path tmpDir = sibling(COMPACT_TMP_SUFFIX);
+        Path bakDir = sibling(COMPACT_BACKUP_SUFFIX);
+        try {
+            Files.createDirectories(tmpDir);
+            int newCount = mergeInto(parts, tmpDir, targetSizeBytes);
+            Files.move(tableDir, bakDir);
+            try {
+                Files.move(tmpDir, tableDir);
+            } catch (IOException e) {
+                // 交换第二步失败:回滚,恢复旧目录。
+                Files.move(bakDir, tableDir);
+                throw e;
+            }
+            deleteRecursively(bakDir);
+            partSeq.set(maxPartSeq());
+            return newCount;
+        } catch (IOException e) {
+            throw new UncheckedIOException(e);
+        }
+    }
+
+    /** 清理上次 compaction 中断留下的交换目录(旧目录仍完整)。 */
+    private void cleanupStaleArtifacts() {
+        Path tmpDir = sibling(COMPACT_TMP_SUFFIX);
+        Path bakDir = sibling(COMPACT_BACKUP_SUFFIX);
+        if (Files.exists(tmpDir)) {
+            deleteRecursively(tmpDir);
+        }
+        if (Files.exists(bakDir)) {
+            if (Files.exists(tableDir)) {
+                deleteRecursively(bakDir); // 上次交换已完成,旧目录可删
+            } else {
+                moveOrThrow(bakDir, tableDir); // 上次交换中断,回滚旧目录
+            }
+        }
+    }
+
+    private int mergeInto(List<Path> parts, Path destDir, long targetSizeBytes) {
+        int seq = 0;
+        VectorSchemaRoot out = null;
+        int outRows = 0;
+        try {
+            for (Path part : parts) {
+                VectorSchemaRoot batch = format.read(part, arrowSchema, allocator);
+                try {
+                    for (int r = 0; r < batch.getRowCount(); r++) {
+                        if (out == null) {
+                            out = newBatchRoot();
+                            out.allocateNew();
+                            outRows = 0;
+                        }
+                        copyRow(batch, r, out, outRows);
+                        outRows++;
+                        if (estimatedBytes(out) >= targetSizeBytes) {
+                            flushPart(out, outRows, destDir, ++seq);
+                            out.close();
+                            out = null;
+                        }
+                    }
+                } finally {
+                    batch.close();
+                }
+            }
+            if (out != null) {
+                flushPart(out, outRows, destDir, ++seq);
+            }
+            return seq;
+        } finally {
+            if (out != null) {
+                out.close();
+            }
+        }
+    }
+
+    private void flushPart(VectorSchemaRoot out, int outRows, Path destDir, int seq) {
+        out.setRowCount(outRows);
+        format.write(destDir.resolve(String.format("part-%06d.%s", seq, format.fileExtension())), out);
+    }
+
+    private static void copyRow(VectorSchemaRoot src, int srcRow, VectorSchemaRoot dst, int dstRow) {
+        for (int c = 0; c < src.getFieldVectors().size(); c++) {
+            dst.getVector(c).copyFromSafe(srcRow, dstRow, src.getVector(c));
+        }
+    }
+
+    /** 近似估算一个 batch 落盘的字节数(各 buffer 容量和,不真序列化)。 */
+    private static long estimatedBytes(VectorSchemaRoot root) {
+        long total = 0;
+        for (FieldVector v : root.getFieldVectors()) {
+            for (ArrowBuf buf : v.getBuffers(false)) {
+                if (buf != null) {
+                    total += buf.capacity();
+                }
+            }
+        }
+        return total;
+    }
+
+    private Path sibling(String suffix) {
+        return tableDir.resolveSibling(tableDir.getFileName().toString() + suffix);
+    }
+
+    private void moveOrThrow(Path src, Path dst) {
+        try {
+            Files.move(src, dst);
+        } catch (IOException e) {
+            throw new UncheckedIOException(e);
+        }
+    }
+
+    private static void deleteRecursively(Path dir) {
+        if (!Files.exists(dir)) {
+            return;
+        }
+        try (DirectoryStream<Path> ds = Files.newDirectoryStream(dir)) {
+            for (Path p : ds) {
+                if (Files.isDirectory(p)) {
+                    deleteRecursively(p);
+                } else {
+                    Files.deleteIfExists(p);
+                }
+            }
+            Files.deleteIfExists(dir);
+        } catch (IOException e) {
+            throw new UncheckedIOException(e);
         }
     }
 
