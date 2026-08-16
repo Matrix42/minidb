@@ -10,7 +10,7 @@ MiniDB 是一个基于 Apache Calcite(解析/规划)+ Apache Arrow(列式存储)
 - `minidb-server` — 服务端:Calcite 解析/规划、Arrow 存储、向量化批式执行、JDBC 协议处理。
 - `minidb-jdbc` — 客户端 JDBC 驱动(`jdbc:minidb://host:port`),基于自定义 Netty 协议。
 
-**定位**:学习/玩具级数据库,内存型。无事务(autoCommit 恒 true)、无 UPDATE/DELETE 之外的复杂 DML、无 JOIN、无聚合。结果集客户端一次性物化,无服务端分页。
+**定位**:学习型、功能完整的数据库。无事务(autoCommit 恒 true)、结果集客户端一次性物化(无服务端分页)。
 
 ## 构建与运行
 
