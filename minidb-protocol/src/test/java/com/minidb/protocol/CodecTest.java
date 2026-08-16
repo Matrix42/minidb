@@ -36,6 +36,15 @@ class CodecTest {
     }
 
     @Test
+    void executeRequestTwoArgDefaultsFetchSizeZero() {
+        Message.ExecuteRequest out =
+                (Message.ExecuteRequest) roundTrip(new Message.ExecuteRequest(5L, "SELECT 1"));
+        assertEquals(5L, out.requestId());
+        assertEquals("SELECT 1", out.sql());
+        assertEquals(0, out.fetchSize());
+    }
+
+    @Test
     void fetchRequestRoundTrip() {
         Message.FetchRequest out =
                 (Message.FetchRequest) roundTrip(new Message.FetchRequest(9L, 42L, 100));

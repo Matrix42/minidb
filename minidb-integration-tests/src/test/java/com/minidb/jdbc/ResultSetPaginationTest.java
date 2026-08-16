@@ -83,6 +83,8 @@ class ResultSetPaginationTest {
                     // drive through all pages; metadata must remain readable
                 }
                 assertEquals(2, rs.getMetaData().getColumnCount());
+                assertEquals("id", rs.getMetaData().getColumnName(1));
+                assertEquals("doubled", rs.getMetaData().getColumnName(2));
             }
         }
     }
