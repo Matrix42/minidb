@@ -91,14 +91,14 @@ MiniDbResultSet.next() 读到底:
 
 ## 分页语义与 Paginator 契约
 
-**Paginator** 字段:`BatchIterator it`、`Schema schema`、`BufferAllocator allocator`、`VectorSchemaRoot current`(当前输入批)、`int offset`、`boolean done`、`boolean emitted`、`VectorSchemaRoot out`(复用单棵输出 root)。
+**Paginator** 字段:`BatchIterator it`、`Schema schema`、`BufferAllocator allocator`、`VectorSchemaRoot current`(当前输入批)、`int offset`、`boolean done`、`boolean emitted`。内部 `advance()` helper 在批耗尽时前进到下一批。
 
-- `nextPage(int maxRows)`:每次分配**新**输出 root(按 `schema`),从 `current` 批(及后续批)用 `RowCopier` 逐行拷入,拷满 `maxRows` 或迭代器耗尽为止;**每耗尽一个输入批就 `close()` 它**(释放表 owned / 算子 owned 批,见坑 5/25);返回该页(已 `setValueCount`)。若已 `done` 且 `emitted` 已置位 → 返回 `null`(无更多页)。
-- 空结果/首 fetch:迭代器立即耗尽且 `emitted==false` → 返回 0 行但**带 schema** 的 `out`(复用现有 `emptyRoot` 逻辑),保证客户端拿到列元数据;`emitted` 置位,避免重复返回空页。
+- `nextPage(int maxRows)`:每次分配**新**输出 root(按 `schema`),从 `current` 批(及后续批)用 `RowCopier` 逐行拷入,拷满 `maxRows` 或迭代器耗尽为止;返回该页(已 `setRowCount`)。若已 `done` 且 `emitted` 已置位 → 返回 `null`(无更多页)。**不关闭输入批**(见下方批次所有权)。
+- 空结果/首 fetch:迭代器立即耗尽且 `emitted==false` → 返回 0 行但**带 schema** 的 root(输出 root 已按 schema 分配、行数为 0),保证客户端拿到列元数据;`emitted` 置位,避免重复返回空页。
 - `isDone()`:返回 `done`(底层迭代器是否耗尽),供 SessionHandler 设 `lastBatch`。
-- `close()`:关闭 `current`(若有残留)+ `it.close()`。
+- `close()`:仅 `it.close()`(迭代器释放其拥有的所有批,包括 `current`);不单独关 `current`。
 
-**批次所有权**:`nextPage` 每页分配新 root、**序列化后由调用方关闭**(SessionHandler 序列化到 byte[] 后 `page.close()`),不跨页复用(避免 VarChar offset 缓冲跨页累积);输入批逐批随消费关闭。分页只关「尚未消费完」的批与迭代器,与现有 eager 算子「merge 后 close」的所有权语义对齐。
+**批次所有权**:`nextPage` 每页分配新 root、**序列化后由调用方关闭**(SessionHandler 序列化到 byte[] 后 `page.close()`),不跨页复用(避免 VarChar offset 缓冲跨页累积)。**输入批由迭代器拥有**(`SimpleTable.scan()` 的 `read` 列表、`MiniDbFilter`/`MiniDbProject` 的 `owned` 队列、`singleBatch` 的 root,均在各自 `close()` 统一释放),故 Paginator **不关闭输入批**——`advance()` 只丢弃引用,`close()` 调 `iterator.close()` 级联释放;否则会双重关闭(Arrow 抛 refCnt 异常)。
 
 **内存**:分页省的是客户端与网络内存(客户端只持 1 页);服务端内存不因分页下降——eager 算子已物化整棵 root,lazy 算子(Scan/Filter/Project)也因迭代器在 `close()` 前累积所有产出批而不省(见坑 5/25 的批所有权模型)。游标本身只持有尚未消费的迭代器与当前批引用。
 
