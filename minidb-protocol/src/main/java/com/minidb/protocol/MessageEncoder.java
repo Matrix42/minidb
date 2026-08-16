@@ -21,13 +21,24 @@ public class MessageEncoder extends MessageToByteEncoder<Message> {
         } else if (msg instanceof Message.ExecuteRequest r) {
             byte[] sql = r.sql().getBytes(StandardCharsets.UTF_8);
             out.writeByte(MessageType.EXECUTE_REQUEST);
-            out.writeInt(8 + 4 + sql.length);
+            out.writeInt(8 + 4 + sql.length + 4);
             out.writeLong(r.requestId());
             out.writeInt(sql.length);
             out.writeBytes(sql);
+            out.writeInt(r.fetchSize());
         } else if (msg instanceof Message.CloseRequest) {
             out.writeByte(MessageType.CLOSE_REQUEST);
             out.writeInt(0);
+        } else if (msg instanceof Message.FetchRequest r) {
+            out.writeByte(MessageType.FETCH_REQUEST);
+            out.writeInt(8 + 8 + 4);
+            out.writeLong(r.requestId());
+            out.writeLong(r.cursorId());
+            out.writeInt(r.maxRows());
+        } else if (msg instanceof Message.CloseCursorRequest r) {
+            out.writeByte(MessageType.CLOSE_CURSOR_REQUEST);
+            out.writeInt(8);
+            out.writeLong(r.cursorId());
         } else if (msg instanceof Message.ExecuteResponse r) {
             byte[] err = r.error() == null
                     ? new byte[0] : r.error().getBytes(StandardCharsets.UTF_8);

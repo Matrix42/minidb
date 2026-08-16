@@ -8,10 +8,19 @@ public interface Message {
     record HandshakeAck(byte version) implements Message {
     }
 
-    record ExecuteRequest(long requestId, String sql) implements Message {
+    record ExecuteRequest(long requestId, String sql, int fetchSize) implements Message {
+        public ExecuteRequest(long requestId, String sql) {
+            this(requestId, sql, 0);
+        }
     }
 
     record CloseRequest() implements Message {
+    }
+
+    record FetchRequest(long requestId, long cursorId, int maxRows) implements Message {
+    }
+
+    record CloseCursorRequest(long cursorId) implements Message {
     }
 
     record ExecuteResponse(long requestId, boolean ok, String error) implements Message {

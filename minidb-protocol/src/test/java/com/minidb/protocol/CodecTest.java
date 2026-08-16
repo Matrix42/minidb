@@ -29,9 +29,26 @@ class CodecTest {
     void executeRequestRoundTrip() {
         String sql = "SELECT * FROM t WHERE name = 'abc'";
         Message.ExecuteRequest out =
-                (Message.ExecuteRequest) roundTrip(new Message.ExecuteRequest(42L, sql));
+                (Message.ExecuteRequest) roundTrip(new Message.ExecuteRequest(42L, sql, 128));
         assertEquals(42L, out.requestId());
         assertEquals(sql, out.sql());
+        assertEquals(128, out.fetchSize());
+    }
+
+    @Test
+    void fetchRequestRoundTrip() {
+        Message.FetchRequest out =
+                (Message.FetchRequest) roundTrip(new Message.FetchRequest(9L, 42L, 100));
+        assertEquals(9L, out.requestId());
+        assertEquals(42L, out.cursorId());
+        assertEquals(100, out.maxRows());
+    }
+
+    @Test
+    void closeCursorRequestRoundTrip() {
+        Message.CloseCursorRequest out =
+                (Message.CloseCursorRequest) roundTrip(new Message.CloseCursorRequest(42L));
+        assertEquals(42L, out.cursorId());
     }
 
     @Test

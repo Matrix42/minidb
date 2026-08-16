@@ -42,11 +42,22 @@ public class MessageDecoder extends ByteToMessageDecoder {
                 int sqlLen = in.readInt();
                 byte[] sql = new byte[sqlLen];
                 in.readBytes(sql);
+                int fetchSize = in.readInt();
                 return new Message.ExecuteRequest(requestId,
-                        new String(sql, StandardCharsets.UTF_8));
+                        new String(sql, StandardCharsets.UTF_8), fetchSize);
             }
             case MessageType.CLOSE_REQUEST -> {
                 return new Message.CloseRequest();
+            }
+            case MessageType.FETCH_REQUEST -> {
+                long requestId = in.readLong();
+                long cursorId = in.readLong();
+                int maxRows = in.readInt();
+                return new Message.FetchRequest(requestId, cursorId, maxRows);
+            }
+            case MessageType.CLOSE_CURSOR_REQUEST -> {
+                long cursorId = in.readLong();
+                return new Message.CloseCursorRequest(cursorId);
             }
             case MessageType.EXECUTE_RESPONSE -> {
                 long requestId = in.readLong();

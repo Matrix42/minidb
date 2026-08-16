@@ -11,6 +11,8 @@ public final class MessageType {
     public static final byte SCHEMAS_REQUEST = 0x12;
     public static final byte TABLES_REQUEST = 0x13;
     public static final byte COLUMNS_REQUEST = 0x14;
+    public static final byte FETCH_REQUEST = 0x15;
+    public static final byte CLOSE_CURSOR_REQUEST = 0x16;
 
     private MessageType() {
     }
