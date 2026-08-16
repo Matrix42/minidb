@@ -8,8 +8,8 @@ import org.apache.arrow.vector.types.pojo.Schema;
 /**
  * Slices a pull-mode batch iterator into fixed-size pages for cursor paging.
  * Each page is a fresh, owned root (the caller serializes then closes it); the
- * input batches are closed as they are fully consumed. nextPage returns null
- * only after at least one page has been emitted.
+ * input batches are owned by the underlying iterator and released by its
+ * close(). nextPage returns null only after at least one page has been emitted.
  */
 public final class Paginator implements AutoCloseable {
 
@@ -63,12 +63,13 @@ public final class Paginator implements AutoCloseable {
         return done;
     }
 
-    /** Closes the fully-consumed batch and moves to the next one; false when exhausted. */
+    /**
+     * Drops the fully-consumed batch and moves to the next one; false when
+     * exhausted. The consumed batch is NOT closed here — the iterator owns
+     * every batch it yields and releases them all in its own close().
+     */
     private boolean advance() {
-        if (current != null) {
-            current.close();
-            current = null;
-        }
+        current = null;
         if (iterator.hasNext()) {
             current = iterator.next();
             offset = 0;
@@ -79,10 +80,9 @@ public final class Paginator implements AutoCloseable {
 
     @Override
     public void close() {
-        if (current != null) {
-            current.close();
-            current = null;
-        }
+        // The iterator releases all batches it yielded (including any still
+        // held in `current`); Paginator must not close them a second time.
+        current = null;
         iterator.close();
     }
 }

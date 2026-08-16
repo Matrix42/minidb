@@ -45,9 +45,10 @@ class PaginatorTest {
     private static BatchIterator iterator(VectorSchemaRoot... batches) {
         return new BatchIterator() {
             int i = 0;
+            final List<VectorSchemaRoot> read = new java.util.ArrayList<>();
             @Override public boolean hasNext() { return i < batches.length; }
-            @Override public VectorSchemaRoot next() { return batches[i++]; }
-            @Override public void close() {}
+            @Override public VectorSchemaRoot next() { read.add(batches[i]); return batches[i++]; }
+            @Override public void close() { for (VectorSchemaRoot r : read) r.close(); read.clear(); }
         };
     }
 
