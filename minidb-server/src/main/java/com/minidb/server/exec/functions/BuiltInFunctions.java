@@ -679,6 +679,10 @@ public final class BuiltInFunctions {
                         (args, out) -> Kernels.fillCompareTime(
                                 (TimeMilliVector) args.get(0), (TimeMilliVector) args.get(1),
                                 (BitVector) out, Integer::compare, kind)),
+                new Overload(List.of(DateDayVector.class, DateDayVector.class), BitVector.class,
+                        (args, out) -> Kernels.fillCompareDate(
+                                (DateDayVector) args.get(0), (DateDayVector) args.get(1),
+                                (BitVector) out, Integer::compare, kind)),
                 new Overload(List.of(VarBinaryVector.class, VarBinaryVector.class), BitVector.class,
                         (args, out) -> Kernels.fillCompareBytes(
                                 (VarBinaryVector) args.get(0), (VarBinaryVector) args.get(1),

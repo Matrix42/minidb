@@ -5,6 +5,7 @@ import java.math.RoundingMode;
 import java.nio.charset.StandardCharsets;
 import org.apache.arrow.vector.BigIntVector;
 import org.apache.arrow.vector.BitVector;
+import org.apache.arrow.vector.DateDayVector;
 import org.apache.arrow.vector.DecimalVector;
 import org.apache.arrow.vector.Float4Vector;
 import org.apache.arrow.vector.Float8Vector;
@@ -184,6 +185,13 @@ public final class Kernels {
         }
     }
     public static void fillCompareTime(TimeMilliVector l, TimeMilliVector r, BitVector out,
+                                       ScalarKernels.IntCompare cmp, SqlKind kind) {
+        for (int i = 0; i < l.getValueCount(); i++) {
+            if (l.isNull(i) || r.isNull(i)) { out.setNull(i); continue; }
+            out.setSafe(i, compareToBool(cmp.apply(l.get(i), r.get(i)), kind) ? 1 : 0);
+        }
+    }
+    public static void fillCompareDate(DateDayVector l, DateDayVector r, BitVector out,
                                        ScalarKernels.IntCompare cmp, SqlKind kind) {
         for (int i = 0; i < l.getValueCount(); i++) {
             if (l.isNull(i) || r.isNull(i)) { out.setNull(i); continue; }
