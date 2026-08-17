@@ -842,7 +842,7 @@ public final class BuiltInFunctions {
         if (op == SqlStdOperatorTable.MULTIPLY) {
             return (a, b) -> (short) (a * b);
         }
-        return (a, b) -> { if (b == 0) throw new ArithmeticException("division by zero"); return (short) (a / b); };
+        return (a, b) -> b == 0 ? (short) 0 : (short) (a / b);
     }
 
     private static ScalarKernels.FloatBinary floatKernel(SqlOperator op) {
@@ -855,7 +855,7 @@ public final class BuiltInFunctions {
         if (op == SqlStdOperatorTable.MULTIPLY) {
             return (a, b) -> a * b;
         }
-        return (a, b) -> { if (b == 0) throw new ArithmeticException("division by zero"); return a / b; };
+        return (a, b) -> b == 0 ? 0 : a / b;
     }
 
     /** DECIMAL 算术在 BigDecimal 域执行,保精确。除法按 SQL 标准:除零抛错,否则半入保留足够精度。 */
@@ -869,12 +869,8 @@ public final class BuiltInFunctions {
         if (op == SqlStdOperatorTable.MULTIPLY) {
             return BigDecimal::multiply;
         }
-        return (a, b) -> {
-            if (b.signum() == 0) {
-                throw new ArithmeticException("division by zero");
-            }
-            return a.divide(b, Math.max(a.scale(), b.scale()) + 6, RoundingMode.HALF_UP);
-        };
+        return (a, b) -> b.signum() == 0 ? BigDecimal.ZERO
+                : a.divide(b, Math.max(a.scale(), b.scale()) + 6, RoundingMode.HALF_UP);
     }
 
     private static ScalarKernels.IntBinary intKernel(SqlOperator op) {
@@ -887,7 +883,7 @@ public final class BuiltInFunctions {
         if (op == SqlStdOperatorTable.MULTIPLY) {
             return (a, b) -> a * b;
         }
-        return (a, b) -> { if (b == 0) throw new ArithmeticException("division by zero"); return a / b; };
+        return (a, b) -> b == 0 ? 0 : a / b;
     }
 
     private static ScalarKernels.LongBinary longKernel(SqlOperator op) {
@@ -900,7 +896,7 @@ public final class BuiltInFunctions {
         if (op == SqlStdOperatorTable.MULTIPLY) {
             return (a, b) -> a * b;
         }
-        return (a, b) -> { if (b == 0) throw new ArithmeticException("division by zero"); return a / b; };
+        return (a, b) -> b == 0 ? 0 : a / b;
     }
 
     private static ScalarKernels.DoubleBinary doubleKernel(SqlOperator op) {
@@ -913,7 +909,7 @@ public final class BuiltInFunctions {
         if (op == SqlStdOperatorTable.MULTIPLY) {
             return (a, b) -> a * b;
         }
-        return (a, b) -> { if (b == 0) throw new ArithmeticException("division by zero"); return a / b; };
+        return (a, b) -> b == 0 ? 0 : a / b;
     }
 
     /** 跨型算术(INTEGER 列 vs BIGINT 列):int 侧 promote 到 long,结果写 BigIntVector。 */
