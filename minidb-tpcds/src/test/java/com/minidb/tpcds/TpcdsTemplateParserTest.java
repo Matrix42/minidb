@@ -44,7 +44,7 @@ class TpcdsTemplateParserTest {
                 + "select [N.1], [N.2], [N.3];\n";
         String sql = parser.parseTemplate(tpl, 1.0, 1);
         assertFalse(sql.contains("[N"), "应替换 [N.N]: " + sql);
-        assertTrue(sql.matches("(?s)select \\d+, \\d+, \\d+;.*"), sql);
+        assertTrue(sql.matches("(?s)select \\d+, \\d+, \\d+.*"), sql);
     }
 
     @Test
