@@ -47,16 +47,21 @@ public class TpcdsTemplateParser {
             Pattern.compile("\\[([A-Za-z_][A-Za-z_0-9]*)(?:\\.([0-9]+))?\\]");
 
     public Map<String, String> parseAll(Path templateDir, double scale) throws IOException {
-        Map<String, String> result = new TreeMap<>();
+        // 数字序(query1, query2, ..., query99),而非字典序(query1, query10, ...)。
+        Map<String, String> result = new TreeMap<>((a, b) ->
+                Integer.compare(queryNumber(a), queryNumber(b)));
         try (DirectoryStream<Path> ds = Files.newDirectoryStream(templateDir, "query*.tpl")) {
             for (Path p : ds) {
                 String fileName = p.getFileName().toString();
                 String queryName = fileName.substring(0, fileName.length() - 4);
-                int queryNumber = Integer.parseInt(queryName.substring("query".length()));
-                result.put(queryName, parseTemplate(Files.readString(p), scale, queryNumber));
+                result.put(queryName, parseTemplate(Files.readString(p), scale, queryNumber(queryName)));
             }
         }
         return result;
+    }
+
+    private static int queryNumber(String name) {
+        return Integer.parseInt(name.substring("query".length()));
     }
 
     public String parseTemplate(String tpl, double scale, int queryNumber) {
