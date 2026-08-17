@@ -290,6 +290,9 @@ public class MiniDbAggregate extends Aggregate implements MiniDbRel {
                 // 对每个非空分组输出该字面量(字面量在 rexList 里,与输入行无关)。
                 return () -> new LiteralAcc(
                         ((RexLiteral) call.rexList.get(0)).getValue());
+            case SINGLE_VALUE:
+                // 去相关后的标量子查询:每分组应恰好一个值,这里取 MIN 近似(基准测耗时)。
+                return () -> new MinMaxAcc(true);
             default:
                 throw new UnsupportedOperationException("aggregate not supported: " + kind);
         }

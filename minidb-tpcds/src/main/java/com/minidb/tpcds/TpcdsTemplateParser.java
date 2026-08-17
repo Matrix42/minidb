@@ -67,18 +67,29 @@ public class TpcdsTemplateParser {
         vars.put("__LIMITB", new StrValue(""));
         vars.put("__LIMITC", new StrValue("limit %d"));
         StringBuilder sql = new StringBuilder();
-        for (String line : tpl.split("\n")) {
-            String trimmed = line.strip();
+        String[] lines = tpl.split("\n");
+        for (int i = 0; i < lines.length; i++) {
+            String trimmed = lines[i].strip();
             if (trimmed.startsWith("define ")) {
-                parseDefine(trimmed, vars, scale);
+                // 跨行 define(如 text 候选跨多行):收集到分号结束再求值。
+                StringBuilder def = new StringBuilder(trimmed);
+                while (!trimmed.endsWith(";") && i + 1 < lines.length) {
+                    i++;
+                    def.append(' ').append(lines[i].strip());
+                    trimmed = def.toString();
+                }
+                parseDefine(def.toString(), vars, scale);
             } else {
-                sql.append(line).append('\n');
+                sql.append(lines[i]).append('\n');
             }
         }
         String text = replaceSubstitutions(sql.toString(), vars, queryNumber);
         // TPC-DS 的 `date + N days` 依赖 date arithmetic(MiniDB 内核暂不支持),基准测试只测
         // 耗时不校验结果,故删掉偏移量让查询可执行(日期范围略偏,不影响「能否执行」)。
         text = text.replaceAll("[+-]\\s*\\d+\\s+days", "");
+        // TPC-DS 里部分保留关键字被用作标识符(as returns/sum(returns)/as year),Calcite
+        // 解析报错,加双引号转成标识符(\b 保证不误伤 store_returns 里的 returns)。
+        text = text.replaceAll("(?i)\\b(returns|year|at)\\b", "\"$1\"");
         // 模板里部分查询(query14/23/24/39)含两个独立语句(第二个是变体),截断到第一个分号
         // 只保留首个;单语句查询的分号也一并去掉(Calcite 不接受分号)。
         int semi = text.indexOf(';');
