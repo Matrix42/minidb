@@ -15,6 +15,7 @@
     <module>minidb-server</module>
     <module>minidb-jdbc</module>
     <module>minidb-integration-tests</module>
+    <module>minidb-tpcds</module>
   </modules>
 
   <properties>
