@@ -58,8 +58,10 @@ public class Planner {
         }
         // Join reordering: commute/associate multi-table joins by row-count cost
         // (RelMetadataQuery.getRowCount supplies the table sizes from Phase 1).
-        volcanoPlanner.addRule(JoinCommuteRule.Config.DEFAULT.toRule());
-        volcanoPlanner.addRule(JoinAssociateRule.Config.DEFAULT.toRule());
+        // 注:去相关后含 exists 的复杂 join 树在重排时可能丢失等值条件变交叉连接
+        // (query10 等 OOM),故禁用 commute/associate,保持去相关后的 join 顺序。
+        // volcanoPlanner.addRule(JoinCommuteRule.Config.DEFAULT.toRule());
+        // volcanoPlanner.addRule(JoinAssociateRule.Config.DEFAULT.toRule());
         SqlTypeFactoryImpl typeFactory =
                 new Utf8SqlTypeFactory(RelDataTypeSystem.DEFAULT);
         RelOptCluster cluster = RelOptCluster.create(volcanoPlanner, new RexBuilder(typeFactory));
