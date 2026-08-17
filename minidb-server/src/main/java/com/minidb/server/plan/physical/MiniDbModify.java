@@ -6,6 +6,7 @@ import com.minidb.server.catalog.MiniDbCatalog;
 import com.minidb.server.config.MiniDbConfig;
 import com.minidb.storage.common.TableSchema;
 import com.minidb.storage.common.BatchIterator;
+import com.minidb.server.exec.ConstraintChecker;
 import com.minidb.server.exec.ExecContext;
 import com.minidb.server.exec.RowCopier;
 import com.minidb.storage.common.SimpleTable;
@@ -101,26 +102,7 @@ public class MiniDbModify extends TableModify implements MiniDbRel {
 
     /** INSERT 前的约束校验:NOT NULL + 主键/唯一冲突 + 外键引用存在。 */
     private void validateInsert(ExecContext ctx, SimpleTable target, VectorSchemaRoot batch) {
-        TableSchema schema = target.schema();
-        for (ColumnMeta column : schema.columns()) {
-            if (!column.nullable()) {
-                int idx = schema.columnIndex(column.name());
-                for (int i = 0; i < batch.getRowCount(); i++) {
-                    if (batch.getVector(idx).isNull(i)) {
-                        throw new IllegalArgumentException(
-                                "null value in column \"" + column.name()
-                                        + "\" violates not-null constraint");
-                    }
-                }
-            }
-        }
-        if (!schema.primaryKey().isEmpty()) {
-            validateUnique(target, batch, schema.primaryKey(), "primary key");
-        }
-        for (List<String> unique : schema.uniqueKeys()) {
-            validateUnique(target, batch, unique, "unique");
-        }
-        validateForeignKeys(ctx, target, batch);
+        ConstraintChecker.validateInsert(ctx, target.schema(), target, batch);
     }
 
     /** 外键 INSERT 校验:child 行的外键列值必须存在于引用表(含 null 的键不校验)。 */
@@ -162,7 +144,6 @@ public class MiniDbModify extends TableModify implements MiniDbRel {
         }
         return idxs;
     }
-
     /**
      * DELETE 的外键 RESTRICT 校验:被删除行的主键不能仍被其它表引用。只处理 child 外键
      * 引用本表主键的常见情况(引用非主键唯一列暂不校验);UPDATE 本表被引用列(如改主键)
@@ -173,10 +154,10 @@ public class MiniDbModify extends TableModify implements MiniDbRel {
         if (schema.primaryKey().isEmpty()) {
             return;
         }
-        List<Integer> pkIdx = columnIndexes(schema, schema.primaryKey());
+        List<Integer> pkIdx = ConstraintChecker.columnIndexes(schema, schema.primaryKey());
         Set<List<Object>> deletedKeys = new HashSet<>();
         for (int i = 0; i < matched.getRowCount(); i++) {
-            List<Object> key = keyOf(matched, i, pkIdx);
+            List<Object> key = ConstraintChecker.keyOf(matched, i, pkIdx);
             if (key != null) {
                 deletedKeys.add(key);
             }
@@ -196,12 +177,12 @@ public class MiniDbModify extends TableModify implements MiniDbRel {
                         continue; // 引用非主键列,暂不校验
                     }
                     SimpleTable childTable = ctx.getTable(schemaName, tableName);
-                    List<Integer> childIdx = columnIndexes(childSchema, fk.columns());
+                    List<Integer> childIdx = ConstraintChecker.columnIndexes(childSchema, fk.columns());
                     try (BatchIterator it = childTable.scan()) {
                         while (it.hasNext()) {
                             VectorSchemaRoot b = it.next();
                             for (int i = 0; i < b.getRowCount(); i++) {
-                                List<Object> key = keyOf(b, i, childIdx);
+                                List<Object> key = ConstraintChecker.keyOf(b, i, childIdx);
                                 if (key != null && deletedKeys.contains(key)) {
                                     throw new IllegalArgumentException(
                                             "foreign key violation: row still referenced by "
@@ -254,7 +235,6 @@ public class MiniDbModify extends TableModify implements MiniDbRel {
         }
         return key;
     }
-
     /**
      * UPDATE and DELETE must remove the matched rows from the table; the input
      * only produces the matched rows, so we read all parts, keep unmatched rows
