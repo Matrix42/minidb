@@ -63,18 +63,24 @@ public class MiniDbAggregate extends Aggregate implements MiniDbRel {
             }
         }
         BatchIterator input = ((MiniDbRel) getInput()).execute(ctx);
-        ImmutableBitSet groupSet = getGroupSet();
         List<AggregateCall> calls = getAggCallList();
-        List<AccumulatorFactory> factories = new ArrayList<>();
         RelDataType inputRowType = getInput().getRowType();
-        for (AggregateCall call : calls) {
-            factories.add(factoryFor(call, inputRowType));
-        }
-        // key: normalized group values (null preserved); insertion order = output order
-        Map<List<Object>, GroupState> groups = new LinkedHashMap<>();
-        if (groupSet.isEmpty()) {
-            // global aggregate: always one output row, even on empty input
-            groups.put(List.of(), new GroupState(factories));
+        // ROLLUP/GROUPING SETS 展开为多个 groupSet:每个 groupSet 独立分组聚合,最后合并。
+        // 单 groupSet(普通 GROUP BY)时 getGroupSets() 只含一个。
+        List<ImmutableBitSet> groupSets = getGroupSets();
+        List<Map<List<Object>, GroupState>> groupMaps = new ArrayList<>();
+        List<List<AccumulatorFactory>> factoriesPerSet = new ArrayList<>();
+        for (ImmutableBitSet gs : groupSets) {
+            List<AccumulatorFactory> factories = new ArrayList<>();
+            for (AggregateCall call : calls) {
+                factories.add(factoryFor(call, inputRowType, gs));
+            }
+            factoriesPerSet.add(factories);
+            Map<List<Object>, GroupState> m = new LinkedHashMap<>();
+            if (gs.isEmpty()) {
+                m.put(List.of(), new GroupState(factories));
+            }
+            groupMaps.add(m);
         }
         List<ValueVector> args = new ArrayList<>();
         while (input.hasNext()) {
@@ -84,10 +90,14 @@ public class MiniDbAggregate extends Aggregate implements MiniDbRel {
                 args.add(argVector(call, batch, ctx));
             }
             for (int row = 0; row < batch.getRowCount(); row++) {
-                List<Object> key = groupKey(batch, groupSet, row);
-                GroupState st = groups.computeIfAbsent(key, k -> new GroupState(factories));
-                for (int i = 0; i < calls.size(); i++) {
-                    st.accs.get(i).add(args.get(i), row);
+                for (int g = 0; g < groupSets.size(); g++) {
+                    List<Object> key = groupKey(batch, groupSets.get(g), row);
+                    List<AccumulatorFactory> facs = factoriesPerSet.get(g);
+                    GroupState st = groupMaps.get(g).computeIfAbsent(key,
+                            k -> new GroupState(facs));
+                    for (int i = 0; i < calls.size(); i++) {
+                        st.accs.get(i).add(args.get(i), row);
+                    }
                 }
             }
             for (ValueVector v : args) {
@@ -97,10 +107,17 @@ public class MiniDbAggregate extends Aggregate implements MiniDbRel {
             }
         }
         input.close();
-        if (groups.isEmpty()) {
+        boolean empty = true;
+        for (Map<List<Object>, GroupState> m : groupMaps) {
+            if (!m.isEmpty()) {
+                empty = false;
+                break;
+            }
+        }
+        if (empty) {
             return BatchIterator.empty();
         }
-        VectorSchemaRoot out = buildOutput(groups, ctx);
+        VectorSchemaRoot out = buildOutput(groupMaps, groupSets, ctx);
         boolean[] done = {false};
         return new BatchIterator() {
             @Override
@@ -195,29 +212,41 @@ public class MiniDbAggregate extends Aggregate implements MiniDbRel {
         return key;
     }
 
-    private VectorSchemaRoot buildOutput(Map<List<Object>, GroupState> groups, ExecContext ctx) {
+    private VectorSchemaRoot buildOutput(List<Map<List<Object>, GroupState>> groupMaps,
+                                         List<ImmutableBitSet> groupSets, ExecContext ctx) {
+        int groupCount = getGroupCount();
+        int total = 0;
+        for (Map<List<Object>, GroupState> m : groupMaps) {
+            total += m.size();
+        }
         List<FieldVector> vectors = new ArrayList<>();
         for (RelDataTypeField f : getRowType().getFieldList()) {
             vectors.add(ArrowTypes.field(f).createVector(ctx.allocator()));
         }
-        int total = groups.size();
         for (FieldVector v : vectors) {
             v.setInitialCapacity(total);
             v.allocateNew();
         }
         try {
             int row = 0;
-            for (Map.Entry<List<Object>, GroupState> e : groups.entrySet()) {
-                List<Object> key = e.getKey();
-                for (int g = 0; g < key.size(); g++) {
-                    RowVectors.writeObject(vectors.get(g), row, key.get(g));
+            for (int g = 0; g < groupSets.size(); g++) {
+                ImmutableBitSet gs = groupSets.get(g);
+                for (Map.Entry<List<Object>, GroupState> e : groupMaps.get(g).entrySet()) {
+                    List<Object> key = e.getKey();
+                    int keyIdx = 0;
+                    // 分组列:在 groupSet 里填值,不在的填 NULL(ROLLUP 汇总行)。
+                    for (int i = 0; i < groupCount; i++) {
+                        if (gs.get(i)) {
+                            RowVectors.writeObject(vectors.get(i), row, key.get(keyIdx++));
+                        }
+                    }
+                    int col = groupCount;
+                    List<Accumulator> accs = e.getValue().accs;
+                    for (int i = 0; i < accs.size(); i++) {
+                        accs.get(i).write(vectors.get(col + i), row);
+                    }
+                    row++;
                 }
-                int col = key.size();
-                List<Accumulator> accs = e.getValue().accs;
-                for (int i = 0; i < accs.size(); i++) {
-                    accs.get(i).write(vectors.get(col + i), row);
-                }
-                row++;
             }
             for (FieldVector v : vectors) {
                 v.setValueCount(total);
@@ -231,10 +260,16 @@ public class MiniDbAggregate extends Aggregate implements MiniDbRel {
         }
     }
 
-    private static AccumulatorFactory factoryFor(AggregateCall call, RelDataType inputRowType) {
+    private static AccumulatorFactory factoryFor(AggregateCall call, RelDataType inputRowType,
+                                                 ImmutableBitSet groupSet) {
         SqlKind kind = call.getAggregation().kind;
         boolean distinct = call.isDistinct();
         switch (kind) {
+            case GROUPING:
+                // GROUPING(col) 输出 1 若 col 不在当前 groupSet(被 ROLLUP 汇总),否则 0。
+                int bitPos = call.getArgList().get(0);
+                int gv = groupSet.get(bitPos) ? 0 : 1;
+                return () -> new GroupingAcc(gv);
             case COUNT:
                 return distinct ? () -> new DistinctAcc(kind, false) : CountAcc::new;
             case SUM:
@@ -308,6 +343,24 @@ public class MiniDbAggregate extends Aggregate implements MiniDbRel {
         void add(ValueVector v, int row);
 
         void write(FieldVector out, int row);
+    }
+
+    /** GROUPING() 聚合:输出常量 0/1(该分组列是否被 ROLLUP 汇总)。 */
+    private static final class GroupingAcc implements Accumulator {
+        private final long value;
+
+        GroupingAcc(long value) {
+            this.value = value;
+        }
+
+        @Override
+        public void add(ValueVector v, int row) {
+        }
+
+        @Override
+        public void write(FieldVector out, int row) {
+            writeLong(out, row, value);
+        }
     }
 
     @FunctionalInterface
