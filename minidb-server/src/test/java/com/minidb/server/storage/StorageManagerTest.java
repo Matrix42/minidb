@@ -194,4 +194,42 @@ class StorageManagerTest {
             storage2.close();
         }
     }
+
+    @Test
+    void alterTableRebuildsSimpleTable(@TempDir Path dir) {
+        MiniDbCatalog catalog = new MiniDbCatalog();
+        try (BufferAllocator allocator = new RootAllocator()) {
+            StorageManager storage = new StorageManager(catalog, allocator, dir);
+            SimpleTable table = storage.createTable(schema());
+            writeRow(table, 7, "hello");
+            TableSchema newSchema = new TableSchema("t", List.of(
+                    new ColumnMeta("id", ColumnType.INTEGER),
+                    new ColumnMeta("name", ColumnType.VARCHAR),
+                    new ColumnMeta("extra", ColumnType.INTEGER)));
+            storage.alterTable("public", "t", newSchema);
+            SimpleTable rebuilt = storage.getTable("public", "t");
+            assertEquals(3, rebuilt.schema().columns().size());
+            assertEquals(List.of(7), readIds(rebuilt));
+            storage.close();
+        }
+    }
+
+    @Test
+    void renameTableMovesDir(@TempDir Path dir) {
+        MiniDbCatalog catalog = new MiniDbCatalog();
+        try (BufferAllocator allocator = new RootAllocator()) {
+            StorageManager storage = new StorageManager(catalog, allocator, dir);
+            SimpleTable table = storage.createTable(schema());
+            writeRow(table, 7, "hello");
+            storage.renameTable("public", "t", "t2");
+            assertFalse(catalog.hasTable("public", "t"));
+            assertTrue(catalog.hasTable("public", "t2"));
+            assertTrue(Files.exists(dir.resolve("public").resolve("t2")));
+            assertFalse(Files.exists(dir.resolve("public").resolve("t")));
+            SimpleTable renamed = storage.getTable("public", "t2");
+            assertEquals("t2", renamed.schema().name());
+            assertEquals(List.of(7), readIds(renamed));
+            storage.close();
+        }
+    }
 }

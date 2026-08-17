@@ -135,6 +135,38 @@ public class StorageManager implements AutoCloseable {
         tableStorage.delete(schemaName, tableName);
     }
 
+    /** 替换一张表的 TableSchema 并重建目录句柄(数据 part 不动,由调用方负责重写)。 */
+    public void alterTable(String schemaName, String tableName, TableSchema newSchema) {
+        String sk = storageKey(schemaName, tableName);
+        if (tables.remove(sk) == null) {
+            throw new IllegalArgumentException("table not found: " + tableName);
+        }
+        catalog.alterTable(schemaName, tableName, newSchema);
+        tables.put(sk, new SimpleTable(newSchema, allocator,
+                tableStorage.tableDir(schemaName, tableName), formatFor(newSchema)));
+    }
+
+    /** 改表名:迁移表目录 + 替换 catalog + 重建目录句柄。 */
+    public void renameTable(String schemaName, String oldName, String newName) {
+        String oldKey = storageKey(schemaName, oldName);
+        if (tables.remove(oldKey) == null) {
+            throw new IllegalArgumentException("table not found: " + oldName);
+        }
+        catalog.renameTable(schemaName, oldName, newName);
+        Path oldDir = tableStorage.tableDir(schemaName, oldName);
+        Path newDir = tableStorage.tableDir(schemaName, newName);
+        try {
+            if (Files.exists(oldDir)) {
+                Files.move(oldDir, newDir);
+            }
+        } catch (IOException e) {
+            throw new UncheckedIOException("failed to rename table directory", e);
+        }
+        TableSchema newSchema = catalog.getTable(schemaName, newName);
+        tables.put(storageKey(schemaName, newName),
+                new SimpleTable(newSchema, allocator, newDir, formatFor(newSchema)));
+    }
+
     public void dropSchema(String schemaName) {
         String skPrefix = key(schemaName) + ".";
         List<String> toDrop = new ArrayList<>();
