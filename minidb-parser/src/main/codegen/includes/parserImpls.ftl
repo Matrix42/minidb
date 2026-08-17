@@ -558,3 +558,134 @@ SqlDrop SqlDropFunction(Span s, boolean replace) :
         return SqlDdlNodes.dropFunction(s.end(this), ifExists, id);
     }
 }
+
+/**
+ * Parses an {@code ALTER TABLE} statement. One statement carries exactly one
+ * operation (add/drop column, rename, alter type/not-null, add/drop constraint).
+ */
+SqlNode SqlAlterTable() :
+{
+    final Span s;
+    SqlIdentifier table;
+    SqlIdentifier column = null;
+    SqlIdentifier newColumn = null;
+    SqlIdentifier newTable = null;
+    SqlIdentifier constraintName = null;
+    SqlIdentifier refTable = null;
+    SqlDataTypeSpec dataType = null;
+    SqlNode defaultExpr = null;
+    SqlNodeList columns = null;
+    SqlNodeList refColumns = null;
+    Boolean nullable = null;
+    SqlKind constraintKind = null;
+    SqlAlterTable.AlterKind kind;
+}
+{
+    <ALTER> { s = span(); } <TABLE> table = CompoundIdentifier()
+    (
+        <ADD>
+        (
+            LOOKAHEAD(2) <COLUMN> column = SimpleIdentifier() dataType = DataType()
+                nullable = NullableOptDefaultTrue()
+                [ <DEFAULT_> defaultExpr = Literal() ]
+                { kind = SqlAlterTable.AlterKind.ADD_COLUMN; }
+        |
+            LOOKAHEAD(2) <CONSTRAINT> constraintName = SimpleIdentifier()
+            (
+                <PRIMARY> <KEY> columns = ParenthesizedSimpleIdentifierList()
+                    { constraintKind = SqlKind.PRIMARY_KEY; }
+            |
+                <UNIQUE> columns = ParenthesizedSimpleIdentifierList()
+                    { constraintKind = SqlKind.UNIQUE; }
+            |
+                <FOREIGN> <KEY> columns = ParenthesizedSimpleIdentifierList()
+                    <REFERENCES> refTable = CompoundIdentifier()
+                    [ refColumns = ParenthesizedSimpleIdentifierList() ]
+                    { constraintKind = SqlKind.OTHER; }
+            )
+            { kind = SqlAlterTable.AlterKind.ADD_CONSTRAINT; }
+        |
+            LOOKAHEAD(2) <PRIMARY> <KEY> columns = ParenthesizedSimpleIdentifierList()
+                { kind = SqlAlterTable.AlterKind.ADD_CONSTRAINT; constraintKind = SqlKind.PRIMARY_KEY; }
+        |
+            LOOKAHEAD(2) <UNIQUE> columns = ParenthesizedSimpleIdentifierList()
+                { kind = SqlAlterTable.AlterKind.ADD_CONSTRAINT; constraintKind = SqlKind.UNIQUE; }
+        |
+            <FOREIGN> <KEY> columns = ParenthesizedSimpleIdentifierList()
+                <REFERENCES> refTable = CompoundIdentifier()
+                [ refColumns = ParenthesizedSimpleIdentifierList() ]
+                { kind = SqlAlterTable.AlterKind.ADD_CONSTRAINT; constraintKind = SqlKind.OTHER; }
+        |
+            column = SimpleIdentifier() dataType = DataType()
+                nullable = NullableOptDefaultTrue()
+                [ <DEFAULT_> defaultExpr = Literal() ]
+                { kind = SqlAlterTable.AlterKind.ADD_COLUMN; }
+        )
+    |
+        <DROP>
+        (
+            LOOKAHEAD(2) <COLUMN> column = SimpleIdentifier()
+                { kind = SqlAlterTable.AlterKind.DROP_COLUMN; }
+        |
+            LOOKAHEAD(2) <CONSTRAINT> constraintName = SimpleIdentifier()
+                { kind = SqlAlterTable.AlterKind.DROP_CONSTRAINT; }
+        |
+            <PRIMARY> <KEY>
+                { kind = SqlAlterTable.AlterKind.DROP_CONSTRAINT; constraintKind = SqlKind.PRIMARY_KEY; }
+        |
+            column = SimpleIdentifier()
+                { kind = SqlAlterTable.AlterKind.DROP_COLUMN; }
+        )
+    |
+        <RENAME>
+        (
+            LOOKAHEAD(2) <TO> newTable = CompoundIdentifier()
+                { kind = SqlAlterTable.AlterKind.RENAME_TABLE; }
+        |
+            LOOKAHEAD(2) <COLUMN> column = SimpleIdentifier() <TO> newColumn = SimpleIdentifier()
+                { kind = SqlAlterTable.AlterKind.RENAME_COLUMN; }
+        |
+            column = SimpleIdentifier() <TO> newColumn = SimpleIdentifier()
+                { kind = SqlAlterTable.AlterKind.RENAME_COLUMN; }
+        )
+    |
+        <ALTER>
+        (
+            LOOKAHEAD(2) <COLUMN> column = SimpleIdentifier()
+            (
+                <SET>
+                (
+                    <DATA> <TYPE> dataType = DataType()
+                        { kind = SqlAlterTable.AlterKind.ALTER_TYPE; }
+                |
+                    <NOT> <NULL>
+                        { kind = SqlAlterTable.AlterKind.SET_NOT_NULL; nullable = false; }
+                )
+            |
+                <DROP> <NOT> <NULL>
+                    { kind = SqlAlterTable.AlterKind.DROP_NOT_NULL; nullable = true; }
+            )
+        |
+            column = SimpleIdentifier()
+            (
+                <SET>
+                (
+                    <DATA> <TYPE> dataType = DataType()
+                        { kind = SqlAlterTable.AlterKind.ALTER_TYPE; }
+                |
+                    <NOT> <NULL>
+                        { kind = SqlAlterTable.AlterKind.SET_NOT_NULL; nullable = false; }
+                )
+            |
+                <DROP> <NOT> <NULL>
+                    { kind = SqlAlterTable.AlterKind.DROP_NOT_NULL; nullable = true; }
+            )
+        )
+    )
+    {
+        return new SqlAlterTable(s.end(this), kind, table, column, newColumn, newTable,
+                dataType, defaultExpr, nullable, constraintName, constraintKind,
+                columns, refTable, refColumns);
+    }
+}
+

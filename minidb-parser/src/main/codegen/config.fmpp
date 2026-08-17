@@ -26,6 +26,7 @@ data: {
 
     # List of import statements.
     imports: [
+      "com.minidb.parser.ddl.SqlAlterTable"
       "com.minidb.parser.ddl.SqlForeignKeyConstraint"
       "com.minidb.parser.ddl.SqlTableOptions"
       "org.apache.calcite.schema.ColumnStrategy"
@@ -46,6 +47,7 @@ data: {
       "JAR"
       "FILE"
       "ARCHIVE"
+      "RENAME"
     ]
 
     # List of non-reserved keywords to add;
@@ -59,6 +61,13 @@ data: {
       "JAR"
       "FILE"
       "ARCHIVE"
+      "RENAME"
+    ]
+
+    # List of methods for parsing custom SQL statements.
+    # Return type of method implementation should be 'SqlNode'.
+    statementParserMethods: [
+      "SqlAlterTable()"
     ]
 
     # List of methods for parsing extensions to "CREATE [OR REPLACE]" calls.
