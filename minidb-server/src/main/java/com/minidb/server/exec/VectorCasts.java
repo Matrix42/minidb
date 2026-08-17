@@ -39,176 +39,187 @@ public final class VectorCasts {
     public static FieldVector cast(ValueVector src, ColumnType target, int precision,
                                    int scale, BufferAllocator allocator) {
         int rows = src.getValueCount();
-        switch (target) {
-            case SMALLINT: {
-                SmallIntVector out = new SmallIntVector("cast", allocator);
-                out.allocateNew(rows);
-                for (int i = 0; i < rows; i++) {
-                    if (src.isNull(i)) {
-                        out.setNull(i);
-                    } else {
-                        out.setSafe(i, (short) asLong(src, i));
+        FieldVector out = null;
+        try {
+            switch (target) {
+                case SMALLINT: {
+                    SmallIntVector v = new SmallIntVector("cast", allocator);
+                    out = v;
+                    v.allocateNew(rows);
+                    for (int i = 0; i < rows; i++) {
+                        if (src.isNull(i)) {
+                            v.setNull(i);
+                        } else {
+                            v.setSafe(i, (short) asLong(src, i));
+                        }
                     }
+                    break;
                 }
-                out.setValueCount(rows);
-                return out;
-            }
-            case INTEGER: {
-                IntVector out = new IntVector("cast", allocator);
-                out.allocateNew(rows);
-                for (int i = 0; i < rows; i++) {
-                    if (src.isNull(i)) {
-                        out.setNull(i);
-                    } else {
-                        out.setSafe(i, (int) asLong(src, i));
+                case INTEGER: {
+                    IntVector v = new IntVector("cast", allocator);
+                    out = v;
+                    v.allocateNew(rows);
+                    for (int i = 0; i < rows; i++) {
+                        if (src.isNull(i)) {
+                            v.setNull(i);
+                        } else {
+                            v.setSafe(i, (int) asLong(src, i));
+                        }
                     }
+                    break;
                 }
-                out.setValueCount(rows);
-                return out;
-            }
-            case BIGINT: {
-                BigIntVector out = new BigIntVector("cast", allocator);
-                out.allocateNew(rows);
-                for (int i = 0; i < rows; i++) {
-                    if (src.isNull(i)) {
-                        out.setNull(i);
-                    } else {
-                        out.setSafe(i, asLong(src, i));
+                case BIGINT: {
+                    BigIntVector v = new BigIntVector("cast", allocator);
+                    out = v;
+                    v.allocateNew(rows);
+                    for (int i = 0; i < rows; i++) {
+                        if (src.isNull(i)) {
+                            v.setNull(i);
+                        } else {
+                            v.setSafe(i, asLong(src, i));
+                        }
                     }
+                    break;
                 }
-                out.setValueCount(rows);
-                return out;
-            }
-            case REAL:
-            case FLOAT: {
-                Float4Vector out = new Float4Vector("cast", allocator);
-                out.allocateNew(rows);
-                for (int i = 0; i < rows; i++) {
-                    if (src.isNull(i)) {
-                        out.setNull(i);
-                    } else {
-                        out.setSafe(i, (float) asDouble(src, i));
+                case REAL:
+                case FLOAT: {
+                    Float4Vector v = new Float4Vector("cast", allocator);
+                    out = v;
+                    v.allocateNew(rows);
+                    for (int i = 0; i < rows; i++) {
+                        if (src.isNull(i)) {
+                            v.setNull(i);
+                        } else {
+                            v.setSafe(i, (float) asDouble(src, i));
+                        }
                     }
+                    break;
                 }
-                out.setValueCount(rows);
-                return out;
-            }
-            case DOUBLE: {
-                Float8Vector out = new Float8Vector("cast", allocator);
-                out.allocateNew(rows);
-                for (int i = 0; i < rows; i++) {
-                    if (src.isNull(i)) {
-                        out.setNull(i);
-                    } else {
-                        out.setSafe(i, asDouble(src, i));
+                case DOUBLE: {
+                    Float8Vector v = new Float8Vector("cast", allocator);
+                    out = v;
+                    v.allocateNew(rows);
+                    for (int i = 0; i < rows; i++) {
+                        if (src.isNull(i)) {
+                            v.setNull(i);
+                        } else {
+                            v.setSafe(i, asDouble(src, i));
+                        }
                     }
+                    break;
                 }
-                out.setValueCount(rows);
-                return out;
-            }
-            case DECIMAL:
-            case NUMERIC: {
-                DecimalVector out = (DecimalVector) ArrowTypes.field(
-                        new ColumnMeta("cast", target, precision, scale)).createVector(allocator);
-                out.allocateNew(rows);
-                for (int i = 0; i < rows; i++) {
-                    if (src.isNull(i)) {
-                        out.setNull(i);
-                    } else {
-                        out.setSafe(i, Kernels.scaleTo(out, new BigDecimal(asString(src, i))));
+                case DECIMAL:
+                case NUMERIC: {
+                    DecimalVector v = (DecimalVector) ArrowTypes.field(
+                            new ColumnMeta("cast", target, precision, scale)).createVector(allocator);
+                    out = v;
+                    v.allocateNew(rows);
+                    for (int i = 0; i < rows; i++) {
+                        if (src.isNull(i)) {
+                            v.setNull(i);
+                        } else {
+                            v.setSafe(i, Kernels.scaleTo(v, new BigDecimal(asString(src, i))));
+                        }
                     }
+                    break;
                 }
-                out.setValueCount(rows);
-                return out;
-            }
-            case VARCHAR:
-            case CHAR:
-            case NCHAR:
-            case NVARCHAR: {
-                VarCharVector out = new VarCharVector("cast", allocator);
-                out.allocateNew();
-                for (int i = 0; i < rows; i++) {
-                    if (src.isNull(i)) {
-                        out.setNull(i);
-                    } else {
-                        out.setSafe(i, asString(src, i).getBytes(StandardCharsets.UTF_8));
+                case VARCHAR:
+                case CHAR:
+                case NCHAR:
+                case NVARCHAR: {
+                    VarCharVector v = new VarCharVector("cast", allocator);
+                    out = v;
+                    v.allocateNew();
+                    for (int i = 0; i < rows; i++) {
+                        if (src.isNull(i)) {
+                            v.setNull(i);
+                        } else {
+                            v.setSafe(i, asString(src, i).getBytes(StandardCharsets.UTF_8));
+                        }
                     }
+                    break;
                 }
-                out.setValueCount(rows);
-                return out;
-            }
-            case BOOLEAN: {
-                BitVector out = new BitVector("cast", allocator);
-                out.allocateNew(rows);
-                for (int i = 0; i < rows; i++) {
-                    if (src.isNull(i)) {
-                        out.setNull(i);
-                    } else {
-                        out.setSafe(i, asBoolean(src, i) ? 1 : 0);
+                case BOOLEAN: {
+                    BitVector v = new BitVector("cast", allocator);
+                    out = v;
+                    v.allocateNew(rows);
+                    for (int i = 0; i < rows; i++) {
+                        if (src.isNull(i)) {
+                            v.setNull(i);
+                        } else {
+                            v.setSafe(i, asBoolean(src, i) ? 1 : 0);
+                        }
                     }
+                    break;
                 }
-                out.setValueCount(rows);
-                return out;
-            }
-            case DATE: {
-                DateDayVector out = new DateDayVector("cast", allocator);
-                out.allocateNew(rows);
-                for (int i = 0; i < rows; i++) {
-                    if (src.isNull(i)) {
-                        out.setNull(i);
-                    } else if (src instanceof DateDayVector ddv) {
-                        out.setSafe(i, ddv.get(i));
-                    } else {
-                        out.setSafe(i, new DateString(asString(src, i)).getDaysSinceEpoch());
+                case DATE: {
+                    DateDayVector v = new DateDayVector("cast", allocator);
+                    out = v;
+                    v.allocateNew(rows);
+                    for (int i = 0; i < rows; i++) {
+                        if (src.isNull(i)) {
+                            v.setNull(i);
+                        } else if (src instanceof DateDayVector ddv) {
+                            v.setSafe(i, ddv.get(i));
+                        } else {
+                            v.setSafe(i, new DateString(asString(src, i)).getDaysSinceEpoch());
+                        }
                     }
+                    break;
                 }
-                out.setValueCount(rows);
-                return out;
-            }
-            case TIME: {
-                TimeMilliVector out = new TimeMilliVector("cast", allocator);
-                out.allocateNew(rows);
-                for (int i = 0; i < rows; i++) {
-                    if (src.isNull(i)) {
-                        out.setNull(i);
-                    } else {
-                        out.setSafe(i, (int) asLong(src, i));
+                case TIME: {
+                    TimeMilliVector v = new TimeMilliVector("cast", allocator);
+                    out = v;
+                    v.allocateNew(rows);
+                    for (int i = 0; i < rows; i++) {
+                        if (src.isNull(i)) {
+                            v.setNull(i);
+                        } else {
+                            v.setSafe(i, (int) asLong(src, i));
+                        }
                     }
+                    break;
                 }
-                out.setValueCount(rows);
-                return out;
-            }
-            case TIMESTAMP: {
-                TimeStampMilliVector out = new TimeStampMilliVector("cast", allocator);
-                out.allocateNew(rows);
-                for (int i = 0; i < rows; i++) {
-                    if (src.isNull(i)) {
-                        out.setNull(i);
-                    } else if (src instanceof TimeStampMilliVector tsv) {
-                        out.setSafe(i, tsv.get(i));
-                    } else {
-                        out.setSafe(i, new TimestampString(asString(src, i)).getMillisSinceEpoch());
+                case TIMESTAMP: {
+                    TimeStampMilliVector v = new TimeStampMilliVector("cast", allocator);
+                    out = v;
+                    v.allocateNew(rows);
+                    for (int i = 0; i < rows; i++) {
+                        if (src.isNull(i)) {
+                            v.setNull(i);
+                        } else if (src instanceof TimeStampMilliVector tsv) {
+                            v.setSafe(i, tsv.get(i));
+                        } else {
+                            v.setSafe(i, new TimestampString(asString(src, i)).getMillisSinceEpoch());
+                        }
                     }
+                    break;
                 }
-                out.setValueCount(rows);
-                return out;
-            }
-            case BINARY:
-            case VARBINARY: {
-                VarBinaryVector out = new VarBinaryVector("cast", allocator);
-                out.allocateNew();
-                for (int i = 0; i < rows; i++) {
-                    if (src.isNull(i)) {
-                        out.setNull(i);
-                    } else {
-                        out.setSafe(i, asString(src, i).getBytes(StandardCharsets.UTF_8));
+                case BINARY:
+                case VARBINARY: {
+                    VarBinaryVector v = new VarBinaryVector("cast", allocator);
+                    out = v;
+                    v.allocateNew();
+                    for (int i = 0; i < rows; i++) {
+                        if (src.isNull(i)) {
+                            v.setNull(i);
+                        } else {
+                            v.setSafe(i, asString(src, i).getBytes(StandardCharsets.UTF_8));
+                        }
                     }
+                    break;
                 }
-                out.setValueCount(rows);
-                return out;
+                default:
+                    throw new UnsupportedOperationException("unsupported CAST target: " + target);
             }
-            default:
-                throw new UnsupportedOperationException("unsupported CAST target: " + target);
+            out.setValueCount(rows);
+            return out;
+        } catch (RuntimeException e) {
+            // 转换中途失败(如 'abc'→INT)时释放已分配的 out,避免 Arrow 内存泄漏。
+            if (out != null) {
+                out.close();
+            }
+            throw e;
         }
     }
 
