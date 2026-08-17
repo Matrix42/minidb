@@ -1,6 +1,8 @@
 package com.minidb.server.exec;
 
 import com.minidb.storage.common.ArrowTypes;
+import com.minidb.storage.common.ColumnMeta;
+import com.minidb.storage.common.ColumnType;
 import com.minidb.server.exec.functions.BuiltInFunctions;
 import com.minidb.server.exec.functions.Function;
 import com.minidb.server.exec.functions.FunctionRegistry;
@@ -547,178 +549,18 @@ public class RexInterpreter {
     private ValueVector evalCast(RexCall call, VectorSchemaRoot input) {
         ValueVector v = eval(call.getOperands().get(0), input);
         try {
-            SqlTypeName target = call.getType().getSqlTypeName();
-            int rows = input.getRowCount();
-            switch (target) {
-                case SMALLINT: {
-                    SmallIntVector out = new SmallIntVector("cast", allocator);
-                    out.allocateNew(rows);
-                    for (int i = 0; i < rows; i++) {
-                        if (v.isNull(i)) {
-                            out.setNull(i);
-                        } else {
-                            out.setSafe(i, (short) asLong(v, i));
-                        }
-                    }
-                    out.setValueCount(rows);
-                    return out;
+            ColumnType target = ArrowTypes.fromSqlTypeName(call.getType().getSqlTypeName().getName());
+            int precision = ColumnMeta.PRECISION_UNSET;
+            int scale = ColumnMeta.SCALE_UNSET;
+            if (target == ColumnType.DECIMAL || target == ColumnType.NUMERIC) {
+                if (call.getType().getPrecision() >= 0) {
+                    precision = call.getType().getPrecision();
                 }
-                case INTEGER: {
-                    IntVector out = new IntVector("cast", allocator);
-                    out.allocateNew(rows);
-                    for (int i = 0; i < rows; i++) {
-                        if (v.isNull(i)) {
-                            out.setNull(i);
-                        } else {
-                            out.setSafe(i, (int) asLong(v, i));
-                        }
-                    }
-                    out.setValueCount(rows);
-                    return out;
+                if (call.getType().getScale() >= 0) {
+                    scale = call.getType().getScale();
                 }
-                case BIGINT: {
-                    BigIntVector out = new BigIntVector("cast", allocator);
-                    out.allocateNew(rows);
-                    for (int i = 0; i < rows; i++) {
-                        if (v.isNull(i)) {
-                            out.setNull(i);
-                        } else {
-                            out.setSafe(i, asLong(v, i));
-                        }
-                    }
-                    out.setValueCount(rows);
-                    return out;
-                }
-                case REAL:
-                case FLOAT: {
-                    Float4Vector out = new Float4Vector("cast", allocator);
-                    out.allocateNew(rows);
-                    for (int i = 0; i < rows; i++) {
-                        if (v.isNull(i)) {
-                            out.setNull(i);
-                        } else {
-                            out.setSafe(i, (float) asDouble(v, i));
-                        }
-                    }
-                    out.setValueCount(rows);
-                    return out;
-                }
-                case DOUBLE: {
-                    Float8Vector out = new Float8Vector("cast", allocator);
-                    out.allocateNew(rows);
-                    for (int i = 0; i < rows; i++) {
-                        if (v.isNull(i)) {
-                            out.setNull(i);
-                        } else {
-                            out.setSafe(i, asDouble(v, i));
-                        }
-                    }
-                    out.setValueCount(rows);
-                    return out;
-                }
-                case DECIMAL: {
-                    // DecimalVector 构造需要 precision/scale,经 ArrowTypes.field 从 RelDataType 取。
-                    DecimalVector out = (DecimalVector) ArrowTypes.field(call.getType(), "cast")
-                            .createVector(allocator);
-                    out.allocateNew(rows);
-                    for (int i = 0; i < rows; i++) {
-                        if (v.isNull(i)) {
-                            out.setNull(i);
-                        } else {
-                            out.setSafe(i, Kernels.scaleTo(out, new BigDecimal(asString(v, i))));
-                        }
-                    }
-                    out.setValueCount(rows);
-                    return out;
-                }
-                case CHAR:
-                case VARCHAR: {
-                    VarCharVector out = new VarCharVector("cast", allocator);
-                    out.allocateNew();
-                    for (int i = 0; i < rows; i++) {
-                        if (v.isNull(i)) {
-                            out.setNull(i);
-                        } else {
-                            out.setSafe(i, asString(v, i).getBytes(StandardCharsets.UTF_8));
-                        }
-                    }
-                    out.setValueCount(rows);
-                    return out;
-                }
-                case BOOLEAN: {
-                    BitVector out = new BitVector("cast", allocator);
-                    out.allocateNew(rows);
-                    for (int i = 0; i < rows; i++) {
-                        if (v.isNull(i)) {
-                            out.setNull(i);
-                        } else {
-                            out.setSafe(i, asBoolean(v, i) ? 1 : 0);
-                        }
-                    }
-                    out.setValueCount(rows);
-                    return out;
-                }
-                case DATE: {
-                    DateDayVector out = new DateDayVector("cast", allocator);
-                    out.allocateNew(rows);
-                    for (int i = 0; i < rows; i++) {
-                        if (v.isNull(i)) {
-                            out.setNull(i);
-                        } else if (v instanceof DateDayVector ddv) {
-                            out.setSafe(i, ddv.get(i));
-                        } else {
-                            out.setSafe(i, new DateString(asString(v, i)).getDaysSinceEpoch());
-                        }
-                    }
-                    out.setValueCount(rows);
-                    return out;
-                }
-                case TIME: {
-                    TimeMilliVector out = new TimeMilliVector("cast", allocator);
-                    out.allocateNew(rows);
-                    for (int i = 0; i < rows; i++) {
-                        if (v.isNull(i)) {
-                            out.setNull(i);
-                        } else {
-                            out.setSafe(i, (int) asLong(v, i));
-                        }
-                    }
-                    out.setValueCount(rows);
-                    return out;
-                }
-                case TIMESTAMP: {
-                    TimeStampMilliVector out = new TimeStampMilliVector("cast", allocator);
-                    out.allocateNew(rows);
-                    for (int i = 0; i < rows; i++) {
-                        if (v.isNull(i)) {
-                            out.setNull(i);
-                        } else if (v instanceof TimeStampMilliVector tsv) {
-                            out.setSafe(i, tsv.get(i));
-                        } else {
-                            out.setSafe(i, new TimestampString(asString(v, i)).getMillisSinceEpoch());
-                        }
-                    }
-                    out.setValueCount(rows);
-                    return out;
-                }
-                case BINARY:
-                case VARBINARY: {
-                    VarBinaryVector out = new VarBinaryVector("cast", allocator);
-                    out.allocateNew();
-                    for (int i = 0; i < rows; i++) {
-                        if (v.isNull(i)) {
-                            out.setNull(i);
-                        } else {
-                            out.setSafe(i, asString(v, i).getBytes(StandardCharsets.UTF_8));
-                        }
-                    }
-                    out.setValueCount(rows);
-                    return out;
-                }
-                default:
-                    throw new UnsupportedOperationException(
-                            "unsupported CAST target: " + target);
             }
+            return VectorCasts.cast(v, target, precision, scale, allocator);
         } finally {
             v.close();
         }
@@ -939,117 +781,5 @@ public class RexInterpreter {
         }
         throw new UnsupportedOperationException(
                 "unsupported binary literal value: " + raw.getClass());
-    }
-
-    static long asLong(ValueVector v, int i) {
-        if (v instanceof SmallIntVector sv) {
-            return sv.get(i);
-        }
-        if (v instanceof IntVector iv) {
-            return iv.get(i);
-        }
-        if (v instanceof BigIntVector bv) {
-            return bv.get(i);
-        }
-        if (v instanceof Float4Vector fv) {
-            return (long) fv.get(i);
-        }
-        if (v instanceof Float8Vector fv) {
-            return (long) fv.get(i);
-        }
-        if (v instanceof DecimalVector dv) {
-            return dv.getObject(i).longValue();
-        }
-        if (v instanceof BitVector bv) {
-            return bv.get(i);
-        }
-        if (v instanceof VarCharVector vv) {
-            return Long.parseLong(new String(vv.get(i), StandardCharsets.UTF_8).trim());
-        }
-        throw new IllegalArgumentException("not a numeric vector: " + v.getClass());
-    }
-
-    static double asDouble(ValueVector v, int i) {
-        if (v instanceof SmallIntVector sv) {
-            return sv.get(i);
-        }
-        if (v instanceof IntVector iv) {
-            return iv.get(i);
-        }
-        if (v instanceof BigIntVector bv) {
-            return bv.get(i);
-        }
-        if (v instanceof Float4Vector fv) {
-            return fv.get(i);
-        }
-        if (v instanceof Float8Vector fv) {
-            return fv.get(i);
-        }
-        if (v instanceof DecimalVector dv) {
-            return dv.getObject(i).doubleValue();
-        }
-        if (v instanceof BitVector bv) {
-            return bv.get(i);
-        }
-        if (v instanceof VarCharVector vv) {
-            return Double.parseDouble(new String(vv.get(i), StandardCharsets.UTF_8).trim());
-        }
-        throw new IllegalArgumentException("not a numeric vector: " + v.getClass());
-    }
-
-    private static String asString(ValueVector v, int i) {
-        if (v instanceof VarCharVector vv) {
-            return new String(vv.get(i), StandardCharsets.UTF_8);
-        }
-        if (v instanceof SmallIntVector sv) {
-            return Short.toString(sv.get(i));
-        }
-        if (v instanceof IntVector iv) {
-            return Integer.toString(iv.get(i));
-        }
-        if (v instanceof BigIntVector bv) {
-            return Long.toString(bv.get(i));
-        }
-        if (v instanceof Float4Vector fv) {
-            return Float.toString(fv.get(i));
-        }
-        if (v instanceof Float8Vector fv) {
-            return Double.toString(fv.get(i));
-        }
-        if (v instanceof DecimalVector dv) {
-            return dv.getObject(i).toPlainString();
-        }
-        if (v instanceof BitVector bv) {
-            return bv.get(i) == 1 ? "true" : "false";
-        }
-        throw new IllegalArgumentException("cannot cast to string: " + v.getClass());
-    }
-
-    private static boolean asBoolean(ValueVector v, int i) {
-        if (v instanceof BitVector bv) {
-            return bv.get(i) == 1;
-        }
-        if (v instanceof SmallIntVector sv) {
-            return sv.get(i) != 0;
-        }
-        if (v instanceof IntVector iv) {
-            return iv.get(i) != 0;
-        }
-        if (v instanceof BigIntVector bv) {
-            return bv.get(i) != 0;
-        }
-        if (v instanceof Float4Vector fv) {
-            return fv.get(i) != 0;
-        }
-        if (v instanceof Float8Vector fv) {
-            return fv.get(i) != 0;
-        }
-        if (v instanceof DecimalVector dv) {
-            return dv.getObject(i).signum() != 0;
-        }
-        if (v instanceof VarCharVector vv) {
-            return Boolean.parseBoolean(new String(vv.get(i), StandardCharsets.UTF_8).trim());
-        }
-        throw new IllegalArgumentException("cannot cast to boolean: " + v.getClass());
     }
 }
