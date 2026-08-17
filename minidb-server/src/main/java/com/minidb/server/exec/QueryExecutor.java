@@ -1,6 +1,7 @@
 package com.minidb.server.exec;
 import com.minidb.storage.common.BatchIterator;
 
+import com.minidb.parser.ddl.SqlAlterTable;
 import com.minidb.parser.ddl.SqlForeignKeyConstraint;
 import com.minidb.parser.ddl.SqlTableOptions;
 import com.minidb.server.calcite.CalciteContext;
@@ -162,6 +163,9 @@ public class QueryExecutor {
         }
         if (ddl instanceof SqlTruncateTable truncate) {
             return handleTruncate(truncate, currentSchema);
+        }
+        if (ddl instanceof SqlAlterTable alter) {
+            return new AlterTableHandler(storage, allocator).handle(alter, currentSchema);
         }
         throw new IllegalArgumentException("unsupported DDL: " + ddl.getKind());
     }
