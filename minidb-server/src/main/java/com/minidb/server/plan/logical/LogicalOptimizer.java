@@ -20,7 +20,9 @@ public final class LogicalOptimizer {
         programBuilder.addRuleCollection(MiniDbLogicalRules.HEP);
         HepPlanner hepPlanner = new HepPlanner(programBuilder.build());
         hepPlanner.setRoot(decorrelated);
-        return hepPlanner.findBestExp();
+        RelNode optimized = hepPlanner.findBestExp();
+        // 重排 INNER join 链,消除 FROM 顺序导致的交叉连接(见 JoinReorderer)。
+        return JoinReorderer.reorder(optimized);
     }
 
     /**
