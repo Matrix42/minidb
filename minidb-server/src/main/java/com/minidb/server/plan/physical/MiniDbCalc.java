@@ -112,7 +112,7 @@ public class MiniDbCalc extends Calc implements MiniDbRel {
         }
         List<List<Object>> windowCols = new ArrayList<>();
         for (RexOver over : overs) {
-            windowCols.add(WindowFunctions.computeOver(over, rows));
+            windowCols.add(WindowFunctions.computeOver(over, rows, ctx));
         }
 
         VectorSchemaRoot joined = buildWindowBatch(rows, windowCols, inputCols, overs, ctx);

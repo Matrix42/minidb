@@ -48,6 +48,7 @@ import org.apache.calcite.sql.SqlKind;
 import org.apache.calcite.sql.fun.SqlTrimFunction;
 import org.apache.calcite.sql.type.SqlTypeName;
 import org.apache.calcite.util.DateString;
+import org.apache.calcite.util.NlsString;
 import org.apache.calcite.util.Sarg;
 import org.apache.calcite.util.TimestampString;
 import com.google.common.collect.RangeSet;
@@ -430,7 +431,13 @@ public class RexInterpreter {
                     continue;
                 }
                 Object value = RowVectors.readObject(v, i);
-                boolean contains = ((RangeSet) sarg.rangeSet).contains(toComparable(value));
+                Comparable<?> cv = toComparable(value);
+                // Calcite 的 Sarg 字符串边界是 NlsString,而列值 readObject 返回 String;
+                // 统一成 NlsString 再比较,否则 RangeSet.contains 内部 cast 失败。
+                if (cv instanceof String s) {
+                    cv = new NlsString(s, null, null);
+                }
+                boolean contains = ((RangeSet) sarg.rangeSet).contains(cv);
                 out.setSafe(i, contains ? 1 : 0);
             }
             out.setValueCount(rows);
@@ -454,6 +461,9 @@ public class RexInterpreter {
         }
         if (value instanceof Float || value instanceof Double) {
             return BigDecimal.valueOf(((Number) value).doubleValue());
+        }
+        if (value instanceof NlsString ns) {
+            return ns.getValue();
         }
         return (Comparable<?>) value;
     }

@@ -45,41 +45,66 @@ public final class WindowFunctions {
     /** Computes the window value for every row of {@code rows}.
      *  The result is indexed by the ORIGINAL row position, so it lines up with
      *  the input rows regardless of how the window's ORDER BY reorders them. */
-    public static List<Object> computeOver(RexOver over, VectorSchemaRoot rows) {
+    public static List<Object> computeOver(RexOver over, VectorSchemaRoot rows, ExecContext ctx) {
         RexWindow window = over.getWindow();
-        List<Integer> partitionKeyCols = new ArrayList<>();
+        // partition key 求值:列引用直接取列,表达式(RexCall)用 interpreter 求值。
+        List<ValueVector> partVectors = new ArrayList<>();
+        List<ValueVector> computed = new ArrayList<>();
         for (RexNode key : window.partitionKeys) {
-            partitionKeyCols.add(((RexInputRef) key).getIndex());
-        }
-        int[] partKeyArr = new int[partitionKeyCols.size()];
-        for (int i = 0; i < partKeyArr.length; i++) {
-            partKeyArr[i] = partitionKeyCols.get(i);
-        }
-        Object[] result = new Object[rows.getRowCount()];
-        if (rows.getRowCount() == 0) {
-            return Arrays.asList(result);
-        }
-        int inputCols = rows.getFieldVectors().size();
-        // Group row indices by partition-key values (LinkedHashMap keeps first-seen order).
-        Map<ColumnKey, List<Integer>> partitions = new LinkedHashMap<>();
-        for (int rowIdx = 0; rowIdx < rows.getRowCount(); rowIdx++) {
-            ColumnKey partitionKey = new ColumnKey(rows, rowIdx, partKeyArr);
-            partitions.computeIfAbsent(partitionKey, k -> new ArrayList<>()).add(rowIdx);
-        }
-        SqlKind aggKind = over.getAggOperator().kind;
-        for (List<Integer> partition : partitions.values()) {
-            List<Integer> orderedRows = new ArrayList<>(partition);
-            orderedRows.sort(comparator(window, rows));
-            for (int rowPos = 0; rowPos < orderedRows.size(); rowPos++) {
-                int originalRowIdx = orderedRows.get(rowPos);
-                result[originalRowIdx] =
-                        computeRow(over, aggKind, window, orderedRows, rowPos, rows, inputCols);
+            if (key instanceof RexInputRef ref) {
+                partVectors.add(rows.getVector(ref.getIndex()));
+            } else {
+                ValueVector v = ctx.interpreter().eval(key, rows);
+                partVectors.add(v);
+                computed.add(v);
             }
         }
-        return Arrays.asList(result);
+        // order key 求值:列引用取列,表达式求值。
+        List<ValueVector> orderVectors = new ArrayList<>();
+        for (RexFieldCollation fc : window.orderKeys) {
+            if (fc.left instanceof RexInputRef ref) {
+                orderVectors.add(rows.getVector(ref.getIndex()));
+            } else {
+                ValueVector v = ctx.interpreter().eval(fc.left, rows);
+                orderVectors.add(v);
+                computed.add(v);
+            }
+        }
+        try {
+            Object[] result = new Object[rows.getRowCount()];
+            if (rows.getRowCount() == 0) {
+                return Arrays.asList(result);
+            }
+            int inputCols = rows.getFieldVectors().size();
+            // Group row indices by partition-key values (LinkedHashMap keeps first-seen order).
+            Map<List<Object>, List<Integer>> partitions = new LinkedHashMap<>();
+            for (int rowIdx = 0; rowIdx < rows.getRowCount(); rowIdx++) {
+                List<Object> pk = new ArrayList<>(partVectors.size());
+                for (ValueVector v : partVectors) {
+                    pk.add(RowVectors.readObject(v, rowIdx));
+                }
+                partitions.computeIfAbsent(pk, k -> new ArrayList<>()).add(rowIdx);
+            }
+            SqlKind aggKind = over.getAggOperator().kind;
+            for (List<Integer> partition : partitions.values()) {
+                List<Integer> orderedRows = new ArrayList<>(partition);
+                orderedRows.sort(comparator(window, orderVectors));
+                for (int rowPos = 0; rowPos < orderedRows.size(); rowPos++) {
+                    int originalRowIdx = orderedRows.get(rowPos);
+                    result[originalRowIdx] = computeRow(over, aggKind, window, orderVectors,
+                            orderedRows, rowPos, rows, inputCols);
+                }
+            }
+            return Arrays.asList(result);
+        } finally {
+            for (ValueVector v : computed) {
+                v.close();
+            }
+        }
     }
 
     private static Object computeRow(RexOver over, SqlKind aggKind, RexWindow window,
+                                     List<ValueVector> orderVectors,
                                      List<Integer> orderedRows, int position,
                                      VectorSchemaRoot rows, int inputCols) {
         switch (aggKind) {
@@ -90,7 +115,7 @@ public final class WindowFunctions {
                 int rank = 0;
                 int denseRank = 0;
                 for (int p = 0; p <= position; p++) {
-                    if (p == 0 || !peers(window, rows, orderedRows, p - 1, p)) {
+                    if (p == 0 || !peers(orderVectors, orderedRows, p - 1, p)) {
                         rank = p + 1;
                         denseRank++;
                     }
@@ -225,10 +250,9 @@ public final class WindowFunctions {
 
     /** True when the two rows at positions {@code posA}/{@code posB} are peers
      *  (equal on every window order key; nulls treated as equal to nulls only). */
-    private static boolean peers(RexWindow window, VectorSchemaRoot rows,
+    private static boolean peers(List<ValueVector> orderVectors,
                                  List<Integer> orderedRows, int posA, int posB) {
-        for (RexFieldCollation fieldCollation : window.orderKeys) {
-            ValueVector v = rows.getVector(((RexInputRef) fieldCollation.left).getIndex());
+        for (ValueVector v : orderVectors) {
             int rowA = orderedRows.get(posA);
             int rowB = orderedRows.get(posB);
             boolean nullA = v.isNull(rowA);
@@ -267,14 +291,14 @@ public final class WindowFunctions {
 
     /** Orders row indices by the window's ORDER BY keys; row index is only a
      *  stable tiebreaker among peers (preserves input order). */
-    private static Comparator<Integer> comparator(RexWindow window, VectorSchemaRoot rows) {
+    private static Comparator<Integer> comparator(RexWindow window, List<ValueVector> orderVectors) {
         Comparator<Integer> comparator = null;
-        for (RexFieldCollation fieldCollation : window.orderKeys) {
-            int fieldIndex = ((RexInputRef) fieldCollation.left).getIndex();
+        for (int k = 0; k < window.orderKeys.size(); k++) {
+            RexFieldCollation fieldCollation = window.orderKeys.get(k);
+            ValueVector v = orderVectors.get(k);
             boolean descending = fieldCollation.getDirection() == RelFieldCollation.Direction.DESCENDING
                     || fieldCollation.getDirection() == RelFieldCollation.Direction.STRICTLY_DESCENDING;
             Comparator<Integer> fieldComparator = (a, b) -> {
-                ValueVector v = rows.getVector(fieldIndex);
                 boolean nullA = v.isNull(a);
                 boolean nullB = v.isNull(b);
                 if (nullA || nullB) {

@@ -85,7 +85,7 @@ public class MiniDbProject extends Project implements MiniDbRel {
         }
         List<List<Object>> windowColumns = new ArrayList<>();
         for (RexOver over : windowOvers) {
-            windowColumns.add(WindowFunctions.computeOver(over, rows));
+            windowColumns.add(WindowFunctions.computeOver(over, rows, ctx));
         }
         VectorSchemaRoot windowBatch = buildWindowBatch(rows, windowColumns, inputCols, windowOvers, ctx);
         try {
