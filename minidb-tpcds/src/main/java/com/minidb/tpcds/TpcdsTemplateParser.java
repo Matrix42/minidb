@@ -75,8 +75,11 @@ public class TpcdsTemplateParser {
                 sql.append(line).append('\n');
             }
         }
+        String text = replaceSubstitutions(sql.toString(), vars, queryNumber);
+        // TPC-DS 的 `date + N days` 是 interval 简写,转成 Calcite 的 `interval 'N' day`。
+        text = text.replaceAll("(\\d+) days", "interval '$1' day");
         // 模板里的 ';' 是语句分隔符,Calcite 的 parseStmt 不接受分号,去掉。
-        return replaceSubstitutions(sql.toString(), vars, queryNumber).replace(";", "");
+        return text.replace(";", "");
     }
 
     private void parseDefine(String line, Map<String, Value> vars, double scale) {
