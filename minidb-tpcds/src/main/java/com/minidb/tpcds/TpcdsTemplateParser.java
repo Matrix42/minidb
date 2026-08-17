@@ -75,7 +75,8 @@ public class TpcdsTemplateParser {
                 sql.append(line).append('\n');
             }
         }
-        return replaceSubstitutions(sql.toString(), vars, queryNumber);
+        // 模板里的 ';' 是语句分隔符,Calcite 的 parseStmt 不接受分号,去掉。
+        return replaceSubstitutions(sql.toString(), vars, queryNumber).replace(";", "");
     }
 
     private void parseDefine(String line, Map<String, Value> vars, double scale) {

@@ -35,13 +35,22 @@ public class TpcdsBenchmarkRunner {
                 results.add(runOne(s, e.getKey(), e.getValue()));
             }
         } finally {
-            server.close();
+            try {
+                server.close();
+            } catch (Exception e) {
+                // 查询执行可能残留未释放的 Arrow 批(MiniDbServer 既有行为),close 时
+                // 触发 allocator 泄漏检测。基准测试不因此中断,记录警告后继续写结果。
+                System.err.println("server close warning: " + e.getMessage());
+            }
         }
 
         Map<String, Object> out = new LinkedHashMap<>();
         out.put("scale", scale);
         out.put("timestamp", Instant.now().toString());
         out.put("queries", results);
+        if (outputJson.getParent() != null) {
+            Files.createDirectories(outputJson.getParent());
+        }
         Files.writeString(outputJson,
                 new ObjectMapper().writerWithDefaultPrettyPrinter().writeValueAsString(out));
     }
