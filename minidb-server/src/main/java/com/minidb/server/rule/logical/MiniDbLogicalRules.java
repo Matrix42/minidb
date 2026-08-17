@@ -28,6 +28,10 @@ public final class MiniDbLogicalRules {
      *  注意:不含 ProjectRemoveRule / CalcRemoveRule —— 两者按「索引恒等」判 trivial,会删掉改名节点
      *  (SELECT a.id AS aid),丢失 JDBC 可见的列别名。 */
     public static final List<RelOptRule> HEP = List.of(
+            // 先因子化 Filter/Join 条件里的 OR(提取公共等值项到顶层 AND),否则等值键
+            // 埋在 OR 里,JoinInfo 抽不出、退化成 NestedLoopJoin 笛卡尔积(query13)。
+            new FilterPullFactorsRule(),
+            new JoinPullFactorsRule(),
             // 常量折叠 + 条件简化(依赖 RexExecutor,见 Planner)
             CoreRules.FILTER_REDUCE_EXPRESSIONS,
             CoreRules.PROJECT_REDUCE_EXPRESSIONS,
