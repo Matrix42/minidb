@@ -12,6 +12,7 @@ import org.apache.arrow.memory.RootAllocator;
 import org.apache.arrow.vector.BigIntVector;
 import org.apache.arrow.vector.DecimalVector;
 import org.apache.arrow.vector.Float4Vector;
+import org.apache.arrow.vector.Float8Vector;
 import org.apache.arrow.vector.SmallIntVector;
 import org.apache.arrow.vector.ValueVector;
 import org.apache.arrow.vector.VectorSchemaRoot;
@@ -125,6 +126,53 @@ class MiniDbAggregateTest {
                 "expected DecimalVector for SUM(DISTINCT), got " + s.getClass().getSimpleName());
         assertEquals(0, new BigDecimal("31.00").compareTo((BigDecimal) s.getObject(0)));
         root.close();
+    }
+
+    @Test
+    void stddevAndVarDouble() {
+        executor.execute("CREATE TABLE t (x DOUBLE)");
+        executor.execute("INSERT INTO t VALUES (1.0), (2.0), (3.0)");
+        QueryResult r = executor.execute(
+                "SELECT STDDEV_SAMP(x) AS ss, STDDEV_POP(x) AS sp,"
+                        + " VAR_SAMP(x) AS vs, VAR_POP(x) AS vp FROM t");
+        VectorSchemaRoot root = rows(r);
+        try {
+            // 样本标准差 = sqrt(((1-2)^2+(2-2)^2+(3-2)^2)/2) = sqrt(1) = 1。
+            assertEquals(1.0, ((Float8Vector) root.getVector("ss")).get(0), 1e-9);
+            // 总体标准差 = sqrt(2/3)。
+            assertEquals(Math.sqrt(2.0 / 3.0),
+                    ((Float8Vector) root.getVector("sp")).get(0), 1e-9);
+            assertEquals(1.0, ((Float8Vector) root.getVector("vs")).get(0), 1e-9);
+            assertEquals(2.0 / 3.0, ((Float8Vector) root.getVector("vp")).get(0), 1e-9);
+        } finally {
+            root.close();
+        }
+    }
+
+    @Test
+    void stddevSampSingleRowIsNull() {
+        executor.execute("CREATE TABLE t (x INTEGER)");
+        executor.execute("INSERT INTO t VALUES (42)");
+        QueryResult r = executor.execute("SELECT STDDEV_SAMP(x) AS ss FROM t");
+        VectorSchemaRoot root = rows(r);
+        try {
+            // n-1 = 0,样本标准差未定义,返回 NULL。
+            assertTrue(root.getVector("ss").isNull(0));
+        } finally {
+            root.close();
+        }
+    }
+
+    @Test
+    void stddevEmptyTableIsNull() {
+        executor.execute("CREATE TABLE t (x INTEGER)");
+        QueryResult r = executor.execute("SELECT STDDEV_POP(x) AS sp FROM t");
+        VectorSchemaRoot root = rows(r);
+        try {
+            assertTrue(root.getVector("sp").isNull(0));
+        } finally {
+            root.close();
+        }
     }
 
     private long countOf(QueryResult r) {

@@ -293,6 +293,14 @@ public class MiniDbAggregate extends Aggregate implements MiniDbRel {
             case SINGLE_VALUE:
                 // 去相关后的标量子查询:每分组应恰好一个值,这里取 MIN 近似(基准测耗时)。
                 return () -> new MinMaxAcc(true);
+            case STDDEV_SAMP:
+                return () -> new VarianceAcc(argDomain(call, inputRowType), true, true);
+            case STDDEV_POP:
+                return () -> new VarianceAcc(argDomain(call, inputRowType), false, true);
+            case VAR_SAMP:
+                return () -> new VarianceAcc(argDomain(call, inputRowType), true, false);
+            case VAR_POP:
+                return () -> new VarianceAcc(argDomain(call, inputRowType), false, false);
             default:
                 throw new UnsupportedOperationException("aggregate not supported: " + kind);
         }
@@ -610,6 +618,64 @@ public class MiniDbAggregate extends Aggregate implements MiniDbRel {
         }
     }
 
+    /** VAR_SAMP/VAR_POP/STDDEV_SAMP/STDDEV_POP:方差 = 均值平方差,在线累计 sum 与 sum²。
+     *  STDDEV 再取 sqrt;VAR 直接输出方差。输出恒 DOUBLE(Float8Vector)。 */
+    private static final class VarianceAcc implements Accumulator {
+        private final NumericDomain domain;
+        private final boolean sample; // true = 除以 n-1(VAR_SAMP/STDDEV_SAMP)
+        private final boolean sqrt;   // true = STDDEV,false = VAR
+        private long n;
+        private double sum;
+        private double sumSq;
+
+        VarianceAcc(NumericDomain domain, boolean sample, boolean sqrt) {
+            this.domain = domain;
+            this.sample = sample;
+            this.sqrt = sqrt;
+        }
+
+        @Override
+        public void add(ValueVector v, int row) {
+            if (v == null || v.isNull(row)) {
+                return;
+            }
+            double x = readAsDouble(v, row, domain);
+            n++;
+            sum += x;
+            sumSq += x * x;
+        }
+
+        @Override
+        public void write(FieldVector out, int row) {
+            // 空输入,或样本方差只有 1 个值(n-1=0),方差未定义 → NULL。
+            if (n == 0 || (sample && n == 1)) {
+                out.setNull(row);
+                return;
+            }
+            double denom = sample ? (n - 1) : n;
+            double variance = (sumSq - sum * sum / n) / denom;
+            // 浮点舍入可能产生极小的负方差,clamp 到 0 再开方。
+            if (variance < 0) {
+                variance = 0;
+            }
+            double result = sqrt ? Math.sqrt(variance) : variance;
+            // 输出类型与 AVG 同族(Calcite 用 SqlAvgAggFunction 推导 STDDEV/VAR),
+            // 与参数 domain 一致(INTEGER→INTEGER、DECIMAL→DECIMAL、DOUBLE→DOUBLE),
+            // 故按 domain 落向量(见 AvgAcc.write)。
+            switch (domain) {
+                case INTEGRAL:
+                    writeLong(out, row, (long) result);
+                    break;
+                case DECIMAL:
+                    writeDecimal(out, row, BigDecimal.valueOf(result));
+                    break;
+                case FLOATING:
+                    writeDouble(out, row, result);
+                    break;
+            }
+        }
+    }
+
     private static final class MinMaxAcc implements Accumulator {
         private final boolean min;
         private Object best;
@@ -704,6 +770,20 @@ public class MiniDbAggregate extends Aggregate implements MiniDbRel {
         }
         throw new UnsupportedOperationException(
                 "not a decimal vector: " + v.getMinorType());
+    }
+
+    /** Reads a numeric value as double for variance/stddev, regardless of domain. */
+    private static double readAsDouble(ValueVector v, int row, NumericDomain domain) {
+        switch (domain) {
+            case INTEGRAL:
+                return readLong(v, row);
+            case DECIMAL:
+                return readDecimal(v, row).doubleValue();
+            case FLOATING:
+                return readDouble(v, row);
+            default:
+                throw new UnsupportedOperationException("unexpected domain: " + domain);
+        }
     }
 
     @SuppressWarnings({"rawtypes", "unchecked"})
