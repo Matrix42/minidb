@@ -9,10 +9,15 @@ import java.util.stream.Collectors;
 import org.apache.arrow.vector.BigIntVector;
 import org.apache.arrow.vector.BitVector;
 import org.apache.arrow.vector.DateDayVector;
+import org.apache.arrow.vector.DecimalVector;
+import org.apache.arrow.vector.Float4Vector;
 import org.apache.arrow.vector.Float8Vector;
 import org.apache.arrow.vector.IntVector;
+import org.apache.arrow.vector.SmallIntVector;
+import org.apache.arrow.vector.TimeMilliVector;
 import org.apache.arrow.vector.TimeStampMilliVector;
 import org.apache.arrow.vector.ValueVector;
+import org.apache.arrow.vector.VarBinaryVector;
 import org.apache.arrow.vector.VarCharVector;
 
 public final class HistogramBuilder {
@@ -48,13 +53,18 @@ public final class HistogramBuilder {
 
     private static Comparable<?> read(ValueVector v, int i, ColumnType type) {
         return switch (type) {
+            case SMALLINT -> Integer.toString(((SmallIntVector) v).get(i));
             case INTEGER -> Integer.toString(((IntVector) v).get(i));
             case BIGINT -> Long.toString(((BigIntVector) v).get(i));
+            case REAL, FLOAT -> Float.toString(((Float4Vector) v).get(i));
             case DOUBLE -> Double.toString(((Float8Vector) v).get(i));
-            case VARCHAR -> new String(((VarCharVector) v).get(i));
+            case VARCHAR, CHAR, NCHAR, NVARCHAR -> new String(((VarCharVector) v).get(i));
             case BOOLEAN -> Boolean.toString(((BitVector) v).get(i) == 1);
             case DATE -> Integer.toString(((DateDayVector) v).get(i));
+            case TIME -> Integer.toString(((TimeMilliVector) v).get(i));
             case TIMESTAMP -> Long.toString(((TimeStampMilliVector) v).get(i));
+            case DECIMAL, NUMERIC -> ((DecimalVector) v).getObject(i).toPlainString();
+            case BINARY, VARBINARY -> new String(((VarBinaryVector) v).get(i));
             default -> throw new IllegalArgumentException("histogram: unsupported type " + type);
         };
     }

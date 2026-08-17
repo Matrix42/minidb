@@ -47,8 +47,50 @@ public final class BuiltInFunctions {
                 d -> d.setScale(0, RoundingMode.FLOOR));
         unaryDoubleOrDecimal(r, SqlStdOperatorTable.CEIL, Math::ceil,
                 d -> d.setScale(0, RoundingMode.CEILING));
-        unaryDoubleOrDecimal(r, SqlStdOperatorTable.ROUND, BuiltInFunctions::roundHalfAwayFromZero,
-                d -> d.setScale(0, RoundingMode.HALF_UP));
+        r.register(SqlStdOperatorTable.ROUND, roundFunction());
+    }
+
+    /** ROUND(x) 与 ROUND(x, n):单参取整、两参保留 n 位小数(0.5 远离零)。 */
+    private static Function roundFunction() {
+        return new Function(SqlStdOperatorTable.ROUND.getName(), List.of(
+                new Overload(List.of(Float8Vector.class), Float8Vector.class,
+                        (args, out) -> Kernels.fillUnaryDouble(
+                                (Float8Vector) args.get(0), (Float8Vector) out,
+                                BuiltInFunctions::roundHalfAwayFromZero)),
+                new Overload(List.of(DecimalVector.class), DecimalVector.class,
+                        (args, out) -> Kernels.fillUnaryDecimal(
+                                (DecimalVector) args.get(0), (DecimalVector) out,
+                                d -> d.setScale(0, RoundingMode.HALF_UP))),
+                new Overload(List.of(Float8Vector.class, IntVector.class), Float8Vector.class,
+                        (args, out) -> {
+                            Float8Vector in = (Float8Vector) args.get(0);
+                            IntVector n = (IntVector) args.get(1);
+                            Float8Vector o = (Float8Vector) out;
+                            for (int i = 0; i < in.getValueCount(); i++) {
+                                if (in.isNull(i) || n.isNull(i)) {
+                                    o.setNull(i);
+                                    continue;
+                                }
+                                double factor = Math.pow(10, n.get(i));
+                                double scaled = in.get(i) * factor;
+                                o.setSafe(i, Math.signum(scaled)
+                                        * Math.floor(Math.abs(scaled) + 0.5) / factor);
+                            }
+                        }),
+                new Overload(List.of(DecimalVector.class, IntVector.class), DecimalVector.class,
+                        (args, out) -> {
+                            DecimalVector in = (DecimalVector) args.get(0);
+                            IntVector n = (IntVector) args.get(1);
+                            DecimalVector o = (DecimalVector) out;
+                            for (int i = 0; i < in.getValueCount(); i++) {
+                                if (in.isNull(i) || n.isNull(i)) {
+                                    o.setNull(i);
+                                    continue;
+                                }
+                                o.setSafe(i, Kernels.scaleTo(o,
+                                        in.getObject(i).setScale(n.get(i), RoundingMode.HALF_UP)));
+                            }
+                        })));
     }
 
     /**
