@@ -214,12 +214,12 @@ public class MiniDbDatabaseMetaData implements DatabaseMetaData {
 
     @Override
     public boolean supportsAlterTableWithAddColumn() {
-        return false;
+        return true;
     }
 
     @Override
     public boolean supportsAlterTableWithDropColumn() {
-        return false;
+        return true;
     }
 
     @Override
