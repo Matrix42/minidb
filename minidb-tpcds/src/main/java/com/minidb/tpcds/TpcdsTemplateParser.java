@@ -79,8 +79,10 @@ public class TpcdsTemplateParser {
         // TPC-DS 的 `date + N days` 依赖 date arithmetic(MiniDB 内核暂不支持),基准测试只测
         // 耗时不校验结果,故删掉偏移量让查询可执行(日期范围略偏,不影响「能否执行」)。
         text = text.replaceAll("[+-]\\s*\\d+\\s+days", "");
-        // 模板里的 ';' 是语句分隔符,Calcite 的 parseStmt 不接受分号,去掉。
-        return text.replace(";", "");
+        // 模板里部分查询(query14/23/24/39)含两个独立语句(第二个是变体),截断到第一个分号
+        // 只保留首个;单语句查询的分号也一并去掉(Calcite 不接受分号)。
+        int semi = text.indexOf(';');
+        return semi >= 0 ? text.substring(0, semi) : text;
     }
 
     private void parseDefine(String line, Map<String, Value> vars, double scale) {

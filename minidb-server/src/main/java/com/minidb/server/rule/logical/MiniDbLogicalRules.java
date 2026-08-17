@@ -48,7 +48,8 @@ public final class MiniDbLogicalRules {
             FilterSortTransposeRule.Config.DEFAULT.toRule(),
             SortProjectTransposeRule.Config.DEFAULT.toRule(),
             SortRemoveConstantKeysRule.Config.DEFAULT.toRule(),
-            SortRemoveDuplicateKeysRule.Config.DEFAULT.toRule(),
+            // SortRemoveDuplicateKeysRule 会查 RelMdFunctionalDependency,在含聚合的排序上触发
+            // Calcite 1.42 的 Mappings 越界 bug(query12/20/34/36),故禁用(仅失去排序去重优化)。
             SortRemoveRedundantRule.Config.DEFAULT.toRule(),
             // set op 化简
             UnionEliminatorRule.Config.DEFAULT.toRule());
