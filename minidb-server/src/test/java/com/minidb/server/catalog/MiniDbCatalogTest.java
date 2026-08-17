@@ -96,4 +96,26 @@ class MiniDbCatalogTest {
         assertEquals("other", schema.schemaName());
         assertEquals("t1", schema.name());
     }
+
+    @Test
+    void alterTableReplacesSchema() {
+        MiniDbCatalog catalog = new MiniDbCatalog();
+        catalog.createTable(table("t1"));
+        TableSchema newSchema = new TableSchema("public", "t1", List.of(
+                new ColumnMeta("id", ColumnType.INTEGER),
+                new ColumnMeta("name", ColumnType.VARCHAR),
+                new ColumnMeta("extra", ColumnType.INTEGER)));
+        catalog.alterTable("public", "t1", newSchema);
+        assertEquals(3, catalog.getTable("public", "t1").columns().size());
+    }
+
+    @Test
+    void renameTableMovesEntry() {
+        MiniDbCatalog catalog = new MiniDbCatalog();
+        catalog.createTable(table("t1"));
+        catalog.renameTable("public", "t1", "t2");
+        assertFalse(catalog.hasTable("public", "t1"));
+        assertTrue(catalog.hasTable("public", "t2"));
+        assertEquals("t2", catalog.getTable("public", "t2").name());
+    }
 }

@@ -140,6 +140,44 @@ public class MiniDbCatalog {
         notifyChange();
     }
 
+    /** 替换一张表的不可变 TableSchema(列/约束变更),保留原表名。 */
+    public void alterTable(String schemaName, String tableName, TableSchema newSchema) {
+        Map<String, TableSchema> tables = schemas.get(key(schemaName));
+        if (tables == null) {
+            throw new IllegalArgumentException("schema not found: " + schemaName);
+        }
+        if (tables.get(key(tableName)) == null) {
+            throw new IllegalArgumentException("table not found: " + tableName);
+        }
+        tables.put(key(tableName), newSchema);
+        notifyChange();
+    }
+
+    /** 改表名:新名不能与现有表/视图冲突,表结构原样保留。 */
+    public void renameTable(String schemaName, String oldName, String newName) {
+        Map<String, TableSchema> tables = schemas.get(key(schemaName));
+        if (tables == null) {
+            throw new IllegalArgumentException("schema not found: " + schemaName);
+        }
+        String oldKey = key(oldName);
+        TableSchema old = tables.get(oldKey);
+        if (old == null) {
+            throw new IllegalArgumentException("table not found: " + oldName);
+        }
+        String newKey = key(newName);
+        if (hasView(schemaName, newName)) {
+            throw new IllegalArgumentException("view already exists: " + newName);
+        }
+        if (tables.containsKey(newKey)) {
+            throw new IllegalArgumentException("table already exists: " + newName);
+        }
+        TableSchema renamed = new TableSchema(old.schemaName(), newName, old.columns(),
+                old.primaryKey(), old.uniqueKeys(), old.foreignKeys(), old.storageFormat());
+        tables.remove(oldKey);
+        tables.put(newKey, renamed);
+        notifyChange();
+    }
+
     public TableSchema getTable(String schemaName, String tableName) {
         Map<String, TableSchema> tables = schemas.get(key(schemaName));
         if (tables == null) {
