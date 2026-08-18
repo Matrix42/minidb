@@ -25,7 +25,10 @@ public final class MiniDbHashJoinRule extends ConverterRule {
     public RelNode convert(RelNode rel) {
         LogicalJoin join = (LogicalJoin) rel;
         JoinInfo info = JoinInfo.of(join.getLeft(), join.getRight(), join.getCondition());
-        if (!info.isEqui() || info.leftKeys.isEmpty()) {
+        // 只要抽得出至少一个等值键就用 HashJoin;残留(非等值)条件由 joinPairs 在
+        // 匹配对上述值(不再要求 isEqui,否则 query13/15 的 AND(等值键, OR 残留)退化成
+        // NestedLoopJoin 笛卡尔积)。
+        if (info.leftKeys.isEmpty()) {
             return null;
         }
         RelTraitSet traits = join.getTraitSet().replace(MiniDbConvention.INSTANCE);

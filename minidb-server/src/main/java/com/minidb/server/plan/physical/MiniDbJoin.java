@@ -183,6 +183,33 @@ public abstract class MiniDbJoin extends Join implements MiniDbRel {
         return false;
     }
 
+    /** 建一个 1 行 probe root,列结构 = join 输出的行类型(左列 + 右列),供评估残留条件。 */
+    protected final VectorSchemaRoot buildProbeRoot(ExecContext ctx) {
+        List<FieldVector> vectors = new ArrayList<>();
+        for (RelDataTypeField f : getRowType().getFieldList()) {
+            vectors.add(ArrowTypes.field(f).createVector(ctx.allocator()));
+        }
+        for (FieldVector v : vectors) {
+            v.setInitialCapacity(1);
+            v.allocateNew();
+        }
+        return VectorSchemaRoot.of(vectors.toArray(new FieldVector[0]));
+    }
+
+    /** 把 left/right 的某行拷进 1 行 probe root(左列在前、右列在后)。 */
+    protected static void writeProbeRow(VectorSchemaRoot probeRoot, VectorSchemaRoot left,
+                                        int leftIdx, VectorSchemaRoot right, int rightIdx) {
+        List<FieldVector> vectors = probeRoot.getFieldVectors();
+        for (int c = 0; c < left.getFieldVectors().size(); c++) {
+            RowCopier.copyRow(left.getVector(c), leftIdx, vectors.get(c), 0);
+        }
+        for (int c = 0; c < right.getFieldVectors().size(); c++) {
+            RowCopier.copyRow(right.getVector(c), rightIdx,
+                    vectors.get(left.getFieldVectors().size() + c), 0);
+        }
+        probeRoot.setRowCount(1);
+    }
+
     /** Row indices of {@code root} ordered by the key columns, nulls last. */
     protected static List<Integer> sortedIndices(VectorSchemaRoot root, List<Integer> keyCols) {
         List<Integer> order = new ArrayList<>(root.getRowCount());

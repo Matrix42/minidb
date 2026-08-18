@@ -1,12 +1,9 @@
 package com.minidb.server.plan.physical;
 
-import com.minidb.storage.common.ArrowTypes;
 import com.minidb.server.exec.ExecContext;
-import com.minidb.server.exec.RowCopier;
 import java.util.ArrayList;
 import java.util.List;
 import org.apache.arrow.vector.BitVector;
-import org.apache.arrow.vector.FieldVector;
 import org.apache.arrow.vector.ValueVector;
 import org.apache.arrow.vector.VectorSchemaRoot;
 import org.apache.calcite.plan.RelOptCluster;
@@ -18,7 +15,6 @@ import org.apache.calcite.rel.core.Join;
 import org.apache.calcite.rel.core.JoinInfo;
 import org.apache.calcite.rel.core.JoinRelType;
 import org.apache.calcite.rel.metadata.RelMetadataQuery;
-import org.apache.calcite.rel.type.RelDataTypeField;
 import org.apache.calcite.rex.RexNode;
 
 /**
@@ -99,30 +95,5 @@ public class MiniDbNestedLoopJoin extends MiniDbJoin {
             }
         }
         return outputRows;
-    }
-
-    private VectorSchemaRoot buildProbeRoot(ExecContext ctx) {
-        List<FieldVector> vectors = new ArrayList<>();
-        for (RelDataTypeField f : getRowType().getFieldList()) {
-            vectors.add(ArrowTypes.field(f).createVector(ctx.allocator()));
-        }
-        for (FieldVector v : vectors) {
-            v.setInitialCapacity(1);
-            v.allocateNew();
-        }
-        return VectorSchemaRoot.of(vectors.toArray(new FieldVector[0]));
-    }
-
-    private void writeProbeRow(VectorSchemaRoot probeRoot, VectorSchemaRoot left, int leftIdx,
-                               VectorSchemaRoot right, int rightIdx) {
-        List<FieldVector> vectors = probeRoot.getFieldVectors();
-        for (int c = 0; c < left.getFieldVectors().size(); c++) {
-            RowCopier.copyRow(left.getVector(c), leftIdx, vectors.get(c), 0);
-        }
-        for (int c = 0; c < right.getFieldVectors().size(); c++) {
-            RowCopier.copyRow(right.getVector(c), rightIdx,
-                    vectors.get(left.getFieldVectors().size() + c), 0);
-        }
-        probeRoot.setRowCount(1);
     }
 }

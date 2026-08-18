@@ -5,6 +5,8 @@ import java.util.ArrayList;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
+import org.apache.arrow.vector.BitVector;
+import org.apache.arrow.vector.ValueVector;
 import org.apache.arrow.vector.VectorSchemaRoot;
 import org.apache.calcite.plan.RelOptCluster;
 import org.apache.calcite.plan.RelOptCost;
@@ -58,6 +60,10 @@ public class MiniDbHashJoin extends MiniDbJoin {
         List<Integer> rightKeyCols = info.rightKeys;
         int[] leftKeyArr = toIntArray(leftKeyCols);
         int[] rightKeyArr = toIntArray(rightKeyCols);
+        // 残留(非等值)条件:等值键之外的合取项(query13/15 的 OR 残留在等值键匹配后仍需过滤)。
+        RexNode residual = info.getRemaining(getCluster().getRexBuilder());
+        boolean hasResidual = !residual.isAlwaysTrue();
+        VectorSchemaRoot probeRoot = hasResidual ? buildProbeRoot(ctx) : null;
         // Build: key -> row indices of the left input sharing that key.
         // Null-keyed rows are skipped (they can never match).
         Map<ColumnKey, List<Integer>> buildTable = new HashMap<>();
@@ -72,22 +78,32 @@ public class MiniDbHashJoin extends MiniDbJoin {
         boolean keepUnmatchedRight = type == JoinRelType.RIGHT || type == JoinRelType.FULL;
         boolean[] matchedLeft = new boolean[left.getRowCount()];
         List<int[]> outputRows = new ArrayList<>();
-        // Probe: for each right row, join with every left row of the same key.
-        for (int rightIdx = 0; rightIdx < right.getRowCount(); rightIdx++) {
-            List<Integer> matchingLeftRows;
-            if (hasNullKey(right, rightIdx, rightKeyCols)) {
-                matchingLeftRows = null;
-            } else {
-                matchingLeftRows = buildTable.get(new ColumnKey(right, rightIdx, rightKeyArr));
-            }
-            if (matchingLeftRows != null) {
-                for (int leftIdx : matchingLeftRows) {
-                    outputRows.add(new int[]{leftIdx, rightIdx});
-                    matchedLeft[leftIdx] = true;
+        try {
+            // Probe: for each right row, join with every left row of the same key.
+            for (int rightIdx = 0; rightIdx < right.getRowCount(); rightIdx++) {
+                List<Integer> matchingLeftRows;
+                if (hasNullKey(right, rightIdx, rightKeyCols)) {
+                    matchingLeftRows = null;
+                } else {
+                    matchingLeftRows = buildTable.get(new ColumnKey(right, rightIdx, rightKeyArr));
                 }
-            } else if (keepUnmatchedRight) {
-                // Right-preserved outer join: emit the unmatched right row.
-                outputRows.add(new int[]{-1, rightIdx});
+                if (matchingLeftRows != null) {
+                    for (int leftIdx : matchingLeftRows) {
+                        if (hasResidual && !residualMatches(probeRoot, left, leftIdx, right, rightIdx,
+                                residual, ctx)) {
+                            continue;
+                        }
+                        outputRows.add(new int[]{leftIdx, rightIdx});
+                        matchedLeft[leftIdx] = true;
+                    }
+                } else if (keepUnmatchedRight) {
+                    // Right-preserved outer join: emit the unmatched right row.
+                    outputRows.add(new int[]{-1, rightIdx});
+                }
+            }
+        } finally {
+            if (probeRoot != null) {
+                probeRoot.close();
             }
         }
         if (keepUnmatchedLeft) {
@@ -98,5 +114,17 @@ public class MiniDbHashJoin extends MiniDbJoin {
             }
         }
         return outputRows;
+    }
+
+    private static boolean residualMatches(VectorSchemaRoot probeRoot, VectorSchemaRoot left,
+                                           int leftIdx, VectorSchemaRoot right, int rightIdx,
+                                           RexNode residual, ExecContext ctx) {
+        writeProbeRow(probeRoot, left, leftIdx, right, rightIdx);
+        ValueVector result = ctx.interpreter().eval(residual, probeRoot);
+        try {
+            return !result.isNull(0) && ((BitVector) result).get(0) == 1;
+        } finally {
+            result.close();
+        }
     }
 }
