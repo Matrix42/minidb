@@ -1,6 +1,8 @@
 package com.minidb.tpcds;
 
 import java.io.IOException;
+import java.io.InputStream;
+import java.nio.charset.StandardCharsets;
 import java.nio.file.DirectoryStream;
 import java.nio.file.Files;
 import java.nio.file.Path;
@@ -62,6 +64,29 @@ public class TpcdsTemplateParser {
 
     private static int queryNumber(String name) {
         return Integer.parseInt(name.substring("query".length()));
+    }
+
+    /** 内置模板在 classpath 里的资源目录。 */
+    private static final String BUNDLED_TEMPLATE_DIR = "/tpcds/query_templates/";
+
+    /**
+     * 从模块内置 resources 读 99 个查询模板(无需外部 DSGen 工具),语义同 {@link #parseAll}。
+     */
+    public Map<String, String> parseBundled(double scale) throws IOException {
+        Map<String, String> result = new TreeMap<>((a, b) ->
+                Integer.compare(queryNumber(a), queryNumber(b)));
+        for (int i = 1; i <= 99; i++) {
+            String name = "query" + i + ".tpl";
+            try (InputStream in = TpcdsTemplateParser.class
+                    .getResourceAsStream(BUNDLED_TEMPLATE_DIR + name)) {
+                if (in == null) {
+                    throw new IOException("内置模板缺失: " + BUNDLED_TEMPLATE_DIR + name);
+                }
+                result.put("query" + i,
+                        parseTemplate(new String(in.readAllBytes(), StandardCharsets.UTF_8), scale, i));
+            }
+        }
+        return result;
     }
 
     public String parseTemplate(String tpl, double scale, int queryNumber) {

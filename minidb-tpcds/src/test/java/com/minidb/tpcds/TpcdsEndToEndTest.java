@@ -16,16 +16,11 @@ class TpcdsEndToEndTest {
 
     @Test
     void endToEnd(@TempDir Path dataDir) throws Exception {
-        Path queryDir = Path.of("F:/DSGen-software-code-4.0.0/query_templates");
-        if (!Files.isDirectory(queryDir)) {
-            return; // 无 DSGen 环境,跳过
-        }
-
         // 1. 生成数据(小 scale)
         new TpcdsDataGenerator().generate(0.01, dataDir);
 
-        // 2. 解析 99 个查询,只跑前 10 个保持测试快
-        Map<String, String> all = new TpcdsTemplateParser().parseAll(queryDir, 0.01);
+        // 2. 解析内置 99 个查询,只跑前 10 个保持测试快
+        Map<String, String> all = new TpcdsTemplateParser().parseBundled(0.01);
         Map<String, String> subset = new LinkedHashMap<>();
         int i = 0;
         for (Map.Entry<String, String> e : all.entrySet()) {

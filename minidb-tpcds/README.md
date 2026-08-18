@@ -5,7 +5,7 @@
 ## 前置条件
 
 - JDK 17、Maven(`./mvnw.cmd`)。
-- DSGen 查询模板目录(本机为 `F:\DSGen-software-code-4.0.0\query_templates`),含 `query1.tpl` ~ `query99.tpl`。
+- 查询模板已内置(99 个 `.tpl` 打包进模块 resources),**无需下载 DSGen**;也可用 `--query-dir` 指定外部模板目录。
 - teradata tpcds 数据生成库(`com.teradata.tpcds:tpcds:1.2`)由 Maven 自动下载,无需编译 DSGen 的 C 工具。
 
 ## 构建
@@ -35,10 +35,10 @@
 ```bash
 ./mvnw.cmd -pl minidb-tpcds -am exec:java \
   -Dexec.mainClass=com.minidb.tpcds.TpcdsBenchmark \
-  -Dexec.args="run --data-dir ./tpcds-data --query-dir F:/DSGen-software-code-4.0.0/query_templates --scale 0.1 --output ./results/run-1.json"
+  -Dexec.args="run --data-dir ./tpcds-data --scale 0.1 --output ./results/run-1.json"
 ```
 
-- 先解析 `--query-dir` 下的 99 个 `.tpl` 生成 SQL,再启动 MiniDbServer 逐条跑。
+- 先解析内置的 99 个 `.tpl`(或 `--query-dir` 指定目录)生成 SQL,再启动 MiniDbServer 逐条跑。
 - 每条记录耗时/返回行数/成败;MiniDB 不支持的 SQL(如 `ROLLUP`/`GROUPING SETS`)记录为失败,**不中断后续查询**。
 - `--output`:JSON 结果文件。
 
@@ -58,9 +58,9 @@
 # 1. 生成数据(一次)
 generate --scale 0.1 --data-dir ./tpcds-data
 
-# 2. 跑测试(可多次,每次一个 JSON)
-run --data-dir ./tpcds-data --query-dir F:/DSGen-software-code-4.0.0/query_templates --scale 0.1 --output ./results/run-1.json
-run --data-dir ./tpcds-data --query-dir F:/DSGen-software-code-4.0.0/query_templates --scale 0.1 --output ./results/run-2.json
+# 2. 跑测试(可多次,每次一个 JSON;缺省用内置模板)
+run --data-dir ./tpcds-data --scale 0.1 --output ./results/run-1.json
+run --data-dir ./tpcds-data --scale 0.1 --output ./results/run-2.json
 
 # 3. 对比两次
 compare ./results/run-1.json ./results/run-2.json --output ./results/report.html

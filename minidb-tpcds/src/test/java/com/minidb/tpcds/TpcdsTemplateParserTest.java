@@ -1,7 +1,5 @@
 package com.minidb.tpcds;
 
-import java.nio.file.Files;
-import java.nio.file.Path;
 import java.util.Map;
 import org.junit.jupiter.api.Test;
 
@@ -57,12 +55,8 @@ class TpcdsTemplateParserTest {
 
     @Test
     void parsesAllRealTemplates() throws Exception {
-        Path dir = Path.of("F:/DSGen-software-code-4.0.0/query_templates");
-        if (!Files.isDirectory(dir)) {
-            return; // 无 DSGen 环境,跳过
-        }
         TpcdsTemplateParser parser = new TpcdsTemplateParser();
-        Map<String, String> sqls = parser.parseAll(dir, 1.0);
+        Map<String, String> sqls = parser.parseBundled(1.0);
         assertEquals(99, sqls.size());
         for (Map.Entry<String, String> e : sqls.entrySet()) {
             String sql = e.getValue();

@@ -8,7 +8,7 @@ import java.util.Map;
  * TPC-DS 基准 CLI 入口,三个子命令:
  * <pre>
  *   generate --scale 0.1 --data-dir ./data
- *   run      --data-dir ./data --query-dir F:/DSGen-software-code-4.0.0/query_templates --scale 0.1 --output ./results/run.json
+ *   run      --data-dir ./data --scale 0.1 --output ./results/run.json  (--query-dir 可选,缺省用内置模板)
  *   compare  run-1.json run-2.json --output ./results/report.html
  * </pre>
  */
@@ -31,9 +31,12 @@ public class TpcdsBenchmark {
                 Map<String, String> opts = parseOptions(args, 1);
                 double scale = Double.parseDouble(opts.getOrDefault("scale", "0.1"));
                 Path dataDir = Path.of(opts.getOrDefault("data-dir", "./data"));
-                Path queryDir = Path.of(opts.getOrDefault("query-dir", "./query_templates"));
                 Path output = Path.of(opts.getOrDefault("output", "./results/run.json"));
-                Map<String, String> queries = new TpcdsTemplateParser().parseAll(queryDir, scale);
+                TpcdsTemplateParser parser = new TpcdsTemplateParser();
+                // --query-dir 可选:缺省用模块内置的 99 个模板(无需外部 DSGen 工具)。
+                Map<String, String> queries = opts.containsKey("query-dir")
+                        ? parser.parseAll(Path.of(opts.get("query-dir")), scale)
+                        : parser.parseBundled(scale);
                 new TpcdsBenchmarkRunner().run(queries, dataDir, output, scale);
             }
             case "compare" -> {
@@ -66,7 +69,7 @@ public class TpcdsBenchmark {
         System.out.println("""
                 用法:
                   generate --scale 0.1 --data-dir ./data
-                  run      --data-dir ./data --query-dir <query_templates> --scale 0.1 --output ./results/run.json
+                  run      --data-dir ./data [--query-dir <dir>] --scale 0.1 --output ./results/run.json
                   compare  run-1.json run-2.json --output ./results/report.html
                 """);
     }
