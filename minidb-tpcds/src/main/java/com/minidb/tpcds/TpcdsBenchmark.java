@@ -8,7 +8,7 @@ import java.util.Map;
  * TPC-DS 基准 CLI 入口,三个子命令:
  * <pre>
  *   generate --scale 0.1 --data-dir ./data
- *   run      --data-dir ./data --scale 0.1 --output ./results/run.json  (--query-dir 可选,缺省用内置模板)
+ *   run      --data-dir ./data --scale 0.1 --output ./results/run.json  [--direct] [--query-dir <dir>]
  *   compare  run-1.json run-2.json --output ./results/report.html
  * </pre>
  */
@@ -37,7 +37,13 @@ public class TpcdsBenchmark {
                 Map<String, String> queries = opts.containsKey("query-dir")
                         ? parser.parseAll(Path.of(opts.get("query-dir")), scale)
                         : parser.parseBundled(scale);
-                new TpcdsBenchmarkRunner().run(queries, dataDir, output, scale);
+                TpcdsBenchmarkRunner runner = new TpcdsBenchmarkRunner();
+                if (opts.containsKey("direct")) {
+                    // --direct:直接用 QueryExecutor 执行,不走 MiniDbServer/JDBC 网络层。
+                    runner.runDirect(queries, dataDir, output, scale);
+                } else {
+                    runner.run(queries, dataDir, output, scale);
+                }
             }
             case "compare" -> {
                 if (args.length < 3) {
@@ -57,9 +63,15 @@ public class TpcdsBenchmark {
     private static Map<String, String> parseOptions(String[] args, int start) {
         Map<String, String> opts = new HashMap<>();
         for (int i = start; i < args.length; i++) {
-            if (args[i].startsWith("--") && i + 1 < args.length) {
-                opts.put(args[i].substring(2), args[i + 1]);
-                i++;
+            if (args[i].startsWith("--")) {
+                String key = args[i].substring(2);
+                // 布尔标志(如 --direct):无后续值。
+                if (i + 1 < args.length && !args[i + 1].startsWith("--")) {
+                    opts.put(key, args[i + 1]);
+                    i++;
+                } else {
+                    opts.put(key, "true");
+                }
             }
         }
         return opts;
@@ -69,7 +81,7 @@ public class TpcdsBenchmark {
         System.out.println("""
                 用法:
                   generate --scale 0.1 --data-dir ./data
-                  run      --data-dir ./data [--query-dir <dir>] --scale 0.1 --output ./results/run.json
+                  run      --data-dir ./data [--direct] [--query-dir <dir>] --scale 0.1 --output ./results/run.json
                   compare  run-1.json run-2.json --output ./results/report.html
                 """);
     }
