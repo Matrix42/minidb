@@ -39,6 +39,7 @@ import org.apache.calcite.sql.SqlNodeList;
 import org.apache.calcite.sql.ddl.SqlColumnDeclaration;
 import org.apache.calcite.sql.ddl.SqlCreateSchema;
 import org.apache.calcite.sql.ddl.SqlCreateTable;
+import org.apache.calcite.sql.ddl.SqlCreateTableLike;
 import org.apache.calcite.sql.ddl.SqlCreateView;
 import org.apache.calcite.sql.ddl.SqlDropSchema;
 import org.apache.calcite.sql.ddl.SqlDropTable;
@@ -151,6 +152,9 @@ public class QueryExecutor {
         }
         if (ddl instanceof SqlCreateTable create) {
             return handleCreate(create, currentSchema);
+        }
+        if (ddl instanceof SqlCreateTableLike like) {
+            return handleCreateLike(like, currentSchema);
         }
         if (ddl instanceof SqlCreateView create) {
             return handleCreateView(create, currentSchema);
@@ -286,6 +290,25 @@ public class QueryExecutor {
         TableSchema schema = new TableSchema(schemaName, tableName, columns,
                 primaryKey, uniqueKeys, foreignKeys, storageFormat);
         storage.createTable(schema);
+        return new QueryResult.Update(0);
+    }
+
+    /** CREATE TABLE t LIKE src:复制源表的列与约束,不复制数据。 */
+    private QueryResult handleCreateLike(SqlCreateTableLike like, String currentSchema) {
+        List<String> targetParts = like.name.names;
+        String targetSchema = targetParts.size() > 1 ? targetParts.get(0) : currentSchema;
+        String targetName = targetParts.get(targetParts.size() - 1);
+        List<String> sourceParts = like.sourceTable.names;
+        String sourceSchema = sourceParts.size() > 1 ? sourceParts.get(0) : currentSchema;
+        String sourceName = sourceParts.get(sourceParts.size() - 1);
+        TableSchema source = catalog.getTable(sourceSchema, sourceName);
+        if (source == null) {
+            throw new IllegalArgumentException("source table not found: " + like.sourceTable);
+        }
+        TableSchema target = new TableSchema(targetSchema, targetName,
+                source.columns(), source.primaryKey(), source.uniqueKeys(),
+                source.foreignKeys(), source.storageFormat());
+        storage.createTable(target);
         return new QueryResult.Update(0);
     }
 
