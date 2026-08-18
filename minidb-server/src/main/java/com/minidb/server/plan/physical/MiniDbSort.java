@@ -51,7 +51,7 @@ public class MiniDbSort extends Sort implements MiniDbRel {
         // close input only AFTER copying: Filter/Project own their batches
         input.close();
         if (materialized == null) {
-            return BatchIterator.empty();
+            return BatchIterator.interruptible(BatchIterator.empty());
         }
 
         int rows = materialized.getRowCount();
@@ -81,7 +81,7 @@ public class MiniDbSort extends Sort implements MiniDbRel {
 
             VectorSchemaRoot single = out;
             boolean emitted = false;
-            return new BatchIterator() {
+            return BatchIterator.interruptible(new BatchIterator() {
                 boolean done = emitted;
 
                 @Override
@@ -99,7 +99,7 @@ public class MiniDbSort extends Sort implements MiniDbRel {
                 public void close() {
                     single.close();
                 }
-            };
+            });
         } finally {
             indices.close();
         }

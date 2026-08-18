@@ -77,7 +77,7 @@ public class MiniDbSetOp extends SetOp implements MiniDbRel {
                 for (VectorSchemaRoot root : roots) {
                     root.close();
                 }
-                return BatchIterator.empty();
+                return BatchIterator.interruptible(BatchIterator.empty());
             }
             VectorSchemaRoot out = buildOutput(keys, times, allCols, ctx);
             // 数据已 copy 到 out,roots 可释放。
@@ -85,7 +85,7 @@ public class MiniDbSetOp extends SetOp implements MiniDbRel {
                 root.close();
             }
             boolean[] done = {false};
-            return new BatchIterator() {
+            return BatchIterator.interruptible(new BatchIterator() {
                 @Override
                 public boolean hasNext() {
                     return !done[0];
@@ -101,7 +101,7 @@ public class MiniDbSetOp extends SetOp implements MiniDbRel {
                 public void close() {
                     out.close();
                 }
-            };
+            });
         } catch (RuntimeException e) {
             for (VectorSchemaRoot root : roots) {
                 root.close();

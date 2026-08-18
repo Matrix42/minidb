@@ -84,7 +84,7 @@ public class MiniDbScan extends TableScan implements MiniDbRel {
 
     private BatchIterator singleBatch(VectorSchemaRoot root) {
         boolean[] done = {false};
-        return new BatchIterator() {
+        return BatchIterator.interruptible(new BatchIterator() {
             @Override
             public boolean hasNext() {
                 return !done[0];
@@ -100,6 +100,6 @@ public class MiniDbScan extends TableScan implements MiniDbRel {
             public void close() {
                 root.close();
             }
-        };
+        });
     }
 }

@@ -53,7 +53,7 @@ public abstract class MiniDbJoin extends Join implements MiniDbRel {
             left.close();
             right.close();
             boolean[] done = {false};
-            return new BatchIterator() {
+            return BatchIterator.interruptible(new BatchIterator() {
                 @Override
                 public boolean hasNext() {
                     return !done[0];
@@ -69,7 +69,7 @@ public abstract class MiniDbJoin extends Join implements MiniDbRel {
                 public void close() {
                     out.close();
                 }
-            };
+            });
         } catch (RuntimeException e) {
             left.close();
             right.close();

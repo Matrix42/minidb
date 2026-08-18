@@ -116,11 +116,11 @@ public class MiniDbAggregate extends Aggregate implements MiniDbRel {
             }
         }
         if (empty) {
-            return BatchIterator.empty();
+            return BatchIterator.interruptible(BatchIterator.empty());
         }
         VectorSchemaRoot out = buildOutput(groupMaps, groupSets, ctx);
         boolean[] done = {false};
-        return new BatchIterator() {
+        return BatchIterator.interruptible(new BatchIterator() {
             @Override
             public boolean hasNext() {
                 return !done[0];
@@ -136,7 +136,7 @@ public class MiniDbAggregate extends Aggregate implements MiniDbRel {
             public void close() {
                 out.close();
             }
-        };
+        });
     }
 
     /** COUNT(*):COUNT 聚合、无 DISTINCT、无参数。 */
@@ -163,7 +163,7 @@ public class MiniDbAggregate extends Aggregate implements MiniDbRel {
         }
         VectorSchemaRoot out = VectorSchemaRoot.of(vectors.toArray(new FieldVector[0]));
         boolean[] done = {false};
-        return new BatchIterator() {
+        return BatchIterator.interruptible(new BatchIterator() {
             @Override
             public boolean hasNext() {
                 return !done[0];
@@ -179,7 +179,7 @@ public class MiniDbAggregate extends Aggregate implements MiniDbRel {
             public void close() {
                 out.close();
             }
-        };
+        });
     }
 
     private ValueVector argVector(AggregateCall call, VectorSchemaRoot batch, ExecContext ctx) {

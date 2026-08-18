@@ -46,7 +46,7 @@ public class MiniDbUnion extends Union implements MiniDbRel {
             for (BatchIterator it : iterators) {
                 it.close();
             }
-            return BatchIterator.empty();
+            return BatchIterator.interruptible(BatchIterator.empty());
         }
         // copy BEFORE closing inputs: Project/Filter own their batches and
         // release them on close
@@ -56,7 +56,7 @@ public class MiniDbUnion extends Union implements MiniDbRel {
         }
 
         boolean[] done = {false};
-        return new BatchIterator() {
+        return BatchIterator.interruptible(new BatchIterator() {
             @Override
             public boolean hasNext() {
                 return !done[0];
@@ -72,7 +72,7 @@ public class MiniDbUnion extends Union implements MiniDbRel {
             public void close() {
                 out.close();
             }
-        };
+        });
     }
 
     private VectorSchemaRoot mergeBatches(List<VectorSchemaRoot> batches, int total,

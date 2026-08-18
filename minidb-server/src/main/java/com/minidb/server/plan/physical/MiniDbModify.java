@@ -66,7 +66,7 @@ public class MiniDbModify extends TableModify implements MiniDbRel {
         }
         // 写数据直接落盘,顺带标记统计过期。
         ctx.storage().catalog().markStatsStale(schemaName, tableName);
-        return BatchIterator.empty();
+        return BatchIterator.interruptible(BatchIterator.empty());
     }
 
     private void appendRows(ExecContext ctx, SimpleTable target, BatchIterator input) {

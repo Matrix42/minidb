@@ -31,7 +31,7 @@ public class MiniDbFilter extends Filter implements MiniDbRel {
     public BatchIterator execute(ExecContext ctx) {
         BatchIterator input = ((MiniDbRel) getInput()).execute(ctx);
         Deque<VectorSchemaRoot> owned = new ArrayDeque<>();
-        return new BatchIterator() {
+        return BatchIterator.interruptible(new BatchIterator() {
             VectorSchemaRoot pending;
 
             @Override
@@ -84,6 +84,6 @@ public class MiniDbFilter extends Filter implements MiniDbRel {
                 }
                 owned.clear();
             }
-        };
+        });
     }
 }

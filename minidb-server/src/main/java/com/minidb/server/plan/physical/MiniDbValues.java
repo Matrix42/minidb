@@ -67,7 +67,7 @@ public class MiniDbValues extends Values implements MiniDbRel {
         VectorSchemaRoot out = VectorSchemaRoot.of(vectors.toArray(new FieldVector[0]));
         out.setRowCount(rows);
         boolean[] emitted = {false};
-        return new BatchIterator() {
+        return BatchIterator.interruptible(new BatchIterator() {
             @Override
             public boolean hasNext() {
                 return !emitted[0];
@@ -83,7 +83,7 @@ public class MiniDbValues extends Values implements MiniDbRel {
             public void close() {
                 out.close();
             }
-        };
+        });
     }
 
     private Field arrowField(RelDataTypeField dataTypeField) {

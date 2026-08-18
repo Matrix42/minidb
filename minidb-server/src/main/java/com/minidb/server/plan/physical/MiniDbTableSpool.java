@@ -42,6 +42,6 @@ public class MiniDbTableSpool extends TableSpool implements MiniDbRel {
 
     @Override
     public BatchIterator execute(ExecContext ctx) {
-        return ((MiniDbRel) getInput()).execute(ctx);
+        return BatchIterator.interruptible(((MiniDbRel) getInput()).execute(ctx));
     }
 }

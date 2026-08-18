@@ -111,7 +111,7 @@ public class MiniDbRepeatUnion extends RepeatUnion implements MiniDbRel {
         VectorSchemaRoot root =
                 RowVectors.buildRoot(result, getRowType(), ctx.allocator());
         boolean[] done = {false};
-        return new BatchIterator() {
+        return BatchIterator.interruptible(new BatchIterator() {
             @Override
             public boolean hasNext() {
                 return !done[0];
@@ -127,7 +127,7 @@ public class MiniDbRepeatUnion extends RepeatUnion implements MiniDbRel {
             public void close() {
                 root.close();
             }
-        };
+        });
     }
 
     /** The transient table name (last segment of its qualified name) — the

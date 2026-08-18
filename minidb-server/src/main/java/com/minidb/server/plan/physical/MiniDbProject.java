@@ -98,7 +98,7 @@ public class MiniDbProject extends Project implements MiniDbRel {
             VectorSchemaRoot outputRoot = VectorSchemaRoot.of(outputVectors.toArray(new FieldVector[0]));
             outputRoot.setRowCount(rows.getRowCount());
             boolean[] done = {false};
-            return new BatchIterator() {
+            return BatchIterator.interruptible(new BatchIterator() {
                 @Override
                 public boolean hasNext() {
                     return !done[0];
@@ -114,7 +114,7 @@ public class MiniDbProject extends Project implements MiniDbRel {
                 public void close() {
                     outputRoot.close();
                 }
-            };
+            });
         } finally {
             windowBatch.close();
             rows.close();
@@ -160,7 +160,7 @@ public class MiniDbProject extends Project implements MiniDbRel {
     private BatchIterator lazyExecute(ExecContext ctx) {
         BatchIterator input = ((MiniDbRel) getInput()).execute(ctx);
         Deque<VectorSchemaRoot> owned = new ArrayDeque<>();
-        return new BatchIterator() {
+        return BatchIterator.interruptible(new BatchIterator() {
             VectorSchemaRoot pending;
 
             @Override
@@ -188,7 +188,7 @@ public class MiniDbProject extends Project implements MiniDbRel {
                 }
                 owned.clear();
             }
-        };
+        });
     }
 
     private VectorSchemaRoot projectBatch(VectorSchemaRoot batch, ExecContext ctx) {

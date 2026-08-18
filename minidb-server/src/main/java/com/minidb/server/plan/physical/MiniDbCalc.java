@@ -126,7 +126,7 @@ public class MiniDbCalc extends Calc implements MiniDbRel {
             VectorSchemaRoot out = VectorSchemaRoot.of(outVectors.toArray(new FieldVector[0]));
             out.setRowCount(rows.getRowCount());
             boolean[] done = {false};
-            return new BatchIterator() {
+            return BatchIterator.interruptible(new BatchIterator() {
                 @Override
                 public boolean hasNext() {
                     return !done[0];
@@ -142,7 +142,7 @@ public class MiniDbCalc extends Calc implements MiniDbRel {
                 public void close() {
                     out.close();
                 }
-            };
+            });
         } finally {
             joined.close();
             rows.close();
@@ -241,7 +241,7 @@ public class MiniDbCalc extends Calc implements MiniDbRel {
     private BatchIterator lazyExecute(List<RexNode> projects, RexNode condition, ExecContext ctx) {
         BatchIterator input = ((MiniDbRel) getInput()).execute(ctx);
         Deque<VectorSchemaRoot> owned = new ArrayDeque<>();
-        return new BatchIterator() {
+        return BatchIterator.interruptible(new BatchIterator() {
             VectorSchemaRoot pending;
 
             @Override
@@ -271,7 +271,7 @@ public class MiniDbCalc extends Calc implements MiniDbRel {
                 }
                 owned.clear();
             }
-        };
+        });
     }
 
     private VectorSchemaRoot calcBatch(VectorSchemaRoot batch, List<RexNode> projects,
