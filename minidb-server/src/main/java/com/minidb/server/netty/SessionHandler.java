@@ -14,6 +14,7 @@ import java.io.ByteArrayOutputStream;
 import java.nio.channels.Channels;
 import java.util.HashMap;
 import java.util.Map;
+import java.util.concurrent.ExecutorService;
 import java.util.function.Supplier;
 import org.apache.arrow.memory.BufferAllocator;
 import org.apache.arrow.vector.VectorSchemaRoot;
@@ -28,15 +29,18 @@ public class SessionHandler extends SimpleChannelInboundHandler<Message> {
     private static final int DEFAULT_FETCH_SIZE = 4096;
     private final QueryExecutor executor;
     private final MetadataExecutor metadata;
+    private final ExecutorService queryPool;
     private String currentSchema = MiniDbCatalog.DEFAULT_SCHEMA;
     // Active cursors keyed by the ExecuteRequest id that opened them. A
     // SessionHandler is per-channel and only touched by the Netty event loop
     // thread, so a plain HashMap needs no synchronization.
     private final Map<Long, Paginator> cursors = new HashMap<>();
 
-    public SessionHandler(QueryExecutor executor, MetadataExecutor metadata) {
+    public SessionHandler(QueryExecutor executor, MetadataExecutor metadata,
+                         ExecutorService queryPool) {
         this.executor = executor;
         this.metadata = metadata;
+        this.queryPool = queryPool;
     }
 
     @Override
@@ -69,57 +73,69 @@ public class SessionHandler extends SimpleChannelInboundHandler<Message> {
 
     private void handleExecute(ChannelHandlerContext ctx, Message.ExecuteRequest req) {
         LOG.debug("executing: {}", req.sql());
-        long start = System.nanoTime();
-        try {
-            QueryResult result = executor.executeCursor(req.sql(), currentSchema);
-            long elapsedMs = (System.nanoTime() - start) / 1_000_000;
-            if (result instanceof QueryResult.UseSchema us) {
-                currentSchema = us.schemaName();
-                LOG.info("use schema: {} in {} ms", currentSchema, elapsedMs);
-                ctx.writeAndFlush(new Message.UpdateCount(req.requestId(), 0));
-            } else if (result instanceof QueryResult.Update update) {
-                LOG.info("query ok: {} rows affected in {} ms", update.count(), elapsedMs);
-                ctx.writeAndFlush(new Message.UpdateCount(req.requestId(), update.count()));
-            } else if (result instanceof QueryResult.Rows rows) {
-                LOG.info("query ok: {} rows returned in {} ms", rows.data().getRowCount(), elapsedMs);
-                sendRows(ctx, req.requestId(), rows.data(), true);
-                rows.data().close();
-            } else if (result instanceof QueryResult.Cursor cursor) {
-                CursorHandle handle = cursor.handle();
-                BufferAllocator allocator = handle.context().allocator();
-                Paginator paginator = new Paginator(handle.iterator(), handle.schema(), allocator);
-                boolean retained = false;
-                try {
-                    int pageSize = req.fetchSize() > 0 ? req.fetchSize() : DEFAULT_FETCH_SIZE;
-                    VectorSchemaRoot page = paginator.nextPage(pageSize);
-                    boolean last = paginator.isDone();
-                    LOG.info("query ok: first page {} rows (last={}) in {} ms",
-                            page.getRowCount(), last, elapsedMs);
-                    sendRows(ctx, req.requestId(), page, last);
-                    page.close();
-                    if (last) {
-                        // Single page exhausted the result: nothing left to fetch.
-                        paginator.close();
-                    } else {
-                        cursors.put(req.requestId(), paginator);
-                        retained = true;
-                    }
-                } catch (Exception e) {
-                    // nextPage (and thus iterator.next) can throw lazily; if it did,
-                    // the paginator was never retained, so release it here. The
-                    // rethrown exception is handled by the outer catch below.
-                    if (!retained) {
-                        paginator.close();
-                    }
-                    throw e;
-                }
+        // 快照 currentSchema:查询执行在 worker 线程,不在事件循环线程。
+        String schema = currentSchema;
+        queryPool.execute(() -> {
+            long start = System.nanoTime();
+            try {
+                QueryResult result = executor.executeCursor(req.sql(), schema);
+                // 回到事件循环处理结果(Netty 写操作需在事件循环线程)。
+                ctx.executor().execute(() -> handleResult(ctx, req, result, start));
+            } catch (Exception e) {
+                ctx.executor().execute(() -> handleError(ctx, req, e, start));
             }
-        } catch (Exception e) {
-            long elapsedMs = (System.nanoTime() - start) / 1_000_000;
-            LOG.warn("query failed in {} ms: {}", elapsedMs, req.sql(), e);
-            String message = e.getMessage() == null ? e.toString() : e.getMessage();
-            ctx.writeAndFlush(Message.ExecuteResponse.error(req.requestId(), message));
+        });
+    }
+
+    /** 在事件循环线程处理查询结果。 */
+    private void handleResult(ChannelHandlerContext ctx, Message.ExecuteRequest req,
+                              QueryResult result, long start) {
+        long elapsedMs = (System.nanoTime() - start) / 1_000_000;
+        if (result instanceof QueryResult.UseSchema us) {
+            currentSchema = us.schemaName();
+            LOG.info("use schema: {} in {} ms", currentSchema, elapsedMs);
+            ctx.writeAndFlush(new Message.UpdateCount(req.requestId(), 0));
+        } else if (result instanceof QueryResult.Update update) {
+            LOG.info("query ok: {} rows affected in {} ms", update.count(), elapsedMs);
+            ctx.writeAndFlush(new Message.UpdateCount(req.requestId(), update.count()));
+        } else if (result instanceof QueryResult.Rows rows) {
+            LOG.info("query ok: {} rows returned in {} ms", rows.data().getRowCount(), elapsedMs);
+            sendRows(ctx, req.requestId(), rows.data(), true);
+            rows.data().close();
+        } else if (result instanceof QueryResult.Cursor cursor) {
+            CursorHandle handle = cursor.handle();
+            BufferAllocator allocator = handle.context().allocator();
+            Paginator paginator = new Paginator(handle.iterator(), handle.schema(), allocator);
+            boolean retained = false;
+            try {
+                int pageSize = req.fetchSize() > 0 ? req.fetchSize() : DEFAULT_FETCH_SIZE;
+                VectorSchemaRoot page = paginator.nextPage(pageSize);
+                boolean last = paginator.isDone();
+                LOG.info("query ok: first page {} rows (last={}) in {} ms",
+                        page.getRowCount(), last, elapsedMs);
+                sendRows(ctx, req.requestId(), page, last);
+                page.close();
+                if (last) {
+                    paginator.close();
+                } else {
+                    cursors.put(req.requestId(), paginator);
+                    retained = true;
+                }
+            } catch (Exception e) {
+                if (!retained) {
+                    paginator.close();
+                }
+                throw e;
+            }
         }
+    }
+
+    /** 在事件循环线程处理查询失败。 */
+    private void handleError(ChannelHandlerContext ctx, Message.ExecuteRequest req, Exception e, long start) {
+        long elapsedMs = (System.nanoTime() - start) / 1_000_000;
+        LOG.warn("query failed in {} ms: {}", elapsedMs, req.sql(), e);
+        String message = e.getMessage() == null ? e.toString() : e.getMessage();
+        ctx.writeAndFlush(Message.ExecuteResponse.error(req.requestId(), message));
     }
 
     private void sendRows(ChannelHandlerContext ctx, long requestId, VectorSchemaRoot root,

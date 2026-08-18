@@ -14,6 +14,7 @@ import com.minidb.server.stats.StatsManager;
 import io.netty.channel.embedded.EmbeddedChannel;
 import java.io.ByteArrayInputStream;
 import java.nio.file.Path;
+import com.google.common.util.concurrent.MoreExecutors;
 import org.apache.arrow.memory.BufferAllocator;
 import org.apache.arrow.memory.RootAllocator;
 import org.apache.arrow.vector.ipc.ArrowStreamReader;
@@ -38,7 +39,7 @@ class SessionHandlerCursorTest {
         StatsManager stats = new StatsManager(storage);
         QueryExecutor executor = new QueryExecutor(catalog, storage, allocator, stats);
         EmbeddedChannel ch = new EmbeddedChannel(
-                new SessionHandler(executor, new MetadataExecutor(catalog, allocator)));
+                new SessionHandler(executor, new MetadataExecutor(catalog, allocator), MoreExecutors.newDirectExecutorService()));
         try {
             ch.writeInbound(new Message.ExecuteRequest(1, "CREATE TABLE t (id INTEGER)"));
             ch.outboundMessages().poll(); // UpdateCount
@@ -79,7 +80,7 @@ class SessionHandlerCursorTest {
         StatsManager stats = new StatsManager(storage);
         QueryExecutor executor = new QueryExecutor(catalog, storage, allocator, stats);
         EmbeddedChannel ch = new EmbeddedChannel(
-                new SessionHandler(executor, new MetadataExecutor(catalog, allocator)));
+                new SessionHandler(executor, new MetadataExecutor(catalog, allocator), MoreExecutors.newDirectExecutorService()));
         try {
             ch.writeInbound(new Message.ExecuteRequest(1, "CREATE TABLE t (id INTEGER)"));
             ch.outboundMessages().poll(); // UpdateCount

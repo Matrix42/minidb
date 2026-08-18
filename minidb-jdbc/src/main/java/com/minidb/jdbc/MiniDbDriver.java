@@ -28,7 +28,8 @@ public class MiniDbDriver implements Driver {
         URI uri = URI.create(url.substring("jdbc:".length()));
         String host = uri.getHost();
         int port = uri.getPort() > 0 ? uri.getPort() : Protocol.DEFAULT_PORT;
-        MiniDbClient client = new MiniDbClient();
+        long timeout = parseTimeout(uri.getQuery());
+        MiniDbClient client = new MiniDbClient(timeout);
         try {
             client.connect(host, port);
         } catch (SQLException e) {
@@ -36,6 +37,23 @@ public class MiniDbDriver implements Driver {
             throw e;
         }
         return new MiniDbConnection(client, url);
+    }
+
+    private static long parseTimeout(String query) {
+        if (query == null) {
+            return 30;
+        }
+        for (String param : query.split("&")) {
+            String[] kv = param.split("=", 2);
+            if (kv.length == 2 && "timeout".equals(kv[0])) {
+                try {
+                    return Long.parseLong(kv[1]);
+                } catch (NumberFormatException e) {
+                    return 30;
+                }
+            }
+        }
+        return 30;
     }
 
     @Override

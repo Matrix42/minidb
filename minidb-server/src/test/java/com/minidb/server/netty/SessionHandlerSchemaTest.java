@@ -8,6 +8,7 @@ import com.minidb.server.storage.StorageManager;
 import com.minidb.server.stats.StatsManager;
 import io.netty.channel.embedded.EmbeddedChannel;
 import java.nio.file.Path;
+import com.google.common.util.concurrent.MoreExecutors;
 import org.apache.arrow.memory.RootAllocator;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
@@ -24,7 +25,7 @@ class SessionHandlerSchemaTest {
         StatsManager stats = new StatsManager(storage);
         QueryExecutor executor = new QueryExecutor(catalog, storage, allocator, stats);
         EmbeddedChannel ch = new EmbeddedChannel(
-                new SessionHandler(executor, new MetadataExecutor(catalog, allocator)));
+                new SessionHandler(executor, new MetadataExecutor(catalog, allocator), MoreExecutors.newDirectExecutorService()));
         try {
             ch.writeInbound(new Message.ExecuteRequest(1, "CREATE SCHEMA other"));
             ch.writeInbound(new Message.ExecuteRequest(2,
@@ -51,7 +52,7 @@ class SessionHandlerSchemaTest {
         StatsManager stats = new StatsManager(storage);
         QueryExecutor executor = new QueryExecutor(catalog, storage, allocator, stats);
         EmbeddedChannel ch = new EmbeddedChannel(
-                new SessionHandler(executor, new MetadataExecutor(catalog, allocator)));
+                new SessionHandler(executor, new MetadataExecutor(catalog, allocator), MoreExecutors.newDirectExecutorService()));
         try {
             ch.writeInbound(new Message.ExecuteRequest(1, "USE SCHEMA ghost"));
             Object out = ch.outboundMessages().poll();

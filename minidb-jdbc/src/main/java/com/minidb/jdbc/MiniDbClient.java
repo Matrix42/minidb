@@ -47,6 +47,7 @@ public class MiniDbClient implements AutoCloseable {
     private static final long DEFAULT_TIMEOUT_SECONDS = 30;
 
     private final long timeoutSeconds;
+    private final boolean noTimeout;
     private final EventLoopGroup group = new NioEventLoopGroup(1);
     private final BufferAllocator allocator = new RootAllocator();
     private final Map<Long, CompletableFuture<ClientResult>> pending =
@@ -60,8 +61,12 @@ public class MiniDbClient implements AutoCloseable {
         this(DEFAULT_TIMEOUT_SECONDS);
     }
 
-    MiniDbClient(long timeoutSeconds) {
+    /**
+     * @param timeoutSeconds 0 = 永不超时,大于 0 = 等待上限秒数
+     */
+    public MiniDbClient(long timeoutSeconds) {
         this.timeoutSeconds = timeoutSeconds;
+        this.noTimeout = timeoutSeconds <= 0;
     }
 
     /**
@@ -135,23 +140,11 @@ public class MiniDbClient implements AutoCloseable {
             throw new SQLException("failed to send request", e);
         }
         try {
-            ClientResult result = fut.get(timeoutSeconds, TimeUnit.SECONDS);
+            ClientResult result = await(fut);
             if (result instanceof ClientResult.Rows rows) {
                 return new ClientResult.Cursor(id, fetchSize, rows.data(), rows.lastBatch());
             }
             return result;
-        } catch (InterruptedException e) {
-            Thread.currentThread().interrupt();
-            throw new SQLException("interrupted during execute", e);
-        } catch (java.util.concurrent.TimeoutException e) {
-            throw new SQLException("timeout waiting for server response");
-        } catch (ExecutionException e) {
-            Throwable cause = e.getCause();
-            if (cause instanceof SQLException sqle) {
-                throw sqle;
-            }
-            throw new SQLException(cause != null ? cause.getMessage() : "query failed",
-                    cause != null ? cause : e);
         } finally {
             pending.remove(id, fut);
         }
@@ -176,23 +169,11 @@ public class MiniDbClient implements AutoCloseable {
             throw new SQLException("failed to send fetch", e);
         }
         try {
-            ClientResult result = fut.get(timeoutSeconds, TimeUnit.SECONDS);
+            ClientResult result = await(fut);
             if (result instanceof ClientResult.Rows rows) {
                 return rows;
             }
             throw new SQLException("unexpected response to fetch");
-        } catch (InterruptedException e) {
-            Thread.currentThread().interrupt();
-            throw new SQLException("interrupted during fetch", e);
-        } catch (java.util.concurrent.TimeoutException e) {
-            throw new SQLException("timeout waiting for server response");
-        } catch (ExecutionException e) {
-            Throwable cause = e.getCause();
-            if (cause instanceof SQLException sqle) {
-                throw sqle;
-            }
-            throw new SQLException(cause != null ? cause.getMessage() : "fetch failed",
-                    cause != null ? cause : e);
         } finally {
             pending.remove(id, fut);
         }
@@ -244,23 +225,11 @@ public class MiniDbClient implements AutoCloseable {
             throw new SQLException("failed to send request", e);
         }
         try {
-            ClientResult result = fut.get(timeoutSeconds, TimeUnit.SECONDS);
+            ClientResult result = await(fut);
             if (result instanceof ClientResult.Rows rows) {
                 return rows.data();
             }
             throw new SQLException("unexpected result type for metadata request");
-        } catch (InterruptedException e) {
-            Thread.currentThread().interrupt();
-            throw new SQLException("interrupted during execute", e);
-        } catch (java.util.concurrent.TimeoutException e) {
-            throw new SQLException("timeout waiting for server response");
-        } catch (ExecutionException e) {
-            Throwable cause = e.getCause();
-            if (cause instanceof SQLException sqle) {
-                throw sqle;
-            }
-            throw new SQLException(cause != null ? cause.getMessage() : "query failed",
-                    cause != null ? cause : e);
         } finally {
             pending.remove(id, fut);
         }
@@ -287,6 +256,24 @@ public class MiniDbClient implements AutoCloseable {
             f.completeExceptionally(new SQLException(reason));
         }
         pending.clear();
+    }
+
+    private <T> T await(CompletableFuture<T> fut) throws SQLException {
+        try {
+            return noTimeout ? fut.get() : fut.get(timeoutSeconds, TimeUnit.SECONDS);
+        } catch (InterruptedException e) {
+            Thread.currentThread().interrupt();
+            throw new SQLException("interrupted", e);
+        } catch (java.util.concurrent.TimeoutException e) {
+            throw new SQLException("timeout waiting for server response");
+        } catch (ExecutionException e) {
+            Throwable cause = e.getCause();
+            if (cause instanceof SQLException sqle) {
+                throw sqle;
+            }
+            throw new SQLException(cause != null ? cause.getMessage() : "query failed",
+                    cause != null ? cause : e);
+        }
     }
 
     private VectorSchemaRoot readArrow(byte[] data) throws SQLException {

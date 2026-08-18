@@ -17,6 +17,8 @@ import io.netty.channel.socket.SocketChannel;
 import io.netty.channel.socket.nio.NioServerSocketChannel;
 import java.net.InetSocketAddress;
 import java.nio.file.Path;
+import java.util.concurrent.ExecutorService;
+import java.util.concurrent.Executors;
 import org.apache.arrow.memory.BufferAllocator;
 import org.apache.arrow.memory.RootAllocator;
 import org.slf4j.Logger;
@@ -32,6 +34,7 @@ public class MiniDbServer implements AutoCloseable {
     private EventLoopGroup boss;
     private EventLoopGroup workers;
     private Channel channel;
+    private ExecutorService queryPool;
 
     public void start(int port, Path dataDir) throws Exception {
         allocator = new RootAllocator();
@@ -51,7 +54,7 @@ public class MiniDbServer implements AutoCloseable {
                     protected void initChannel(SocketChannel ch) {
                         ch.pipeline().addLast(new MessageDecoder());
                         ch.pipeline().addLast(new MessageEncoder());
-                        ch.pipeline().addLast(new SessionHandler(executor, metadata));
+                        ch.pipeline().addLast(new SessionHandler(executor, metadata, queryPool));
                     }
                 });
         channel = bootstrap.bind(port).sync().channel();
@@ -73,6 +76,9 @@ public class MiniDbServer implements AutoCloseable {
         }
         if (workers != null) {
             workers.shutdownGracefully();
+        }
+        if (queryPool != null) {
+            queryPool.shutdown();
         }
         if (storage != null) {
             storage.close();

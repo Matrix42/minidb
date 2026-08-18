@@ -36,7 +36,7 @@ public class TpcdsBenchmarkRunner {
         List<QueryResult> results = new ArrayList<>();
         MiniDbServer server = new MiniDbServer();
         server.start(0, dataDir);
-        try (Connection c = DriverManager.getConnection("jdbc:minidb://127.0.0.1:" + server.port());
+        try (Connection c = DriverManager.getConnection("jdbc:minidb://127.0.0.1:" + server.port() + "?timeout=0");
              Statement s = c.createStatement()) {
             for (Map.Entry<String, String> e : queries.entrySet()) {
                 results.add(runOne(s, e.getKey(), e.getValue()));
