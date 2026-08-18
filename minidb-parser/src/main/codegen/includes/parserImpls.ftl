@@ -284,8 +284,8 @@ SqlCreate SqlCreateTable(Span s, boolean replace) :
             [ <WITH> tableOptions = TableOptions() ]
             {
                 if (tableOptions != null) {
-                    // SqlCreateTableLike 无 tableOptions 字段,借用 includingOptions 列表传递。
-                    createTableLike.includingOptions.add(tableOptions);
+                    // Pass WITH options through includingOptions (SqlCreateTableLike has no tableOptions field).
+                    ((SqlCreateTableLike) createTableLike).includingOptions.add(tableOptions);
                 }
                 return createTableLike;
             }
