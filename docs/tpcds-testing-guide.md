@@ -28,11 +28,11 @@ $JAVA $OPTS -cp "$CP" com.minidb.tpcds.TpcdsBenchmark generate \
 ```bash
 $JAVA $OPTS -Xmx6g -cp "$CP" com.minidb.tpcds.TpcdsBenchmark run \
   --data-dir "E:/jdbc server/minidb-tpcds/target/tpcds-data" \
-  --query-dir "F:/DSGen-software-code-4.0.0/query_templates" \
   --scale 0.1 --output "E:/jdbc server/minidb-tpcds/target/results/run.json"
 ```
 
 - `run` 先用 `TpcdsTemplateParser` 把 99 个 `.tpl` 解析成 SQL,再启动 MiniDbServer 逐条跑。
+- 查询模板已内置到模块 resources(99 个 `.tpl`),无需 `--query-dir`;需要外部模板目录时才传。
 - 每条记录耗时/行数/成败,失败不中断,结果写 JSON。
 
 ### 3. 对比两次
