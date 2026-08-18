@@ -60,14 +60,17 @@ class JoinReordererTest {
     @Test
     void reorderEliminatesCrossJoinAndPreservesSemantics() {
         // d 只经 c.did=d.id 连接 c,却排在 c 之前(FROM a,b,d,c);重排后应挪到 c 之后。
-        String sql = "SELECT a.id FROM a, b, d, c"
+        // 选 d.id 是为了验证字段顺序被还原:重排后 d 移到末位,若不补 Project 会读到错列。
+        String sql = "SELECT a.id, d.id AS did FROM a, b, d, c"
                 + " WHERE a.bid = b.id AND a.cid = c.id AND c.did = d.id"
                 + " ORDER BY a.id";
         VectorSchemaRoot root = ((QueryResult.Rows) executor.execute(sql)).data();
         try {
             assertEquals(2, root.getRowCount());
             assertEquals(1, root.getVector("id").getObject(0));
+            assertEquals(30, root.getVector("did").getObject(0));
             assertEquals(2, root.getVector("id").getObject(1));
+            assertEquals(31, root.getVector("did").getObject(1));
         } finally {
             root.close();
         }

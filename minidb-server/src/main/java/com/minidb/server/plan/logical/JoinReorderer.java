@@ -8,6 +8,7 @@ import org.apache.calcite.rel.RelNode;
 import org.apache.calcite.rel.core.CorrelationId;
 import org.apache.calcite.rel.core.JoinRelType;
 import org.apache.calcite.rel.logical.LogicalJoin;
+import org.apache.calcite.rel.logical.LogicalProject;
 import org.apache.calcite.rex.RexBuilder;
 import org.apache.calcite.rex.RexInputRef;
 import org.apache.calcite.rex.RexNode;
@@ -189,7 +190,33 @@ public final class JoinReorderer {
                     joinCond, root.getVariablesSet(), JoinRelType.INNER);
             currentOrder.add(leafId);
         }
-        return current;
+
+        // 重排改变了 join 输出字段顺序,上层节点(Project/Aggregate)仍按原顺序引用列,
+        // 必须补一个 Project 把字段顺序还原成原扁平顺序(order 为恒等置换时跳过)。
+        boolean identity = true;
+        for (int i = 0; i < n; i++) {
+            if (order[i] != i) {
+                identity = false;
+                break;
+            }
+        }
+        if (identity) {
+            return current;
+        }
+        int[] reorderedOffset = new int[n];
+        int off = 0;
+        for (int p = 0; p < n; p++) {
+            reorderedOffset[order[p]] = off;
+            off += fieldCount[order[p]];
+        }
+        List<RexNode> projects = new ArrayList<>(totalFields(fieldCount));
+        for (int l = 0; l < n; l++) {
+            for (int f = 0; f < fieldCount[l]; f++) {
+                projects.add(rexBuilder.makeInputRef(current, reorderedOffset[l] + f));
+            }
+        }
+        return LogicalProject.create(current, List.of(), projects,
+                root.getRowType().getFieldNames());
     }
 
     /** 合取项引用的叶子下标集合(按字段偏移范围归到叶子)。 */
