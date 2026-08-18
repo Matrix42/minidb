@@ -90,7 +90,46 @@ public final class BuiltInFunctions {
                                 o.setSafe(i, Kernels.scaleTo(o,
                                         in.getObject(i).setScale(n.get(i), RoundingMode.HALF_UP)));
                             }
-                        })));
+                        }),
+                // 整数 ROUND(x, n):n>=0 无小数部分、原样返回;n<0 四舍五入到 10^|n| 位。
+                new Overload(List.of(IntVector.class, IntVector.class), IntVector.class,
+                        (args, out) -> roundIntKernel(
+                                (IntVector) args.get(0), (IntVector) args.get(1), (IntVector) out)),
+                new Overload(List.of(BigIntVector.class, IntVector.class), BigIntVector.class,
+                        (args, out) -> roundLongKernel(
+                                (BigIntVector) args.get(0), (IntVector) args.get(1), (BigIntVector) out))));
+    }
+
+    private static void roundIntKernel(IntVector in, IntVector n, IntVector out) {
+        for (int i = 0; i < in.getValueCount(); i++) {
+            if (in.isNull(i) || n.isNull(i)) {
+                out.setNull(i);
+                continue;
+            }
+            out.setSafe(i, (int) roundIntegral(in.get(i), n.get(i)));
+        }
+    }
+
+    private static void roundLongKernel(BigIntVector in, IntVector n, BigIntVector out) {
+        for (int i = 0; i < in.getValueCount(); i++) {
+            if (in.isNull(i) || n.isNull(i)) {
+                out.setNull(i);
+                continue;
+            }
+            out.setSafe(i, roundIntegral(in.get(i), n.get(i)));
+        }
+    }
+
+    /** 整数 x 按 scale 四舍五入:scale>=0 原样返回,scale<0 舍入到 10^|scale| 位。 */
+    private static long roundIntegral(long x, int scale) {
+        if (scale >= 0) {
+            return x;
+        }
+        long factor = 1;
+        for (int k = 0; k < -scale; k++) {
+            factor *= 10;
+        }
+        return Math.round(x / (double) factor) * factor;
     }
 
     /**
