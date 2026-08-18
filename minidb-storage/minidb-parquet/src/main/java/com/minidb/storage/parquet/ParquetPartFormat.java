@@ -4,6 +4,8 @@ import com.minidb.storage.common.PartFormat;
 import java.io.EOFException;
 import java.io.IOException;
 import java.io.UncheckedIOException;
+import java.math.BigDecimal;
+import java.math.BigInteger;
 import java.nio.ByteBuffer;
 import java.nio.channels.FileChannel;
 import java.nio.charset.StandardCharsets;
@@ -26,6 +28,7 @@ import org.apache.arrow.vector.TimeStampMilliVector;
 import org.apache.arrow.vector.VarBinaryVector;
 import org.apache.arrow.vector.VarCharVector;
 import org.apache.arrow.vector.VectorSchemaRoot;
+import org.apache.arrow.vector.types.pojo.ArrowType;
 import org.apache.arrow.vector.types.pojo.Schema;
 import org.apache.parquet.ParquetReadOptions;
 import org.apache.parquet.arrow.schema.SchemaConverter;
@@ -167,8 +170,7 @@ public class ParquetPartFormat implements PartFormat {
         } else if (vector instanceof VarBinaryVector v) {
             group.add(col, Binary.fromConstantByteArray(v.get(row)));
         } else if (vector instanceof DecimalVector v) {
-            group.add(col, Binary.fromConstantByteArray(
-                    v.getObject(row).toString().getBytes(StandardCharsets.UTF_8)));
+            writeDecimal(group, col, row, v);
         } else {
             throw new UnsupportedOperationException(
                     "parquet write unsupported type: " + vector.getClass().getSimpleName());
@@ -199,11 +201,35 @@ public class ParquetPartFormat implements PartFormat {
         } else if (vector instanceof VarBinaryVector v) {
             v.setSafe(row, group.getBinary(col, 0).getBytes());
         } else if (vector instanceof DecimalVector v) {
-            v.setSafe(row, new java.math.BigDecimal(
-                    new String(group.getBinary(col, 0).getBytes(), StandardCharsets.UTF_8)));
+            readDecimal(v, row, group, col);
         } else {
             throw new UnsupportedOperationException(
                     "parquet read unsupported type: " + vector.getClass().getSimpleName());
+        }
+    }
+
+    private static void writeDecimal(Group group, int col, int row, DecimalVector v) {
+        ArrowType.Decimal dt = (ArrowType.Decimal) v.getField().getType();
+        BigDecimal bd = v.getObject(row);
+        if (dt.getPrecision() <= 9) {
+            group.add(col, bd.unscaledValue().intValue());
+        } else if (dt.getPrecision() <= 18) {
+            group.add(col, bd.unscaledValue().longValue());
+        } else {
+            group.add(col, Binary.fromConstantByteArray(bd.unscaledValue().toByteArray()));
+        }
+    }
+
+    private static void readDecimal(DecimalVector v, int row, Group group, int col) {
+        ArrowType.Decimal dt = (ArrowType.Decimal) v.getField().getType();
+        int scale = dt.getScale();
+        if (dt.getPrecision() <= 9) {
+            v.setSafe(row, BigDecimal.valueOf(group.getInteger(col, 0), scale));
+        } else if (dt.getPrecision() <= 18) {
+            v.setSafe(row, BigDecimal.valueOf(group.getLong(col, 0), scale));
+        } else {
+            byte[] bytes = group.getBinary(col, 0).getBytes();
+            v.setSafe(row, new BigDecimal(new BigInteger(bytes), scale));
         }
     }
 
