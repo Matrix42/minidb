@@ -72,14 +72,24 @@ for (query : 99 条) { qe.execute(sql); }  // 记录成败 + 失败原因分类
 | 14 | `Encountered "returns"/"year"/"at"` | 保留关键字被用作标识符/别名 | 模板层把独立 `returns/year/at` 加双引号 | `TpcdsTemplateParser` |
 | 15 | 跨行 define 候选残留(`Encountered ","`) | `text(...)` 候选跨多行 | 去 define 时收集到分号结束 | `TpcdsTemplateParser` |
 | 16 | 大 join OOM(query7/10/14 等) | `JoinCommuteRule`/`JoinAssociateRule` 重排去相关后的 join 树,丢失等值条件变交叉连接 | 禁用这两个重排规则 | `Planner` |
+| 17 | `aggregate not supported: STDDEV_SAMP`(query17) | 聚合只做 SUM/AVG/MIN/MAX/COUNT | 加 `VarianceAcc`(在线累计 sum+sum²),输出类型与 AVG 同族(INTEGER→INTEGER 等) | `MiniDbAggregate` |
+| 18 | OR 条件里等值键埋在 OR 里 → NestedLoop 笛卡尔积(query13) | `JoinInfo` 抽不出 OR 里的公共等值项 | `RexUtil.pullFactors` 因子化 OR,提取公共等值键到顶层 AND | `FilterPullFactorsRule`/`JoinPullFactorsRule` |
+| 19 | FROM 顺序导致交叉连接(query18 cd2 在 customer 前) | `SqlToRelConverter` 按 FROM 顺序建左深树 | 贪心重排 INNER join 链(按等值连接图,种子=连接度最高) | `JoinReorderer` |
+| 20 | join 重排后字段顺序错位(query3 类型错配) | 重排改输出字段顺序,上层 Aggregate 列引用错位 | 补 `LogicalProject` 把字段顺序还原成原扁平顺序 | `JoinReorderer` |
+| 21 | 聚合 groupSet 不从 0 开始漏写分组键(子查询去重/query14) | `buildOutput` 用「输入索引 i<groupCount 检查 gs.get(i)」,groupSet={1} 时漏写 | 遍历输入列、set 位按序写到连续输出列 | `MiniDbAggregate` |
+| 22 | `AND(等值键,OR 残留)` 退化成 NestedLoop(query13/15) | `MiniDbHashJoinRule` 要求 `isEqui`(无残留) | HashJoin 残留过滤:等值键匹配后 eval 残留条件 | `MiniDbHashJoin`+`MiniDbHashJoinRule` |
+| 23 | `ROUND(INTEGER,2)` 无重载(query78) | ROUND 只注册 double/decimal | 加 `[Int,Int]→Int`、`[BigInt,Int]→BigInt` 整数重载 | `BuiltInFunctions` |
+| 24 | NestedLoop 单行侧被误选(query72 warehouse=1) | `left×right≈left+right`,NestedLoop 便宜 1 | 代价乘 10 惩罚因子(逐对求值比哈希查找贵一个量级) | `MiniDbNestedLoopJoin` |
+| 25 | 裸整数日期偏移 `d_date+5`(query72) | 内核不支持 date+integer/interval | 模板删偏移(同既有 ±N days 删除) | `TpcdsTemplateParser` |
 
 ## 当前状态(2026-08-18)
 
-- 成功约 **66~70 条**(从最初的 1 条提升)。
-- 剩余问题:
-  1. **query13**: 非等值/去相关后 `NestedLoopJoin` 笛卡尔积(约 92 亿匹配对),物化到 `outputRows` 极慢/堆溢出。根因是 `MiniDbNestedLoopJoin.joinPairs` 把全量匹配对物化成 `List<int[]>`,需要流式输出。
-  2. **query17**: `aggregate not supported: STDDEV_SAMP`(标准差聚合未实现)。
-  3. 其余待后台验证的 OOM 查询(query18/25/26/29/35/44/45/48/84/85/91),禁用 join 重排后多数应能跑,部分慢。
+- **99 条全部能跑通**(从最初的 1 条提升)。所有查询均执行完毕,部分较慢(query72 ~6min、query14 ~2.5min、query13/15 由笛卡尔积降至 ~4s/13s)。
+- 上一版「剩余问题」的处置:
+  1. **query13**:OR 条件因子化 + HashJoin 残留过滤(非流式输出——根因是等值键埋 OR,不是物化方式)。
+  2. **query17**:STDDEV_SAMP/POP、VAR_SAMP/POP 聚合。
+  3. **query18/25/26/29/35/44/45/48/84/85/91**:query18 由 JoinReorderer 修复(其余本就能跑,此前只是估算过大)。
+  4. 额外暴露并修复:query3(字段顺序)、query14(groupSet)、query15(OR 残留)、query72(日期偏移+代价误选)、query78(ROUND 整数)。
 
 ## 后续继续跑的方法
 
