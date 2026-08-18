@@ -14,7 +14,10 @@ import java.io.ByteArrayOutputStream;
 import java.nio.channels.Channels;
 import java.util.HashMap;
 import java.util.Map;
+import java.util.Set;
+import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.ExecutorService;
+import java.util.concurrent.Future;
 import java.util.function.Supplier;
 import org.apache.arrow.memory.BufferAllocator;
 import org.apache.arrow.vector.VectorSchemaRoot;
@@ -35,6 +38,8 @@ public class SessionHandler extends SimpleChannelInboundHandler<Message> {
     // SessionHandler is per-channel and only touched by the Netty event loop
     // thread, so a plain HashMap needs no synchronization.
     private final Map<Long, Paginator> cursors = new HashMap<>();
+    /** 未完成的查询 Future,用于 channelInactive 时 cancel(true) 中断线程。 */
+    private final Set<Future<?>> outstanding = ConcurrentHashMap.newKeySet();
 
     public SessionHandler(QueryExecutor executor, MetadataExecutor metadata,
                          ExecutorService queryPool) {
@@ -75,16 +80,24 @@ public class SessionHandler extends SimpleChannelInboundHandler<Message> {
         LOG.debug("executing: {}", req.sql());
         // 快照 currentSchema:查询执行在 worker 线程,不在事件循环线程。
         String schema = currentSchema;
-        queryPool.execute(() -> {
+        Future<?> future = queryPool.submit(() -> {
             long start = System.nanoTime();
             try {
                 QueryResult result = executor.executeCursor(req.sql(), schema);
-                // 回到事件循环处理结果(Netty 写操作需在事件循环线程)。
+                // 客户端断开(channelInactive→cancel)时线程被中断,丢弃结果。
+                if (Thread.currentThread().isInterrupted()) {
+                    closeResult(result);
+                    return;
+                }
                 ctx.executor().execute(() -> handleResult(ctx, req, result, start));
             } catch (Exception e) {
+                if (Thread.currentThread().isInterrupted()) {
+                    return;
+                }
                 ctx.executor().execute(() -> handleError(ctx, req, e, start));
             }
         });
+        outstanding.add(future);
     }
 
     /** 在事件循环线程处理查询结果。 */
@@ -136,6 +149,16 @@ public class SessionHandler extends SimpleChannelInboundHandler<Message> {
         LOG.warn("query failed in {} ms: {}", elapsedMs, req.sql(), e);
         String message = e.getMessage() == null ? e.toString() : e.getMessage();
         ctx.writeAndFlush(Message.ExecuteResponse.error(req.requestId(), message));
+    }
+
+    /** 客户端已断开时释放查询结果(worker 线程调用,非事件循环)。 */
+    private static void closeResult(QueryResult result) {
+        if (result instanceof QueryResult.Rows rows) {
+            rows.data().close();
+        } else if (result instanceof QueryResult.Cursor cursor) {
+            // 游标尚未被任何人取出,直接关闭句柄释放资源。
+            cursor.handle().close();
+        }
     }
 
     private void sendRows(ChannelHandlerContext ctx, long requestId, VectorSchemaRoot root,
@@ -197,6 +220,11 @@ public class SessionHandler extends SimpleChannelInboundHandler<Message> {
 
     @Override
     public void channelInactive(ChannelHandlerContext ctx) throws Exception {
+        // 客户端断开:取消所有未完成的查询(cancel(true)中断 worker 线程)。
+        for (Future<?> f : outstanding) {
+            f.cancel(true);
+        }
+        outstanding.clear();
         // Release every still-open cursor when the connection drops, otherwise
         // the paginator's batches leak (their allocator is only released at
         // iterator close).

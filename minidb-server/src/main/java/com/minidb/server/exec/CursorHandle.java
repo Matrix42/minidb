@@ -12,6 +12,11 @@ import org.apache.arrow.vector.types.pojo.Schema;
  */
 public record CursorHandle(BatchIterator iterator, ExecContext context, Schema schema) {
 
+    /** 释放游标(关闭底层迭代器),不物化数据。 */
+    public void close() {
+        iterator.close();
+    }
+
     /** Pulls every remaining batch into a single owned root and closes the iterator. */
     public VectorSchemaRoot materialize() {
         VectorSchemaRoot merged = null;
