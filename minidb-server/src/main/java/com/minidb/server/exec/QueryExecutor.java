@@ -293,7 +293,7 @@ public class QueryExecutor {
         return new QueryResult.Update(0);
     }
 
-    /** CREATE TABLE t LIKE src:复制源表的列与约束,不复制数据。 */
+    /** CREATE TABLE t LIKE src:复制源表的列与约束,可选 WITH 覆盖存储格式。 */
     private QueryResult handleCreateLike(SqlCreateTableLike like, String currentSchema) {
         List<String> targetParts = like.name.names;
         String targetSchema = targetParts.size() > 1 ? targetParts.get(0) : currentSchema;
@@ -305,9 +305,16 @@ public class QueryExecutor {
         if (source == null) {
             throw new IllegalArgumentException("source table not found: " + like.sourceTable);
         }
+        // WITH 选项通过 includingOptions 列表传递(parser 借用该字段)。
+        StorageFormat storageFormat = source.storageFormat();
+        for (SqlNode node : like.includingOptions) {
+            if (node instanceof SqlTableOptions options) {
+                storageFormat = storageFormatFromOptions(options);
+            }
+        }
         TableSchema target = new TableSchema(targetSchema, targetName,
                 source.columns(), source.primaryKey(), source.uniqueKeys(),
-                source.foreignKeys(), source.storageFormat());
+                source.foreignKeys(), storageFormat);
         storage.createTable(target);
         return new QueryResult.Update(0);
     }

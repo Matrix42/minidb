@@ -280,9 +280,15 @@ SqlCreate SqlCreateTable(Span s, boolean replace) :
 {
     <TABLE> ifNotExists = IfNotExistsOpt() id = CompoundIdentifier()
     (
-        <LIKE> createTableLike = SqlCreateTableLike(s, replace, ifNotExists, id) {
-            return createTableLike;
-        }
+        <LIKE> { createTableLike = SqlCreateTableLike(s, replace, ifNotExists, id); }
+            [ <WITH> tableOptions = TableOptions() ]
+            {
+                if (tableOptions != null) {
+                    // SqlCreateTableLike 无 tableOptions 字段,借用 includingOptions 列表传递。
+                    createTableLike.includingOptions.add(tableOptions);
+                }
+                return createTableLike;
+            }
     |
         [ tableElementList = TableElementList() ]
         [ <WITH> tableOptions = TableOptions() {
