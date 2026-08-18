@@ -26,12 +26,15 @@ $JAVA $OPTS -cp "$CP" com.minidb.tpcds.TpcdsBenchmark generate \
 ### 2. 跑查询
 
 ```bash
+# 推荐:--direct 直接构造 QueryExecutor 跑,不走网络,更快更稳定
 $JAVA $OPTS -Xmx6g -cp "$CP" com.minidb.tpcds.TpcdsBenchmark run \
   --data-dir "E:/jdbc server/minidb-tpcds/target/tpcds-data" \
-  --scale 0.1 --output "E:/jdbc server/minidb-tpcds/target/results/run.json"
+  --scale 0.1 --output "E:/jdbc server/minidb-tpcds/target/results/run.json" --direct
+
+# 不加 --direct 则走 MiniDbServer + JDBC 网络层(兼容旧行为)
 ```
 
-- `run` 先用 `TpcdsTemplateParser` 把 99 个 `.tpl` 解析成 SQL,再启动 MiniDbServer 逐条跑。
+- 加 `--direct` 时直接构造 `QueryExecutor` 执行,失败时能直接看到内核异常堆栈。
 - 查询模板已内置到模块 resources(99 个 `.tpl`),无需 `--query-dir`;需要外部模板目录时才传。
 - 每条记录耗时/行数/成败,失败不中断,结果写 JSON。
 
@@ -44,10 +47,17 @@ $JAVA $OPTS -cp "$CP" com.minidb.tpcds.TpcdsBenchmark compare \
 
 ### 快速诊断(逐个跑 + 分类,不走网络)
 
-不经过 MiniDbServer/JDBC,直接用 `QueryExecutor` 逐个跑,避免网络层连接断开干扰:
+不经过 MiniDbServer/JDBC,直接用 `QueryExecutor` 逐个跑,避免网络层干扰:
+
+```bash
+# 加 --direct 即可,输出 JSON 报告,查 failures 字段即知哪些失败。
+$JAVA $OPTS -Xmx6g -cp "$CP" com.minidb.tpcds.TpcdsBenchmark run \
+  --data-dir ... --scale 0.1 --output ./run.json --direct
+```
+
+也可在代码里直接构造(见 `TpcdsQueryExecutorTest` 的模式):
 
 ```java
-// 见 minidb-tpcds/target/ScanDebug.java 的临时诊断 main
 QueryExecutor qe = new QueryExecutor(catalog, storage, alloc, stats);
 for (query : 99 条) { qe.execute(sql); }  // 记录成败 + 失败原因分类
 ```

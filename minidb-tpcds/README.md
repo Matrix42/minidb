@@ -33,13 +33,20 @@
 ### 2. run — 执行查询
 
 ```bash
+# 默认:启动 MiniDbServer + JDBC 网络层跑
 ./mvnw.cmd -pl minidb-tpcds -am exec:java \
   -Dexec.mainClass=com.minidb.tpcds.TpcdsBenchmark \
   -Dexec.args="run --data-dir ./tpcds-data --scale 0.1 --output ./results/run-1.json"
+
+# --direct:直接构造 QueryExecutor 跑,不走网络,更快更稳定(推荐)
+./mvnw.cmd -pl minidb-tpcds -am exec:java \
+  -Dexec.mainClass=com.minidb.tpcds.TpcdsBenchmark \
+  -Dexec.args="run --data-dir ./tpcds-data --scale 0.1 --output ./results/run-1.json --direct"
 ```
 
-- 先解析内置的 99 个 `.tpl`(或 `--query-dir` 指定目录)生成 SQL,再启动 MiniDbServer 逐条跑。
-- 每条记录耗时/返回行数/成败;MiniDB 不支持的 SQL(如 `ROLLUP`/`GROUPING SETS`)记录为失败,**不中断后续查询**。
+- 先解析内置的 99 个 `.tpl`(或 `--query-dir` 指定目录)生成 SQL,再逐条跑。
+- 默认走 MiniDbServer + JDBC 网络层;加 `--direct` 则直接构造 `QueryExecutor` 执行(不走网络,更快且失败时能直接看到内核异常)。
+- 每条记录耗时/返回行数/成败;失败**不中断后续查询**。
 - `--output`:JSON 结果文件。
 
 ### 3. compare — 出对比柱状图
@@ -58,9 +65,9 @@
 # 1. 生成数据(一次)
 generate --scale 0.1 --data-dir ./tpcds-data
 
-# 2. 跑测试(可多次,每次一个 JSON;缺省用内置模板)
-run --data-dir ./tpcds-data --scale 0.1 --output ./results/run-1.json
-run --data-dir ./tpcds-data --scale 0.1 --output ./results/run-2.json
+# 2. 跑测试(可多次,每次一个 JSON;推荐 --direct)
+run --data-dir ./tpcds-data --scale 0.1 --output ./results/run-1.json --direct
+run --data-dir ./tpcds-data --scale 0.1 --output ./results/run-2.json --direct
 
 # 3. 对比两次
 compare ./results/run-1.json ./results/run-2.json --output ./results/report.html
