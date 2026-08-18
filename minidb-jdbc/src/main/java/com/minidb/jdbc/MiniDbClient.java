@@ -45,6 +45,7 @@ public class MiniDbClient implements AutoCloseable {
     }
 
     private static final long DEFAULT_TIMEOUT_SECONDS = 30;
+    private static final long HANDSHAKE_TIMEOUT_SECONDS = 5;
 
     private final long timeoutSeconds;
     private final boolean noTimeout;
@@ -104,7 +105,7 @@ public class MiniDbClient implements AutoCloseable {
                     });
             channel = bootstrap.connect(host, port).sync().channel();
             channel.writeAndFlush(new Message.Handshake(Protocol.VERSION)).sync();
-            handshake.get(timeoutSeconds, TimeUnit.SECONDS);
+            handshake.get(HANDSHAKE_TIMEOUT_SECONDS, TimeUnit.SECONDS);
             connected = true;
         } catch (InterruptedException e) {
             Thread.currentThread().interrupt();

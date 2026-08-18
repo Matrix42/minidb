@@ -46,6 +46,7 @@ public class MiniDbServer implements AutoCloseable {
 
         boss = new NioEventLoopGroup(1);
         workers = new NioEventLoopGroup();
+        queryPool = Executors.newCachedThreadPool();
         ServerBootstrap bootstrap = new ServerBootstrap()
                 .group(boss, workers)
                 .channel(NioServerSocketChannel.class)
