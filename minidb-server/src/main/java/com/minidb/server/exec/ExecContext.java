@@ -77,4 +77,11 @@ public class ExecContext {
     public void removeTransientTable(String name) {
         transientTables.remove(name);
     }
+
+    /** 检查当前线程是否被中断(客户端断连→Future.cancel→线程中断),是则抛异常。 */
+    public static void checkInterrupted() {
+        if (Thread.currentThread().isInterrupted()) {
+            throw new RuntimeException("query cancelled");
+        }
+    }
 }

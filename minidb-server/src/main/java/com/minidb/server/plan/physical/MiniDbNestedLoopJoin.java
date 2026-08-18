@@ -62,6 +62,9 @@ public class MiniDbNestedLoopJoin extends MiniDbJoin {
         List<int[]> outputRows = new ArrayList<>();
         try {
             for (int leftIdx = 0; leftIdx < left.getRowCount(); leftIdx++) {
+                if (leftIdx % 1000 == 0) {
+                    ExecContext.checkInterrupted();
+                }
                 for (int rightIdx = 0; rightIdx < right.getRowCount(); rightIdx++) {
                     writeProbeRow(probeRoot, left, leftIdx, right, rightIdx);
                     ValueVector conditionResult = ctx.interpreter().eval(getCondition(), probeRoot);

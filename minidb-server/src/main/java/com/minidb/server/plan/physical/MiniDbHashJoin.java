@@ -81,6 +81,9 @@ public class MiniDbHashJoin extends MiniDbJoin {
         try {
             // Probe: for each right row, join with every left row of the same key.
             for (int rightIdx = 0; rightIdx < right.getRowCount(); rightIdx++) {
+                if (rightIdx % 1000 == 0) {
+                    ExecContext.checkInterrupted();
+                }
                 List<Integer> matchingLeftRows;
                 if (hasNullKey(right, rightIdx, rightKeyCols)) {
                     matchingLeftRows = null;

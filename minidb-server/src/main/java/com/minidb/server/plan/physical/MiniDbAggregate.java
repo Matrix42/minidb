@@ -84,6 +84,7 @@ public class MiniDbAggregate extends Aggregate implements MiniDbRel {
         }
         List<ValueVector> args = new ArrayList<>();
         while (input.hasNext()) {
+            ExecContext.checkInterrupted();
             VectorSchemaRoot batch = input.next();
             args.clear();
             for (AggregateCall call : calls) {

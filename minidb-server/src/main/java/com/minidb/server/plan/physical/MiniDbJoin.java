@@ -100,6 +100,7 @@ public abstract class MiniDbJoin extends Join implements MiniDbRel {
         int total = 0;
         BatchIterator it = ((MiniDbRel) input).execute(ctx);
         while (it.hasNext()) {
+            ExecContext.checkInterrupted();
             VectorSchemaRoot b = it.next();
             batches.add(b);
             total += b.getRowCount();
