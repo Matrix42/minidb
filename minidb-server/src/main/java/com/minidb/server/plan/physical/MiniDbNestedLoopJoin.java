@@ -37,8 +37,10 @@ public class MiniDbNestedLoopJoin extends MiniDbJoin {
         // Calcite 1.42's VolcanoCost.isLt compares ONLY the rowCount component
         // (cpu/io are ignored — see VolcanoCost.isLt). Encode the estimated
         // work there so the planner can rank the three join strategies:
-        // nested-loop evaluates every (left,right) pair.
-        return planner.getCostFactory().makeCost(leftRows * rightRows, 0, 0);
+        // nested-loop evaluates every (left,right) pair. 乘 10 是因为逐对 RexInterpreter
+        // 求值比 HashJoin 的哈希查找贵一个量级;不乘的话一侧只有 1 行时 left×right ≈ left+right
+        // (如 query72 的 warehouse=1),NestedLoop 会因便宜 1 被误选。
+        return planner.getCostFactory().makeCost(leftRows * rightRows * 10, 0, 0);
     }
 
     @Override

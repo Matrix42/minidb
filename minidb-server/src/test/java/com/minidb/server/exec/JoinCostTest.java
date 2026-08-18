@@ -54,4 +54,18 @@ class JoinCostTest {
         assertTrue(RelOptUtil.toString(plan).contains("MiniDbHashJoin"),
                 "expected MiniDbHashJoin, plan=\n" + RelOptUtil.toString(plan));
     }
+
+    @Test
+    void equiJoinPicksHashEvenWhenOneSideIsSingleRow() {
+        // 一侧只有 1 行时 NestedLoop 的 left×right ≈ left+right,若不乘惩罚因子会被误选
+        // (query72 的 warehouse=1 行)。加惩罚后 Hash 恒更便宜。
+        executor.execute("CREATE TABLE single (id INTEGER)");
+        executor.execute("INSERT INTO single VALUES (1)");
+        stats.analyze("single");
+        RelNode plan = new Planner(catalog).plan(
+                "SELECT a.id FROM a JOIN single ON a.id = single.id");
+        assertTrue(RelOptUtil.toString(plan).contains("MiniDbHashJoin"),
+                "expected MiniDbHashJoin even with single-row side, plan=\n"
+                        + RelOptUtil.toString(plan));
+    }
 }
