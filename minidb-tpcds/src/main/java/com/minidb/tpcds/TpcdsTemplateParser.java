@@ -92,6 +92,9 @@ public class TpcdsTemplateParser {
         // TPC-DS 的 `date + N days` 依赖 date arithmetic(MiniDB 内核暂不支持),基准测试只测
         // 耗时不校验结果,故删掉偏移量让查询可执行(日期范围略偏,不影响「能否执行」)。
         text = text.replaceAll("[+-]\\s*\\d+\\s+days", "");
+        // 裸整数偏移(如 query72 的 d1.d_date + 5):内核同样不支持 date+integer/interval,
+        // 一并删掉偏移量。(?!…)避免误伤 d_date_sk。
+        text = text.replaceAll("(d_date)(?![a-z0-9_])\\s*[+-]\\s*\\d+", "$1");
         // TPC-DS 里部分保留关键字被用作标识符(as returns/sum(returns)/as year),Calcite
         // 解析报错,加双引号转成标识符(\b 保证不误伤 store_returns 里的 returns)。
         text = text.replaceAll("(?i)\\b(returns|year|at)\\b", "\"$1\"");
