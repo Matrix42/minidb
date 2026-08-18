@@ -166,8 +166,9 @@ public class ParquetPartFormat implements PartFormat {
             group.add(col, v.get(row));
         } else if (vector instanceof VarBinaryVector v) {
             group.add(col, Binary.fromConstantByteArray(v.get(row)));
-        } else if (vector instanceof DecimalVector) {
-            throw new UnsupportedOperationException("parquet 暂不支持 DECIMAL 列");
+        } else if (vector instanceof DecimalVector v) {
+            group.add(col, Binary.fromConstantByteArray(
+                    v.getObject(row).toString().getBytes(StandardCharsets.UTF_8)));
         } else {
             throw new UnsupportedOperationException(
                     "parquet write unsupported type: " + vector.getClass().getSimpleName());
@@ -197,6 +198,9 @@ public class ParquetPartFormat implements PartFormat {
             v.setSafe(row, group.getLong(col, 0));
         } else if (vector instanceof VarBinaryVector v) {
             v.setSafe(row, group.getBinary(col, 0).getBytes());
+        } else if (vector instanceof DecimalVector v) {
+            v.setSafe(row, new java.math.BigDecimal(
+                    new String(group.getBinary(col, 0).getBytes(), StandardCharsets.UTF_8)));
         } else {
             throw new UnsupportedOperationException(
                     "parquet read unsupported type: " + vector.getClass().getSimpleName());
