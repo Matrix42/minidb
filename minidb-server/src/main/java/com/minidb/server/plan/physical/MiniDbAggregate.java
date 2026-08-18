@@ -234,10 +234,15 @@ public class MiniDbAggregate extends Aggregate implements MiniDbRel {
                 for (Map.Entry<List<Object>, GroupState> e : groupMaps.get(g).entrySet()) {
                     List<Object> key = e.getKey();
                     int keyIdx = 0;
-                    // 分组列:在 groupSet 里填值,不在的填 NULL(ROLLUP 汇总行)。
-                    for (int i = 0; i < groupCount; i++) {
+                    // 分组列:把 groupSet 的 set 位按序写到连续输出列。不能按输入索引
+                    // i<groupCount 检查 gs.get(i)——groupSet 可能不从 0 开始(如 EXISTS
+                    // 去相关产生 groupSet={1} 去重 b.aid,cardinality=1 但组列在输入下标 1,
+                    // 旧写法漏写该键,输出列恒 NULL,join 永远不匹配)。
+                    int outCol = 0;
+                    for (int i = 0; i < getInput().getRowType().getFieldCount(); i++) {
                         if (gs.get(i)) {
-                            RowVectors.writeObject(vectors.get(i), row, key.get(keyIdx++));
+                            RowVectors.writeObject(vectors.get(outCol), row, key.get(keyIdx++));
+                            outCol++;
                         }
                     }
                     int col = groupCount;
