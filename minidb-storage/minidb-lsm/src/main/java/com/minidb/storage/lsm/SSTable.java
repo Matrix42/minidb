@@ -1,0 +1,31 @@
+package com.minidb.storage.lsm;
+
+import java.nio.file.Path;
+import java.util.Comparator;
+import java.util.List;
+
+public record SSTable(Path file, int level, long seq,
+                      List<Object> minKey, List<Object> maxKey,
+                      long rowCount, BloomFilter bloom) {
+
+    @SuppressWarnings({"unchecked", "rawtypes"})
+    private static final Comparator<Object> CMP = (a, b) ->
+            ((Comparable) a).compareTo(b);
+
+    public boolean overlaps(List<Object> rangeMin, List<Object> rangeMax) {
+        // 两个 key range 不重叠的条件: maxKey < rangeMin 或 minKey > rangeMax
+        // 重叠 = !(maxKey < rangeMin || minKey > rangeMax)
+        boolean maxLessThanRangeMin = compareKeys(maxKey, rangeMin) < 0;
+        boolean minGreaterThanRangeMax = compareKeys(minKey, rangeMax) > 0;
+        return !(maxLessThanRangeMin || minGreaterThanRangeMax);
+    }
+
+    private static int compareKeys(List<Object> a, List<Object> b) {
+        int minLen = Math.min(a.size(), b.size());
+        for (int i = 0; i < minLen; i++) {
+            int cmp = CMP.compare(a.get(i), b.get(i));
+            if (cmp != 0) return cmp;
+        }
+        return Integer.compare(a.size(), b.size());
+    }
+}
