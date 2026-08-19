@@ -11,6 +11,7 @@ import com.minidb.storage.common.SimpleTable;
 import com.minidb.storage.common.StorageFormat;
 import com.minidb.storage.common.TableHandle;
 import com.minidb.storage.common.TableSchema;
+import com.minidb.storage.common.TableType;
 import com.minidb.storage.common.TableStorage;
 import com.minidb.storage.lsm.LSMBackgroundExecutor;
 import com.minidb.storage.lsm.LSMTable;
@@ -358,11 +359,14 @@ public class StorageManager implements AutoCloseable {
 
     // ---- 内部辅助 ----
 
-    /** 按 TableSchema 创建对应类型的 TableHandle:有主键→LSMTable,无→SimpleTable。 */
+    /** 按 TableSchema 创建对应类型的 TableHandle。
+     * tableType 非 null 时按指定类型,为 null 时自动选择(有主键→LSM,无→Simple)。 */
     private TableHandle createTableHandle(TableSchema schema) {
         PartFormat fmt = formatFor(schema);
         Path tDir = tableStorage.tableDir(schema.schemaName(), schema.name());
-        if (!schema.primaryKey().isEmpty()) {
+        boolean useLsm = schema.tableType() == TableType.LSM
+                || (schema.tableType() == null && !schema.primaryKey().isEmpty());
+        if (useLsm) {
             return new LSMTable(schema, fmt, allocator, tDir, config.lsmMemtableSizeBytes(),
                     config.lsmBloomBitsPerKey(), config.lsmL0FileLimit(),
                     config.lsmLevelSizeMultiplier());

@@ -4,10 +4,10 @@ import java.util.List;
 
 public record TableSchema(String schemaName, String name, List<ColumnMeta> columns,
                           List<String> primaryKey, List<List<String>> uniqueKeys,
-                          List<ForeignKey> foreignKeys, StorageFormat storageFormat) {
+                          List<ForeignKey> foreignKeys, StorageFormat storageFormat,
+                          TableType tableType) {
 
     public TableSchema {
-        // 旧 catalog.json 无约束字段,反序列化为 null;归一化为空(无约束,向后兼容)。
         primaryKey = primaryKey == null ? List.of() : List.copyOf(primaryKey);
         uniqueKeys = uniqueKeys == null ? List.of()
                 : uniqueKeys.stream().map(List::copyOf).toList();
@@ -16,22 +16,28 @@ public record TableSchema(String schemaName, String name, List<ColumnMeta> colum
     }
 
     public TableSchema(String name, List<ColumnMeta> columns) {
-        this("public", name, columns, List.of(), List.of(), List.of(), StorageFormat.DEFAULT);
+        this("public", name, columns, List.of(), List.of(), List.of(), StorageFormat.DEFAULT, null);
     }
 
     public TableSchema(String schemaName, String name, List<ColumnMeta> columns) {
-        this(schemaName, name, columns, List.of(), List.of(), List.of(), StorageFormat.DEFAULT);
+        this(schemaName, name, columns, List.of(), List.of(), List.of(), StorageFormat.DEFAULT, null);
     }
 
     public TableSchema(String schemaName, String name, List<ColumnMeta> columns,
                        List<String> primaryKey, List<List<String>> uniqueKeys,
                        List<ForeignKey> foreignKeys) {
-        this(schemaName, name, columns, primaryKey, uniqueKeys, foreignKeys, StorageFormat.DEFAULT);
+        this(schemaName, name, columns, primaryKey, uniqueKeys, foreignKeys, StorageFormat.DEFAULT, null);
     }
 
-    /** 返回带指定存储格式的副本(加载时按引擎补格式用)。 */
+    public TableSchema(String schemaName, String name, List<ColumnMeta> columns,
+                       List<String> primaryKey, List<List<String>> uniqueKeys,
+                       List<ForeignKey> foreignKeys, StorageFormat storageFormat) {
+        this(schemaName, name, columns, primaryKey, uniqueKeys, foreignKeys, storageFormat, null);
+    }
+
+    /** 返回带指定存储格式的副本(加载时按引擎格式补用)。 */
     public TableSchema withStorageFormat(StorageFormat format) {
-        return new TableSchema(schemaName, name, columns, primaryKey, uniqueKeys, foreignKeys, format);
+        return new TableSchema(schemaName, name, columns, primaryKey, uniqueKeys, foreignKeys, format, tableType);
     }
 
     public ColumnMeta column(String name) {

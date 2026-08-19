@@ -11,6 +11,7 @@ import com.minidb.storage.common.ColumnType;
 import com.minidb.storage.common.ForeignKey;
 import com.minidb.storage.common.StorageFormat;
 import com.minidb.server.catalog.InformationSchemaCatalog;
+import com.minidb.storage.common.TableType;
 import com.minidb.server.catalog.MiniDbCatalog;
 import com.minidb.storage.common.TableSchema;
 import com.minidb.server.catalog.ViewDefinition;
@@ -225,9 +226,12 @@ public class QueryExecutor {
         List<List<String>> uniqueKeys = new ArrayList<>();
         List<ForeignKey> foreignKeys = new ArrayList<>();
         StorageFormat storageFormat = StorageFormat.DEFAULT;
+        TableType tableType = null;
         for (SqlNode node : create.columnList) {
             if (node instanceof SqlTableOptions options) {
-                storageFormat = storageFormatFromOptions(options);
+                TableOptions opts = tableOptionsFromWith(options);
+                storageFormat = opts.format();
+                tableType = opts.tableType();
                 continue;
             }
             if (node instanceof SqlKeyConstraint key) {
@@ -288,7 +292,7 @@ public class QueryExecutor {
             columns.add(new ColumnMeta(column.name.getSimple(), type, precision, scale, nullable));
         }
         TableSchema schema = new TableSchema(schemaName, tableName, columns,
-                primaryKey, uniqueKeys, foreignKeys, storageFormat);
+                primaryKey, uniqueKeys, foreignKeys, storageFormat, tableType);
         storage.createTable(schema);
         return new QueryResult.Update(0);
     }
@@ -307,24 +311,28 @@ public class QueryExecutor {
         }
         // WITH 选项通过 includingOptions 列表传递(parser 借用该字段)。
         StorageFormat storageFormat = source.storageFormat();
+        TableType tableType = source.tableType();
         for (SqlNode node : like.includingOptions) {
             if (node instanceof SqlTableOptions options) {
-                storageFormat = storageFormatFromOptions(options);
+                TableOptions opts = tableOptionsFromWith(options);
+                storageFormat = opts.format();
+                tableType = opts.tableType();
             }
         }
         TableSchema target = new TableSchema(targetSchema, targetName,
                 source.columns(), source.primaryKey(), source.uniqueKeys(),
-                source.foreignKeys(), storageFormat);
+                source.foreignKeys(), storageFormat, tableType);
         storage.createTable(target);
         return new QueryResult.Update(0);
     }
 
     /**
-     * 从 WITH 子句取存储格式。目前只支持 {@code format} 键(值必须是字符串字面量),
-     * 其余键明确拒绝,避免拼写错误被静默吞掉。
+     * 从 WITH 子句取存储格式和表类型。支持 {@code format} 和 {@code type} 键,
+     * 其余键明确拒绝。
      */
-    private StorageFormat storageFormatFromOptions(SqlTableOptions options) {
+    private TableOptions tableOptionsFromWith(SqlTableOptions options) {
         StorageFormat format = StorageFormat.DEFAULT;
+        TableType tableType = null;
         for (Map.Entry<String, SqlNode> e : options.options().entrySet()) {
             String key = e.getKey();
             if ("format".equalsIgnoreCase(key)) {
@@ -333,13 +341,27 @@ public class QueryExecutor {
                     throw new IllegalArgumentException("format 值必须是字符串字面量");
                 }
                 format = StorageFormat.fromString(literal.getValueAs(String.class));
+            } else if ("type".equalsIgnoreCase(key)) {
+                if (!(e.getValue() instanceof SqlLiteral literal)
+                        || literal.getTypeName() != SqlTypeName.CHAR) {
+                    throw new IllegalArgumentException("type 值必须是字符串字面量");
+                }
+                String typeStr = literal.getValueAs(String.class);
+                tableType = switch (typeStr.toLowerCase(java.util.Locale.ROOT)) {
+                    case "lsm" -> TableType.LSM;
+                    case "simple" -> TableType.SIMPLE;
+                    default -> throw new IllegalArgumentException(
+                            "unknown table type: " + typeStr + " (支持 lsm/simple)");
+                };
             } else {
                 throw new IllegalArgumentException(
-                        "unknown table option: " + key + " (目前仅支持 format)");
+                        "unknown table option: " + key + " (支持 format/type)");
             }
         }
-        return format;
+        return new TableOptions(format, tableType);
     }
+
+    private record TableOptions(StorageFormat format, TableType tableType) {}
 
     private QueryResult handleCreateView(SqlCreateView create, String currentSchema) {
         List<String> parts = create.name.names;
