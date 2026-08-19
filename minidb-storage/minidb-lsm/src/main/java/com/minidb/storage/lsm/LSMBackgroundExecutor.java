@@ -75,6 +75,10 @@ public class LSMBackgroundExecutor implements AutoCloseable {
         compactionExecutor.shutdown();
         try {
             flushExecutor.awaitTermination(5, TimeUnit.SECONDS);
+        } catch (InterruptedException e) {
+            Thread.currentThread().interrupt();
+        }
+        try {
             compactionExecutor.awaitTermination(5, TimeUnit.SECONDS);
         } catch (InterruptedException e) {
             Thread.currentThread().interrupt();

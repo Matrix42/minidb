@@ -185,11 +185,10 @@ public class LSMTable implements TableHandle {
 
     @Override
     public int compact(long targetSizeBytes) {
-        if (sstManager.levelFiles(0).size() >= 4) {
-            compaction.compactLevel0To1(sstManager, schema, format, allocator, tableDir, targetSizeBytes);
-            return 1; // 执行了一次 compaction
-        }
-        return 0;
+        // 调用方（LSMBackgroundExecutor）已经通过 needsCompaction(l0FileLimit) 检查，
+        // 这里不再重复检查，直接用配置的阈值执行 compaction
+        compaction.compactLevel0To1(sstManager, schema, format, allocator, tableDir, targetSizeBytes);
+        return 1;
     }
 
     @Override
