@@ -37,13 +37,20 @@ public class WAL implements AutoCloseable {
             crc.update(entryBytes);
             int checksum = (int) crc.getValue();
 
-            writeBuf.clear();
-            writeBuf.putInt(checksum);
-            writeBuf.putInt(entryBytes.length);
-            writeBuf.put(entryBytes);
-            writeBuf.flip();
-            while (writeBuf.hasRemaining()) {
-                channel.write(writeBuf);
+            int totalSize = 8 + entryBytes.length; // checksum(4) + length(4) + data
+            ByteBuffer buf;
+            if (totalSize <= writeBuf.capacity()) {
+                buf = writeBuf;
+                buf.clear();
+            } else {
+                buf = ByteBuffer.allocate(totalSize);
+            }
+            buf.putInt(checksum);
+            buf.putInt(entryBytes.length);
+            buf.put(entryBytes);
+            buf.flip();
+            while (buf.hasRemaining()) {
+                channel.write(buf);
             }
         } catch (IOException e) {
             throw new UncheckedIOException(e);
@@ -59,22 +66,26 @@ public class WAL implements AutoCloseable {
             channel.position(0);
             ByteBuffer header = ByteBuffer.allocate(8);
             while (channel.position() < channel.size()) {
-                header.clear();
-                readFully(header);
-                header.flip();
-                int checksum = header.getInt();
-                int length = header.getInt();
-                if (length <= 0 || length > 10 * 1024 * 1024) {
-                    break; // 损坏或异常长度，停止恢复
+                try {
+                    header.clear();
+                    readFully(header);
+                    header.flip();
+                    int checksum = header.getInt();
+                    int length = header.getInt();
+                    if (length <= 0 || length > 10 * 1024 * 1024) {
+                        break; // 损坏或异常长度，停止恢复
+                    }
+                    ByteBuffer body = ByteBuffer.allocate(length);
+                    readFully(body);
+                    crc.reset();
+                    crc.update(body.array());
+                    if ((int) crc.getValue() != checksum) {
+                        break; // checksum 不匹配，停止恢复
+                    }
+                    entries.add(decodeEntry(body.array()));
+                } catch (EOFException e) {
+                    break; // 文件截断（崩溃时部分写入），返回已恢复的条目
                 }
-                ByteBuffer body = ByteBuffer.allocate(length);
-                readFully(body);
-                crc.reset();
-                crc.update(body.array());
-                if ((int) crc.getValue() != checksum) {
-                    break; // checksum 不匹配，停止恢复
-                }
-                entries.add(decodeEntry(body.array()));
             }
         } catch (IOException e) {
             throw new UncheckedIOException(e);
@@ -159,14 +170,21 @@ public class WAL implements AutoCloseable {
     }
 
     private byte[] encodeKeyValue(Object obj) {
-        if (obj == null) return new byte[0];
+        if (obj == null) return new byte[] { 0 }; // sentinel: 0x00 = null
         // 用字符串中间格式（与 MemTable 的 key 一致）
         String s = obj.toString();
-        return s.getBytes(StandardCharsets.UTF_8);
+        byte[] utf8 = s.getBytes(StandardCharsets.UTF_8);
+        byte[] result = new byte[1 + utf8.length];
+        result[0] = 1; // sentinel: 0x01 = non-null string
+        System.arraycopy(utf8, 0, result, 1, utf8.length);
+        return result;
     }
 
     private Object decodeKeyValue(byte[] bytes) {
-        // WAL 恢复时所有值都是字符串，后续由 LSMTable 按 schema 类型转换
-        return new String(bytes, StandardCharsets.UTF_8);
+        if (bytes.length == 0) return ""; // 向后兼容旧格式（无 sentinel 的空字符串）
+        if (bytes[0] == 0) return null; // sentinel: null
+        // bytes[0] == 1: non-null string; 也兼容旧格式（无 sentinel 前缀）
+        int offset = bytes[0] == 1 ? 1 : 0;
+        return new String(bytes, offset, bytes.length - offset, StandardCharsets.UTF_8);
     }
 }
