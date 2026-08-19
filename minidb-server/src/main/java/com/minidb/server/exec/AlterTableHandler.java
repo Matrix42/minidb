@@ -9,9 +9,7 @@ import com.minidb.storage.common.ColumnMeta;
 import com.minidb.storage.common.ColumnType;
 import com.minidb.storage.common.ForeignKey;
 import com.minidb.storage.common.TableHandle;
-import com.minidb.storage.common.SimpleTable;
 import com.minidb.storage.common.TableSchema;
-import com.minidb.storage.lsm.LSMTable;
 import java.math.BigDecimal;
 import java.nio.charset.StandardCharsets;
 import java.util.ArrayList;
@@ -67,29 +65,20 @@ public class AlterTableHandler {
         TableSchema oldSchema = storage.catalog().getTable(schemaName, tableName);
         TableHandle oldTable = storage.getTable(schemaName, tableName);
         switch (alter.kind()) {
-            case ADD_COLUMN, DROP_COLUMN, ALTER_TYPE, SET_NOT_NULL, DROP_NOT_NULL, ADD_CONSTRAINT -> {
-                if (oldTable instanceof LSMTable) {
-                    throw new UnsupportedOperationException(
-                            "ALTER TABLE " + alter.kind().name().replace('_', ' ')
-                            + " not yet supported for LSM tables");
-                }
-            }
-        }
-        switch (alter.kind()) {
-            case ADD_COLUMN -> handleAddColumn(alter, oldSchema, (SimpleTable) oldTable);
-            case DROP_COLUMN -> handleDropColumn(alter, oldSchema, (SimpleTable) oldTable);
+            case ADD_COLUMN -> handleAddColumn(alter, oldSchema, oldTable);
+            case DROP_COLUMN -> handleDropColumn(alter, oldSchema, oldTable);
             case RENAME_COLUMN -> handleRenameColumn(alter, oldSchema);
             case RENAME_TABLE -> handleRenameTable(alter);
-            case ALTER_TYPE -> handleAlterType(alter, oldSchema, (SimpleTable) oldTable);
-            case SET_NOT_NULL -> handleNotNull(alter, oldSchema, (SimpleTable) oldTable, false);
-            case DROP_NOT_NULL -> handleNotNull(alter, oldSchema, (SimpleTable) oldTable, true);
-            case ADD_CONSTRAINT -> handleAddConstraint(alter, oldSchema, (SimpleTable) oldTable);
+            case ALTER_TYPE -> handleAlterType(alter, oldSchema, oldTable);
+            case SET_NOT_NULL -> handleNotNull(alter, oldSchema, oldTable, false);
+            case DROP_NOT_NULL -> handleNotNull(alter, oldSchema, oldTable, true);
+            case ADD_CONSTRAINT -> handleAddConstraint(alter, oldSchema, oldTable);
             case DROP_CONSTRAINT -> handleDropConstraint(alter, oldSchema);
         }
         return new QueryResult.Update(0);
     }
 
-    private void handleAddColumn(SqlAlterTable alter, TableSchema oldSchema, SimpleTable oldTable) {
+    private void handleAddColumn(SqlAlterTable alter, TableSchema oldSchema, TableHandle oldTable) {
         String colName = alter.column().getSimple();
         if (hasColumn(oldSchema, colName)) {
             throw new IllegalArgumentException("column already exists: " + colName);
@@ -106,7 +95,7 @@ public class AlterTableHandler {
         rewriteAddColumn(oldTable, newSchema, oldSchema.columns().size(), alter.defaultExpr());
     }
 
-    private void handleDropColumn(SqlAlterTable alter, TableSchema oldSchema, SimpleTable oldTable) {
+    private void handleDropColumn(SqlAlterTable alter, TableSchema oldSchema, TableHandle oldTable) {
         String colName = alter.column().getSimple();
         checkColumnNotConstrained(oldSchema, colName, "drop");
         int idx = oldSchema.columnIndex(colName);
@@ -136,7 +125,7 @@ public class AlterTableHandler {
         storage.renameTable(schemaName, tableName, newName);
     }
 
-    private void handleAlterType(SqlAlterTable alter, TableSchema oldSchema, SimpleTable oldTable) {
+    private void handleAlterType(SqlAlterTable alter, TableSchema oldSchema, TableHandle oldTable) {
         String colName = alter.column().getSimple();
         checkColumnNotConstrained(oldSchema, colName, "alter type");
         int idx = oldSchema.columnIndex(colName);
@@ -148,7 +137,7 @@ public class AlterTableHandler {
         rewriteAlterType(oldTable, newSchema, idx, newCol);
     }
 
-    private void handleNotNull(SqlAlterTable alter, TableSchema oldSchema, SimpleTable oldTable,
+    private void handleNotNull(SqlAlterTable alter, TableSchema oldSchema, TableHandle oldTable,
                                boolean nullable) {
         String colName = alter.column().getSimple();
         int idx = oldSchema.columnIndex(colName);
@@ -164,7 +153,7 @@ public class AlterTableHandler {
         storage.alterTable(schemaName, tableName, newSchema);
     }
 
-    private void handleAddConstraint(SqlAlterTable alter, TableSchema oldSchema, SimpleTable oldTable) {
+    private void handleAddConstraint(SqlAlterTable alter, TableSchema oldSchema, TableHandle oldTable) {
         List<String> primaryKey = oldSchema.primaryKey();
         List<List<String>> uniqueKeys = new ArrayList<>(oldSchema.uniqueKeys());
         List<ForeignKey> foreignKeys = new ArrayList<>(oldSchema.foreignKeys());
@@ -202,7 +191,7 @@ public class AlterTableHandler {
 
     // ---- 数据重写 ----
 
-    private void rewriteAddColumn(SimpleTable oldTable, TableSchema newSchema,
+    private void rewriteAddColumn(TableHandle oldTable, TableSchema newSchema,
                                   int newColIndex, SqlNode defaultExpr) {
         List<VectorSchemaRoot> newBatches = new ArrayList<>();
         int oldCols = oldTable.schema().columns().size();
@@ -227,7 +216,7 @@ public class AlterTableHandler {
         replace(oldTable, newSchema, newBatches);
     }
 
-    private void rewriteDropColumn(SimpleTable oldTable, TableSchema newSchema, int droppedIndex) {
+    private void rewriteDropColumn(TableHandle oldTable, TableSchema newSchema, int droppedIndex) {
         List<VectorSchemaRoot> newBatches = new ArrayList<>();
         int oldCols = oldTable.schema().columns().size();
         try (BatchIterator it = oldTable.scan()) {
@@ -253,7 +242,7 @@ public class AlterTableHandler {
         replace(oldTable, newSchema, newBatches);
     }
 
-    private void rewriteAlterType(SimpleTable oldTable, TableSchema newSchema,
+    private void rewriteAlterType(TableHandle oldTable, TableSchema newSchema,
                                   int changedIndex, ColumnMeta newCol) {
         List<VectorSchemaRoot> newBatches = new ArrayList<>();
         int oldCols = oldTable.schema().columns().size();
@@ -285,12 +274,12 @@ public class AlterTableHandler {
         replace(oldTable, newSchema, newBatches);
     }
 
-    private void replace(SimpleTable oldTable, TableSchema newSchema, List<VectorSchemaRoot> newBatches) {
+    private void replace(TableHandle oldTable, TableSchema newSchema, List<VectorSchemaRoot> newBatches) {
         oldTable.clearParts();
         storage.alterTable(schemaName, tableName, newSchema);
-        SimpleTable newTable = (SimpleTable) storage.getTable(schemaName, tableName);
+        TableHandle newTable = storage.getTable(schemaName, tableName);
         for (VectorSchemaRoot b : newBatches) {
-            newTable.writePart(b);
+            newTable.writePart(b, TableHandle.Operation.INSERT);
             b.close();
         }
     }
