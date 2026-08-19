@@ -11,7 +11,6 @@ import org.slf4j.LoggerFactory;
 public class LSMBackgroundExecutor implements AutoCloseable {
     private static final Logger LOG = LoggerFactory.getLogger(LSMBackgroundExecutor.class);
 
-    private final ScheduledExecutorService flushExecutor;
     private final ScheduledExecutorService compactionExecutor;
     private final Map<String, LSMTable> tables = new ConcurrentHashMap<>();
     private final int l0FileLimit;
@@ -22,11 +21,6 @@ public class LSMBackgroundExecutor implements AutoCloseable {
         this.l0FileLimit = l0FileLimit;
         this.targetSizeBytes = targetSizeBytes;
         this.intervalMs = intervalMs;
-        this.flushExecutor = Executors.newSingleThreadScheduledExecutor(r -> {
-            Thread t = new Thread(r, "lsm-flush");
-            t.setDaemon(true);
-            return t;
-        });
         this.compactionExecutor = Executors.newSingleThreadScheduledExecutor(r -> {
             Thread t = new Thread(r, "lsm-compaction");
             t.setDaemon(true);
@@ -43,18 +37,8 @@ public class LSMBackgroundExecutor implements AutoCloseable {
     }
 
     public void start() {
-        flushExecutor.scheduleWithFixedDelay(() -> {
-            for (var entry : tables.entrySet()) {
-                try {
-                    // Flush is triggered synchronously in LSMTable.writePart.
-                    // This periodic check is a safety net for idle tables.
-                    entry.getValue().flushMemTable();
-                } catch (Exception e) {
-                    LOG.error("flush check failed for {}", entry.getKey(), e);
-                }
-            }
-        }, intervalMs, intervalMs, TimeUnit.MILLISECONDS);
-
+        // flushMemTable() is triggered synchronously in LSMTable.writePart() when
+        // MemTable exceeds the threshold. No periodic safety-net flush needed.
         compactionExecutor.scheduleWithFixedDelay(() -> {
             for (var entry : tables.entrySet()) {
                 try {
@@ -71,13 +55,7 @@ public class LSMBackgroundExecutor implements AutoCloseable {
 
     @Override
     public void close() {
-        flushExecutor.shutdown();
         compactionExecutor.shutdown();
-        try {
-            flushExecutor.awaitTermination(5, TimeUnit.SECONDS);
-        } catch (InterruptedException e) {
-            Thread.currentThread().interrupt();
-        }
         try {
             compactionExecutor.awaitTermination(5, TimeUnit.SECONDS);
         } catch (InterruptedException e) {
