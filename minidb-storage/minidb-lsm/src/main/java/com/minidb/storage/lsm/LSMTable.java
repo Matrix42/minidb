@@ -25,6 +25,7 @@ public class LSMTable implements TableHandle {
     private final Compaction compaction;
     private final WAL wal;
     private volatile MemTable memTable;
+    private volatile boolean closed;
 
     public LSMTable(TableSchema schema, PartFormat format, BufferAllocator allocator,
                     Path tableDir, long flushThresholdBytes) {
@@ -77,7 +78,16 @@ public class LSMTable implements TableHandle {
                 for (Object k : entry.key()) {
                     key.add(SSTableReader.decodeKeyValue(k.toString()));
                 }
-                memTable.put(key, entry.value());
+                // WAL values 也是 String，需按列类型转换
+                RowValue rv = entry.value();
+                if (rv.values() != null) {
+                    Object[] converted = new Object[rv.values().length];
+                    for (int c = 0; c < converted.length; c++) {
+                        converted[c] = convertValue(rv.values()[c], schema.columns().get(c).type());
+                    }
+                    rv = new RowValue(rv.kind(), converted);
+                }
+                memTable.put(key, rv);
             }
             // 如果接近阈值，直接 flush
             if (memTable.needsFlush()) {
@@ -241,6 +251,7 @@ public class LSMTable implements TableHandle {
 
     @Override
     public void close() throws Exception {
+        closed = true;
         // 关闭前 flush MemTable
         if (!memTable.isEmpty()) {
             flushMemTable();
@@ -249,6 +260,7 @@ public class LSMTable implements TableHandle {
     }
 
     public void flushMemTable() {
+        if (closed) return;
         MemTable oldMt = this.memTable;
         this.memTable = new MemTable(schema, flushThresholdBytes);
         if (oldMt.isEmpty()) {
@@ -282,6 +294,7 @@ public class LSMTable implements TableHandle {
 
     // 暴露给后台任务
     public boolean needsCompaction(int l0Limit) {
+        if (closed) return false;
         // L0: 文件数触发
         if (sstManager.levelFiles(0).size() >= l0Limit) return true;
         // L1+: 层大小触发
@@ -298,5 +311,24 @@ public class LSMTable implements TableHandle {
             if (levelSizeLimit < 0) break;
         }
         return false;
+    }
+
+    /** WAL 恢复时将 String 值转换为列类型对应的 Java 类型。 */
+    private static Object convertValue(Object val, ColumnType type) {
+        if (val == null) return null;
+        String s = val.toString();
+        return switch (type) {
+            case SMALLINT -> Short.parseShort(s);
+            case INTEGER -> Integer.parseInt(s);
+            case BIGINT -> Long.parseLong(s);
+            case REAL, FLOAT -> Float.parseFloat(s);
+            case DOUBLE -> Double.parseDouble(s);
+            case DECIMAL, NUMERIC -> new java.math.BigDecimal(s);
+            case BOOLEAN -> Boolean.parseBoolean(s);
+            case DATE -> Integer.parseInt(s);
+            case TIME -> Integer.parseInt(s);
+            case TIMESTAMP -> Long.parseLong(s);
+            default -> s; // VARCHAR, CHAR, BINARY 等保持字符串
+        };
     }
 }
