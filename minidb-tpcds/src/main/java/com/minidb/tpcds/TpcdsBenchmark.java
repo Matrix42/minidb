@@ -1,5 +1,8 @@
 package com.minidb.tpcds;
 
+import com.minidb.storage.common.StorageFormat;
+import com.minidb.storage.common.TableType;
+
 import java.nio.file.Path;
 import java.util.HashMap;
 import java.util.Map;
@@ -25,7 +28,7 @@ public class TpcdsBenchmark {
                 Map<String, String> opts = parseOptions(args, 1);
                 double scale = Double.parseDouble(opts.getOrDefault("scale", "0.1"));
                 Path dataDir = Path.of(opts.getOrDefault("data-dir", "./data"));
-                new TpcdsDataGenerator().generate(scale, dataDir);
+                new TpcdsDataGenerator().generate(scale, dataDir, StorageFormat.PARQUET, TableType.LSM);
             }
             case "run" -> {
                 Map<String, String> opts = parseOptions(args, 1);

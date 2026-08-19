@@ -158,6 +158,10 @@ public class TpcdsDataGenerator {
     }
 
     private static int timeToMillis(String raw) {
+        // tpcds 库返回的 TIME 可能是 "HH:MM:SS" 或 "1970-01-01THH:MM:SS"
+        if (raw.contains("T")) {
+            raw = raw.substring(raw.indexOf('T') + 1);
+        }
         String[] parts = raw.split(":");
         int h = Integer.parseInt(parts[0]);
         int m = Integer.parseInt(parts[1]);
