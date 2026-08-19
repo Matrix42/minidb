@@ -4,6 +4,7 @@ import com.minidb.server.catalog.MiniDbCatalog;
 import com.minidb.server.plan.Planner;
 import com.minidb.server.stats.StatsManager;
 import com.minidb.server.storage.StorageManager;
+import com.minidb.storage.common.SimpleTable;
 import java.nio.file.Path;
 import org.apache.arrow.memory.BufferAllocator;
 import org.apache.arrow.memory.RootAllocator;
@@ -50,7 +51,7 @@ class ExplainExecutorTest {
     }
 
     private void insertRows(String table, int[] ids, String[] names) {
-        var arrowTable = storage.getTable("public", table);
+        SimpleTable arrowTable = (SimpleTable) storage.getTable("public", table);
         var root = arrowTable.newBatchRoot();
         root.allocateNew();
         var idv = (IntVector) root.getVector(0);

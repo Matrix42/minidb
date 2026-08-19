@@ -53,8 +53,9 @@ public class ExecContext {
      * second-to-last segment, the table the last. Operators stay generic about
      * where the name came from; this is the storage-facing boundary.
      */
+    @SuppressWarnings("unchecked")
     public SimpleTable getTable(String schemaName, String tableName) {
-        return storage.getTable(schemaName, tableName);
+        return (SimpleTable) storage.getTable(schemaName, tableName);
     }
 
     /**
@@ -62,8 +63,9 @@ public class ExecContext {
      * paths that only have a bare name from {@code TableScan.getQualifiedName()}
      * last segment, without a live operator tree carrying the schema.
      */
+    @SuppressWarnings("unchecked")
     public SimpleTable getTable(String tableName) {
-        return storage.getTable(currentSchema, tableName);
+        return (SimpleTable) storage.getTable(currentSchema, tableName);
     }
 
     public void putTransientTable(String name, List<Object[]> rows) {

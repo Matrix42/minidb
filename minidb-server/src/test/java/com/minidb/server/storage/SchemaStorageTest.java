@@ -29,7 +29,7 @@ class SchemaStorageTest {
     }
 
     private void insertRow(StorageManager storage, String schema, String table, int id) {
-        SimpleTable t = storage.getTable(schema, table);
+        SimpleTable t = (SimpleTable) storage.getTable(schema, table);
         VectorSchemaRoot root = t.newBatchRoot();
         root.allocateNew();
         ((IntVector) root.getVector(0)).setSafe(0, id);
@@ -73,8 +73,8 @@ class SchemaStorageTest {
             storage2.loadAll();
             assertEquals(1, storage2.getTable("public", "users").rowCount());
             assertEquals(1, storage2.getTable("other", "users").rowCount());
-            assertEquals(1, readFirstId(storage2.getTable("public", "users")));
-            assertEquals(2, readFirstId(storage2.getTable("other", "users")));
+            assertEquals(1, readFirstId((SimpleTable) storage2.getTable("public", "users")));
+            assertEquals(2, readFirstId((SimpleTable) storage2.getTable("other", "users")));
             storage2.close();
         }
     }

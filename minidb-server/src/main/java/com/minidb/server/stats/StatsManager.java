@@ -30,7 +30,7 @@ public class StatsManager implements AutoCloseable {
     /** 支持裸名(按 currentSchema 解析)或限定名 `schema.table`。 */
     public void analyze(String table, String currentSchema) {
         String[] st = split(table, currentSchema);
-        SimpleTable arrowTable = storage.getTable(st[0], st[1]);
+        SimpleTable arrowTable = (SimpleTable) storage.getTable(st[0], st[1]);
         TableSchema schema = arrowTable.schema();
         Map<String, Histogram> columnHistograms = new HashMap<>();
         int numCols = schema.columns().size();

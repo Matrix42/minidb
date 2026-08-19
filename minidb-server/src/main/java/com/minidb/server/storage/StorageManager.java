@@ -8,8 +8,11 @@ import com.minidb.storage.arrow.IpcFileTableStorage;
 import com.minidb.storage.common.PartFormat;
 import com.minidb.storage.common.SimpleTable;
 import com.minidb.storage.common.StorageFormat;
+import com.minidb.storage.common.TableHandle;
 import com.minidb.storage.common.TableSchema;
 import com.minidb.storage.common.TableStorage;
+import com.minidb.storage.lsm.LSMBackgroundExecutor;
+import com.minidb.storage.lsm.LSMTable;
 import com.minidb.storage.parquet.ParquetPartFormat;
 import java.io.IOException;
 import java.io.UncheckedIOException;
@@ -19,7 +22,6 @@ import java.nio.file.Path;
 import java.util.ArrayList;
 import java.util.EnumMap;
 import java.util.List;
-import java.util.Locale;
 import java.util.Map;
 import java.util.concurrent.ConcurrentHashMap;
 import org.apache.arrow.memory.BufferAllocator;
@@ -27,8 +29,8 @@ import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
 /**
- * 表目录 + catalog 持久化。数据不驻留内存:每表一个目录,数据是目录里的 part 文件,
- * 由 {@link SimpleTable} 写入直接落盘、读取递归读 part。本类只持「目录句柄」。
+ * 表目录 + catalog 持久化。数据不驻留内存:每表一个目录,数据是目录里的 part 文件。
+ * 无主键表用 {@link SimpleTable}(直接落 part)、有主键表用 {@link LSMTable}(LSM-Tree)。
  */
 public class StorageManager implements AutoCloseable {
 
@@ -41,7 +43,8 @@ public class StorageManager implements AutoCloseable {
     private final CatalogStore catalogStore;
     private final TableStorage tableStorage;
     private final Map<StorageFormat, PartFormat> formats = new EnumMap<>(StorageFormat.class);
-    private final Map<String, SimpleTable> tables = new ConcurrentHashMap<>();
+    private final Map<String, TableHandle> tables = new ConcurrentHashMap<>();
+    private final LSMBackgroundExecutor lsmExecutor;
 
     public StorageManager(MiniDbCatalog catalog, BufferAllocator allocator, Path dataDir) {
         this.catalog = catalog;
@@ -53,6 +56,10 @@ public class StorageManager implements AutoCloseable {
         formats.put(StorageFormat.ARROW, new ArrowPartFormat());
         formats.put(StorageFormat.PARQUET, new ParquetPartFormat());
         catalog.addListener(this::persistCatalog);
+        this.lsmExecutor = new LSMBackgroundExecutor(
+                config.lsmL0FileLimit(), config.compactionTargetSizeBytes(),
+                config.lsmBackgroundIntervalMs());
+        lsmExecutor.start();
     }
 
     public MiniDbConfig config() {
@@ -79,7 +86,11 @@ public class StorageManager implements AutoCloseable {
         return catalog;
     }
 
-    /** 启动:先恢复中断的 compaction,再恢复元数据,并为每张表挂「目录句柄」。 */
+    public LSMBackgroundExecutor lsmExecutor() {
+        return lsmExecutor;
+    }
+
+    /** 启动:先恢复中断的 compaction,再恢复元数据,并为每张表挂「目录句柄」(按主键有无分发 LSMTable/SimpleTable)。 */
     public void loadAll() {
         recoverCompaction();
         restoreCatalog();
@@ -89,8 +100,12 @@ public class StorageManager implements AutoCloseable {
             }
             for (String tableName : catalog.tableNames(schema)) {
                 TableSchema ts = catalog.getTable(schema, tableName);
-                tables.put(storageKey(schema, tableName),
-                        new SimpleTable(ts, allocator, tableStorage.tableDir(schema, tableName), formatFor(ts)));
+                String sk = storageKey(schema, tableName);
+                TableHandle table = createTableHandle(ts);
+                tables.put(sk, table);
+                if (table instanceof LSMTable) {
+                    lsmExecutor.register(sk, (LSMTable) table);
+                }
             }
         }
         LOG.info("loaded {} table(s)", tables.size());
@@ -107,51 +122,63 @@ public class StorageManager implements AutoCloseable {
         }
     }
 
-    public SimpleTable getTable(String schemaName, String tableName) {
-        SimpleTable table = tables.get(storageKey(schemaName, tableName));
+    public TableHandle getTable(String schemaName, String tableName) {
+        TableHandle table = tables.get(storageKey(schemaName, tableName));
         if (table == null) {
             throw new IllegalArgumentException("table not found: " + tableName);
         }
         return table;
     }
 
-    public SimpleTable createTable(TableSchema schema) {
-        SimpleTable table = new SimpleTable(schema, allocator,
-                tableStorage.tableDir(schema.schemaName(), schema.name()), formatFor(schema));
+    public TableHandle createTable(TableSchema schema) {
+        TableHandle table = createTableHandle(schema);
         String sk = storageKey(schema.schemaName(), schema.name());
         if (tables.putIfAbsent(sk, table) != null) {
             throw new IllegalArgumentException("table already exists: " + schema.name());
         }
         catalog.createTable(schema);
+        if (table instanceof LSMTable) {
+            lsmExecutor.register(sk, (LSMTable) table);
+        }
         return table;
     }
 
     public void dropTable(String schemaName, String tableName) {
         String sk = storageKey(schemaName, tableName);
-        if (tables.remove(sk) == null) {
+        TableHandle old = tables.remove(sk);
+        if (old == null) {
             throw new IllegalArgumentException("table not found: " + tableName);
         }
+        closeAndUnregister(old, sk);
         catalog.dropTable(schemaName, tableName);
         tableStorage.delete(schemaName, tableName);
     }
 
-    /** 替换一张表的 TableSchema 并重建目录句柄(数据 part 不动,由调用方负责重写)。 */
+    /** 替换一张表的 TableSchema 并重建目录句柄(数据 part 不动,由调用方负责重写)。
+     *  LSMTable 先 close(flush MemTable+关闭 WAL)再重建。 */
     public void alterTable(String schemaName, String tableName, TableSchema newSchema) {
         String sk = storageKey(schemaName, tableName);
-        if (tables.remove(sk) == null) {
+        TableHandle old = tables.remove(sk);
+        if (old == null) {
             throw new IllegalArgumentException("table not found: " + tableName);
         }
+        closeAndUnregister(old, sk);
         catalog.alterTable(schemaName, tableName, newSchema);
-        tables.put(sk, new SimpleTable(newSchema, allocator,
-                tableStorage.tableDir(schemaName, tableName), formatFor(newSchema)));
+        TableHandle table = createTableHandle(newSchema);
+        tables.put(sk, table);
+        if (table instanceof LSMTable) {
+            lsmExecutor.register(sk, (LSMTable) table);
+        }
     }
 
-    /** 改表名:迁移表目录 + 替换 catalog + 重建目录句柄。 */
+    /** 改表名:迁移表目录 + 替换 catalog + 重建目录句柄。LSMTable 先 close 再重建。 */
     public void renameTable(String schemaName, String oldName, String newName) {
         String oldKey = storageKey(schemaName, oldName);
-        if (tables.remove(oldKey) == null) {
+        TableHandle old = tables.remove(oldKey);
+        if (old == null) {
             throw new IllegalArgumentException("table not found: " + oldName);
         }
+        closeAndUnregister(old, oldKey);
         catalog.renameTable(schemaName, oldName, newName);
         Path oldDir = tableStorage.tableDir(schemaName, oldName);
         Path newDir = tableStorage.tableDir(schemaName, newName);
@@ -163,8 +190,12 @@ public class StorageManager implements AutoCloseable {
             throw new UncheckedIOException("failed to rename table directory", e);
         }
         TableSchema newSchema = catalog.getTable(schemaName, newName);
-        tables.put(storageKey(schemaName, newName),
-                new SimpleTable(newSchema, allocator, newDir, formatFor(newSchema)));
+        String newKey = storageKey(schemaName, newName);
+        TableHandle table = createTableHandle(newSchema);
+        tables.put(newKey, table);
+        if (table instanceof LSMTable) {
+            lsmExecutor.register(newKey, (LSMTable) table);
+        }
     }
 
     public void dropSchema(String schemaName) {
@@ -177,13 +208,16 @@ public class StorageManager implements AutoCloseable {
         }
         catalog.dropSchema(schemaName); // throws for public / missing — do first
         for (String k : toDrop) {
-            tables.remove(k);
+            TableHandle old = tables.remove(k);
+            if (old != null) {
+                closeAndUnregister(old, k);
+            }
         }
         tableStorage.deleteSchema(schemaName);
     }
 
     public void truncateTable(String schemaName, String tableName) {
-        SimpleTable table = tables.get(storageKey(schemaName, tableName));
+        TableHandle table = tables.get(storageKey(schemaName, tableName));
         if (table == null) {
             throw new IllegalArgumentException("table not found: " + tableName);
         }
@@ -192,7 +226,7 @@ public class StorageManager implements AutoCloseable {
 
     /** 合并一张表的所有 part(按配置的目标大小切分)。 */
     public void compactTable(String schemaName, String tableName) {
-        SimpleTable table = tables.get(storageKey(schemaName, tableName));
+        TableHandle table = tables.get(storageKey(schemaName, tableName));
         if (table == null) {
             throw new IllegalArgumentException("table not found: " + tableName);
         }
@@ -258,7 +292,41 @@ public class StorageManager implements AutoCloseable {
 
     @Override
     public void close() {
-        // 数据不驻留内存,无需 flush/close。
+        // 先关闭所有 LSMTable(flush MemTable + 关闭 WAL),再关闭后台线程。
+        for (TableHandle table : tables.values()) {
+            if (table instanceof LSMTable) {
+                try {
+                    table.close();
+                } catch (Exception e) {
+                    LOG.error("Failed to close LSM table", e);
+                }
+            }
+        }
+        lsmExecutor.close();
+    }
+
+    // ---- 内部辅助 ----
+
+    /** 按 TableSchema 创建对应类型的 TableHandle:有主键→LSMTable,无→SimpleTable。 */
+    private TableHandle createTableHandle(TableSchema schema) {
+        PartFormat fmt = formatFor(schema);
+        Path tDir = tableStorage.tableDir(schema.schemaName(), schema.name());
+        if (!schema.primaryKey().isEmpty()) {
+            return new LSMTable(schema, fmt, allocator, tDir, config.lsmMemtableSizeBytes());
+        }
+        return new SimpleTable(schema, allocator, tDir, fmt);
+    }
+
+    /** 关闭 LSMTable 并从后台 executor 注销。 */
+    private void closeAndUnregister(TableHandle table, String key) {
+        if (table instanceof LSMTable) {
+            lsmExecutor.unregister(key);
+            try {
+                table.close();
+            } catch (Exception e) {
+                LOG.error("Failed to close LSM table: {}", key, e);
+            }
+        }
     }
 
     private static String storageKey(String schemaName, String tableName) {
@@ -266,6 +334,6 @@ public class StorageManager implements AutoCloseable {
     }
 
     private static String key(String name) {
-        return name.toLowerCase(Locale.ROOT);
+        return name.toLowerCase(java.util.Locale.ROOT);
     }
 }

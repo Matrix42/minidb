@@ -190,7 +190,7 @@ public class ExplainExecutor {
     private Est estimate(RelNode node, String currentSchema) {
         if (node instanceof MiniDbScan scan) {
             String[] st = resolveTable(scan, currentSchema);
-            SimpleTable t = storage.getTable(st[0], st[1]);
+            SimpleTable t = (SimpleTable) storage.getTable(st[0], st[1]);
             return new Est((long) t.rowCount(), t.partCount(), null);
         }
         if (node instanceof MiniDbProject) {
@@ -284,7 +284,7 @@ public class ExplainExecutor {
         if (ts == null || ts.stale()) {
             return null;
         }
-        SimpleTable arrowTable = storage.getTable(st[0], st[1]);
+        SimpleTable arrowTable = (SimpleTable) storage.getTable(st[0], st[1]);
         List<com.minidb.storage.common.ColumnMeta> columns =
                 arrowTable.schema().columns();
         if (firstCol < 0 || firstCol >= columns.size()) {
@@ -304,7 +304,7 @@ public class ExplainExecutor {
         if (ts == null || ts.stale()) {
             return null;
         }
-        SimpleTable arrowTable = storage.getTable(st[0], st[1]);
+        SimpleTable arrowTable = (SimpleTable) storage.getTable(st[0], st[1]);
         List<com.minidb.storage.common.ColumnMeta> columns =
                 arrowTable.schema().columns();
         if (columns.isEmpty()) {
@@ -341,7 +341,7 @@ public class ExplainExecutor {
             return new Sel(Histogram.DEFAULT_SELECTIVITY, "stats stale");
         }
         Histogram h = StatsEstimator.histogramForCondition(
-                cond, storage.getTable(st[0], st[1]).schema(), ts);
+                cond, ((SimpleTable) storage.getTable(st[0], st[1])).schema(), ts);
         if (h == null) {
             return new Sel(Histogram.DEFAULT_SELECTIVITY, "default selectivity");
         }

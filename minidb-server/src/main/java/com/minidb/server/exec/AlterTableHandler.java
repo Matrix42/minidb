@@ -63,7 +63,7 @@ public class AlterTableHandler {
         schemaName = parts.size() > 1 ? parts.get(0) : currentSchema;
         tableName = parts.get(parts.size() - 1);
         TableSchema oldSchema = storage.catalog().getTable(schemaName, tableName);
-        SimpleTable oldTable = storage.getTable(schemaName, tableName);
+        SimpleTable oldTable = (SimpleTable) storage.getTable(schemaName, tableName);
         switch (alter.kind()) {
             case ADD_COLUMN -> handleAddColumn(alter, oldSchema, oldTable);
             case DROP_COLUMN -> handleDropColumn(alter, oldSchema, oldTable);
@@ -277,7 +277,7 @@ public class AlterTableHandler {
     private void replace(SimpleTable oldTable, TableSchema newSchema, List<VectorSchemaRoot> newBatches) {
         oldTable.clearParts();
         storage.alterTable(schemaName, tableName, newSchema);
-        SimpleTable newTable = storage.getTable(schemaName, tableName);
+        SimpleTable newTable = (SimpleTable) storage.getTable(schemaName, tableName);
         for (VectorSchemaRoot b : newBatches) {
             newTable.writePart(b);
             b.close();
