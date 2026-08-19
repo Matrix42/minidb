@@ -62,14 +62,14 @@ class CompactionTest {
 
         // L0: key=1,2,3
         MemTable mt1 = new MemTable(schema, 1024 * 1024);
-        mt1.put(List.of("1"), new RowValue(RowValue.INSERT, new Object[]{1, "v1"}));
-        mt1.put(List.of("2"), new RowValue(RowValue.INSERT, new Object[]{2, "v2"}));
-        mt1.put(List.of("3"), new RowValue(RowValue.INSERT, new Object[]{3, "v3"}));
+        mt1.put(List.of(1), new RowValue(RowValue.INSERT, new Object[]{1, "v1"}));
+        mt1.put(List.of(2), new RowValue(RowValue.INSERT, new Object[]{2, "v2"}));
+        mt1.put(List.of(3), new RowValue(RowValue.INSERT, new Object[]{3, "v3"}));
         writeSST(mgr, 0, mt1, dir, fmt);
 
         // L0: key=2 更新
         MemTable mt2 = new MemTable(schema, 1024 * 1024);
-        mt2.put(List.of("2"), new RowValue(RowValue.UPDATE, new Object[]{2, "v2-new"}));
+        mt2.put(List.of(2), new RowValue(RowValue.UPDATE, new Object[]{2, "v2-new"}));
         writeSST(mgr, 0, mt2, dir, fmt);
 
         assertEquals(2, mgr.levelFiles(0).size());

@@ -9,10 +9,8 @@ import org.apache.arrow.vector.VectorSchemaRoot;
  * 合并 MemTable + 所有 level 的 SSTable，返回去重后的 BatchIterator。
  * 按 key 排序，同 key 取最新版本（MemTable > L0 > L1 > ...），DELETE tombstone 跳过。
  *
- * <p>Key 比较使用 {@link SSTable#KEY_COMPARATOR}（而非 MemTable.KEY_COMPARATOR），
- * 因为 MemTable key 是 String，SSTable key 经 decodeKeyValue 后可能是 Integer/Long。
- * MemTable 的 String key 在进入堆之前先归一化为 Integer/Long/String（与 SSTable 一致），
- * 避免跨类型比较 ClassCastException。
+ * <p>MemTable 和 SSTable 使用统一的 {@link SSTable#KEY_COMPARATOR}（raw Comparable），
+ * key 类型一致（Integer/Long/String），无需边界转换。
  */
 public class MergeIterator {
     private final MemTable memTable;
@@ -35,22 +33,7 @@ public class MergeIterator {
         return new MergeScanIterator();
     }
 
-    /**
-     * 将 MemTable 的 String key 归一化为与 SSTable 相同的类型（Integer/Long/String），
-     * 使 {@link SSTable#KEY_COMPARATOR} 能安全比较跨来源的 key。
-     */
-    static List<Object> normalizeKey(List<Object> key) {
-        List<Object> normalized = new ArrayList<>(key.size());
-        for (Object k : key) {
-            normalized.add(SSTableReader.decodeKeyValue((String) k));
-        }
-        return normalized;
-    }
-
     private class MergeScanIterator implements BatchIterator {
-        // 每个 source 的当前行 (key, RowValue, sourcePriority)
-        // 使用 SSTable.KEY_COMPARATOR 而非 MemTable.KEY_COMPARATOR：
-        // MemTable key 是 String，SSTable key 可能是 Integer/Long，前者 String 强转会 ClassCastException
         private final PriorityQueue<SourceEntry> heap;
         private final List<SSTableReader> readers = new ArrayList<>();
         private VectorSchemaRoot currentBatch = null;
@@ -145,9 +128,7 @@ public class MergeIterator {
         private void advanceSource(Iterator<Map.Entry<List<Object>, RowValue>> iter, int priority, long seq) {
             if (iter.hasNext()) {
                 Map.Entry<List<Object>, RowValue> e = iter.next();
-                // MemTable key 是 String，归一化为 Integer/Long/String 以匹配 SSTable key 类型
-                List<Object> key = priority == 0 ? normalizeKey(e.getKey()) : e.getKey();
-                heap.offer(new SourceEntry(key, e.getValue(), iter, priority, seq));
+                heap.offer(new SourceEntry(e.getKey(), e.getValue(), iter, priority, seq));
             }
         }
 

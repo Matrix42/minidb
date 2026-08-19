@@ -20,9 +20,9 @@ class SSTableTest {
     void writeAndReadRoundTrip(@TempDir Path dir) throws Exception {
         // 准备有序的 MemTable 数据（MemTable key 是 String 类型）
         MemTable mt = new MemTable(schema, 1024 * 1024);
-        mt.put(List.of("1"), new RowValue(RowValue.INSERT, new Object[]{1, "alice"}));
-        mt.put(List.of("2"), new RowValue(RowValue.INSERT, new Object[]{2, "bob"}));
-        mt.put(List.of("3"), new RowValue(RowValue.INSERT, new Object[]{3, "carol"}));
+        mt.put(List.of(1), new RowValue(RowValue.INSERT, new Object[]{1, "alice"}));
+        mt.put(List.of(2), new RowValue(RowValue.INSERT, new Object[]{2, "bob"}));
+        mt.put(List.of(3), new RowValue(RowValue.INSERT, new Object[]{3, "carol"}));
 
         Path sstFile = dir.resolve("sst-L0-000001.sst");
         SSTableWriter writer = new SSTableWriter(sstFile, 0, schema,
@@ -65,7 +65,7 @@ class SSTableTest {
     @Test
     void bloomFilterRejectsMissingKey(@TempDir Path dir) throws Exception {
         MemTable mt = new MemTable(schema, 1024 * 1024);
-        mt.put(List.of("1"), new RowValue(RowValue.INSERT, new Object[]{1, "a"}));
+        mt.put(List.of(1), new RowValue(RowValue.INSERT, new Object[]{1, "a"}));
 
         Path sstFile = dir.resolve("sst-L0-000001.sst");
         SSTableWriter writer = new SSTableWriter(sstFile, 0, schema,
@@ -75,8 +75,8 @@ class SSTableTest {
         SSTableReader reader = new SSTableReader(sstFile, schema,
                 new ArrowPartFormat(), allocator);
         SSTable sst = reader.metadata();
-        // key 编码后 "1"→"00000000000000000001",bloom 用 encodeKey 的字节
-        assertTrue(sst.bloom().mightContain(SSTableWriter.encodeKey(List.of("1"))));
+        // 整数 key 1 经 encodeKey 零填充为 "00000000000000000001"，bloom 用同一编码
+        assertTrue(sst.bloom().mightContain(SSTableWriter.encodeKey(List.of(1))));
         assertFalse(sst.bloom().mightContain("999".getBytes()));
         reader.close();
     }
@@ -84,8 +84,8 @@ class SSTableTest {
     @Test
     void keyRangeCheck(@TempDir Path dir) throws Exception {
         MemTable mt = new MemTable(schema, 1024 * 1024);
-        mt.put(List.of("10"), new RowValue(RowValue.INSERT, new Object[]{10, "a"}));
-        mt.put(List.of("20"), new RowValue(RowValue.INSERT, new Object[]{20, "b"}));
+        mt.put(List.of(10), new RowValue(RowValue.INSERT, new Object[]{10, "a"}));
+        mt.put(List.of(20), new RowValue(RowValue.INSERT, new Object[]{20, "b"}));
 
         Path sstFile = dir.resolve("sst-L0-000001.sst");
         SSTableWriter writer = new SSTableWriter(sstFile, 0, schema,

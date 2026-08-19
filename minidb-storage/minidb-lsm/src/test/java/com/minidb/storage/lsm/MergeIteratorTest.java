@@ -19,8 +19,8 @@ class MergeIteratorTest {
     @Test
     void memTableOnly(@TempDir Path dir) {
         MemTable mt = new MemTable(schema, 1024 * 1024);
-        mt.put(List.of("1"), new RowValue(RowValue.INSERT, new Object[]{1, "a"}));
-        mt.put(List.of("2"), new RowValue(RowValue.INSERT, new Object[]{2, "b"}));
+        mt.put(List.of(1), new RowValue(RowValue.INSERT, new Object[]{1, "a"}));
+        mt.put(List.of(2), new RowValue(RowValue.INSERT, new Object[]{2, "b"}));
 
         SSTableManager mgr = new SSTableManager();
         MergeIterator mi = new MergeIterator(mt, mgr, schema,
@@ -35,7 +35,7 @@ class MergeIteratorTest {
     void memTableOverridesSSTable(@TempDir Path dir) throws Exception {
         // 先写一个 SSTable (key=1: "old")
         MemTable oldMt = new MemTable(schema, 1024 * 1024);
-        oldMt.put(List.of("1"), new RowValue(RowValue.INSERT, new Object[]{1, "old"}));
+        oldMt.put(List.of(1), new RowValue(RowValue.INSERT, new Object[]{1, "old"}));
         Path sstFile = dir.resolve("sst-L0-000001.sst");
         SSTableWriter writer = new SSTableWriter(sstFile, 0, schema,
                 new ArrowPartFormat(), allocator, 10);
@@ -51,7 +51,7 @@ class MergeIteratorTest {
 
         // MemTable 更新 key=1
         MemTable mt = new MemTable(schema, 1024 * 1024);
-        mt.put(List.of("1"), new RowValue(RowValue.UPDATE, new Object[]{1, "new"}));
+        mt.put(List.of(1), new RowValue(RowValue.UPDATE, new Object[]{1, "new"}));
 
         MergeIterator mi = new MergeIterator(mt, mgr, schema,
                 new ArrowPartFormat(), allocator);
@@ -64,7 +64,7 @@ class MergeIteratorTest {
     void deleteTombstoneRemovesRow(@TempDir Path dir) throws Exception {
         // SSTable 有 key=1
         MemTable oldMt = new MemTable(schema, 1024 * 1024);
-        oldMt.put(List.of("1"), new RowValue(RowValue.INSERT, new Object[]{1, "a"}));
+        oldMt.put(List.of(1), new RowValue(RowValue.INSERT, new Object[]{1, "a"}));
         Path sstFile = dir.resolve("sst-L0-000001.sst");
         SSTableWriter writer = new SSTableWriter(sstFile, 0, schema,
                 new ArrowPartFormat(), allocator, 10);
@@ -80,7 +80,7 @@ class MergeIteratorTest {
 
         // MemTable 删除 key=1
         MemTable mt = new MemTable(schema, 1024 * 1024);
-        mt.put(List.of("1"), new RowValue(RowValue.DELETE, null));
+        mt.put(List.of(1), new RowValue(RowValue.DELETE, null));
 
         MergeIterator mi = new MergeIterator(mt, mgr, schema,
                 new ArrowPartFormat(), allocator);

@@ -15,12 +15,13 @@ public class MemTable {
     private final ConcurrentSkipListMap<List<Object>, RowValue> rows;
     private final AtomicLong estimatedBytes;
 
-    // 按字符串字典序比较主键列。WAL 恢复时 key 统一为 String 类型，
-    // 与 BloomFilter 的 byte[] hash 路径一致，避免 Integer/String 混用导致 ClassCastException。
+    // 统一 key 比较器：用 raw Comparable，兼容 Integer/Long/String 等混合类型。
+    // 与 SSTable.KEY_COMPARATOR 语义一致，避免 MemTable/SSTable 边界处的类型转换。
+    @SuppressWarnings({"unchecked", "rawtypes"})
     public static final Comparator<List<Object>> KEY_COMPARATOR = (a, b) -> {
         int minLen = Math.min(a.size(), b.size());
         for (int i = 0; i < minLen; i++) {
-            int cmp = ((String) a.get(i)).compareTo((String) b.get(i));
+            int cmp = ((Comparable) a.get(i)).compareTo(b.get(i));
             if (cmp != 0) return cmp;
         }
         return Integer.compare(a.size(), b.size());

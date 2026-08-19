@@ -72,7 +72,12 @@ public class LSMTable implements TableHandle {
         if (!walEntries.isEmpty()) {
             // WAL 有数据 = 上次 crash 前 MemTable 没 flush
             for (WAL.Entry entry : walEntries) {
-                memTable.put(entry.key(), entry.value());
+                // WAL key 统一为 String，需解析为 Integer/Long/String 以匹配 MemTable 的 raw Comparable 比较器
+                List<Object> key = new ArrayList<>();
+                for (Object k : entry.key()) {
+                    key.add(SSTableReader.decodeKeyValue(k.toString()));
+                }
+                memTable.put(key, entry.value());
             }
             // 如果接近阈值，直接 flush
             if (memTable.needsFlush()) {
@@ -105,12 +110,10 @@ public class LSMTable implements TableHandle {
         }
 
         for (int r = 0; r < batch.getRowCount(); r++) {
-            // MemTable 的 KEY_COMPARATOR 要求 key 元素为 String 类型；
-            // Arrow 列值（Integer 等）需转为 String 再存入 MemTable。
             List<Object> key = new ArrayList<>();
             for (int idx : pkIdx) {
                 Object val = batch.getVector(idx).getObject(r);
-                key.add(val == null ? "" : val.toString());
+                key.add(val == null ? "" : val);
             }
             Object[] values = op == Operation.DELETE ? null : new Object[schema.columns().size()];
             if (values != null) {
@@ -130,12 +133,7 @@ public class LSMTable implements TableHandle {
 
     /** 查找主键对应的行（用于约束校验）。返回 null 表示不存在或被删除。 */
     public RowValue getByKey(List<Object> key) {
-        // MemTable 存储 String key，输入 key 是 Arrow 原生类型（Integer 等），先转换
-        List<Object> stringKey = new ArrayList<>();
-        for (Object k : key) {
-            stringKey.add(k == null ? "" : k.toString());
-        }
-        RowValue rv = memTable.get(stringKey);
+        RowValue rv = memTable.get(key);
         if (rv != null) {
             return rv.kind() == RowValue.DELETE ? null : rv;
         }
@@ -260,14 +258,11 @@ public class LSMTable implements TableHandle {
         long seq = sstManager.nextSeq();
         Path file = tableDir.resolve("sst-L0-" + String.format("%06d", seq) + ".sst");
 
-        // 归一化 key：MemTable 的 String key → Integer/Long/String，
-        // 与 SSTableWriter.encodeKey 的零填充编码一致，保证 bloom filter 和索引可查。
-        // 同时过滤 DELETE tombstone，SSTable 只存有效行。
+        // 过滤 DELETE tombstone，SSTable 只存有效行
         List<Map.Entry<List<Object>, RowValue>> normalized = new ArrayList<>();
         for (Map.Entry<List<Object>, RowValue> entry : oldMt.rows()) {
             if (entry.getValue().kind() == RowValue.DELETE) continue;
-            List<Object> normalizedKey = MergeIterator.normalizeKey(entry.getKey());
-            normalized.add(Map.entry(normalizedKey, entry.getValue()));
+            normalized.add(Map.entry(entry.getKey(), entry.getValue()));
         }
 
         if (normalized.isEmpty()) {
