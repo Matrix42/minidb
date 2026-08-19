@@ -24,7 +24,7 @@ class MergeIteratorTest {
 
         SSTableManager mgr = new SSTableManager();
         MergeIterator mi = new MergeIterator(mt, mgr, schema,
-                new ArrowPartFormat(), allocator, dir);
+                new ArrowPartFormat(), allocator);
         List<Object[]> rows = collect(mi);
         assertEquals(2, rows.size());
         assertEquals(1, rows.get(0)[0]);
@@ -54,7 +54,7 @@ class MergeIteratorTest {
         mt.put(List.of("1"), new RowValue(RowValue.UPDATE, new Object[]{1, "new"}));
 
         MergeIterator mi = new MergeIterator(mt, mgr, schema,
-                new ArrowPartFormat(), allocator, dir);
+                new ArrowPartFormat(), allocator);
         List<Object[]> rows = collect(mi);
         assertEquals(1, rows.size());
         assertEquals("new", rows.get(0)[1]);
@@ -83,7 +83,7 @@ class MergeIteratorTest {
         mt.put(List.of("1"), new RowValue(RowValue.DELETE, null));
 
         MergeIterator mi = new MergeIterator(mt, mgr, schema,
-                new ArrowPartFormat(), allocator, dir);
+                new ArrowPartFormat(), allocator);
         List<Object[]> rows = collect(mi);
         assertTrue(rows.isEmpty());
     }

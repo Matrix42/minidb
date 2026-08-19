@@ -1,7 +1,6 @@
 package com.minidb.storage.lsm;
 
 import com.minidb.storage.common.*;
-import java.nio.file.Path;
 import java.util.*;
 import org.apache.arrow.memory.BufferAllocator;
 import org.apache.arrow.vector.VectorSchemaRoot;
@@ -21,17 +20,15 @@ public class MergeIterator {
     private final TableSchema schema;
     private final PartFormat format;
     private final BufferAllocator allocator;
-    private final Path tableDir;
 
     public MergeIterator(MemTable memTable, SSTableManager sstManager,
                          TableSchema schema, PartFormat format,
-                         BufferAllocator allocator, Path tableDir) {
+                         BufferAllocator allocator) {
         this.memTable = memTable;
         this.sstManager = sstManager;
         this.schema = schema;
         this.format = format;
         this.allocator = allocator;
-        this.tableDir = tableDir;
     }
 
     public BatchIterator scan() {
@@ -56,7 +53,6 @@ public class MergeIterator {
         // MemTable key 是 String，SSTable key 可能是 Integer/Long，前者 String 强转会 ClassCastException
         private final PriorityQueue<SourceEntry> heap;
         private final List<SSTableReader> readers = new ArrayList<>();
-        private final List<Iterator<Map.Entry<List<Object>, RowValue>>> sstIters = new ArrayList<>();
         private VectorSchemaRoot currentBatch = null;
         private int batchPos = 0;
         private final List<Object[]> batchRows = new ArrayList<>();
@@ -67,12 +63,13 @@ public class MergeIterator {
             // 数字越小优先级越高；key 相同时优先级高的先出堆
             this.heap = new PriorityQueue<>(
                     Comparator.<SourceEntry, List<Object>>comparing(e -> e.key, SSTable.KEY_COMPARATOR)
-                            .thenComparingInt(e -> e.priority));
+                            .thenComparingInt(e -> e.priority)
+                            .thenComparingLong(e -> -e.seq));
 
             // MemTable source (priority 0)
             if (!memTable.isEmpty()) {
                 Iterator<Map.Entry<List<Object>, RowValue>> mtIter = memTable.iterator();
-                advanceSource(mtIter, 0);
+                advanceSource(mtIter, 0, Long.MAX_VALUE);
             }
 
             // SSTable sources
@@ -84,8 +81,7 @@ public class MergeIterator {
                     // 读该 SSTable 的所有行到一个 list（简化实现，后续可优化为流式）
                     List<Map.Entry<List<Object>, RowValue>> sstRows = materializeSST(reader);
                     Iterator<Map.Entry<List<Object>, RowValue>> sstIter = sstRows.iterator();
-                    advanceSource(sstIter, priority);
-                    sstIters.add(sstIter);
+                    advanceSource(sstIter, priority, sst.seq());
                 }
                 priority++;
             }
@@ -129,29 +125,29 @@ public class MergeIterator {
                 SourceEntry entry = heap.poll();
                 // 同一个 key 只取第一个（优先级最高的），使用 SSTable.KEY_COMPARATOR
                 if (lastKey != null && SSTable.KEY_COMPARATOR.compare(entry.key, lastKey) == 0) {
-                    advanceSource(entry.sourceIter, entry.priority);
+                    advanceSource(entry.sourceIter, entry.priority, entry.seq);
                     continue;
                 }
                 lastKey = entry.key;
                 // DELETE tombstone：跳过
                 if (entry.value.kind() == RowValue.DELETE) {
-                    advanceSource(entry.sourceIter, entry.priority);
+                    advanceSource(entry.sourceIter, entry.priority, entry.seq);
                     continue;
                 }
                 batchRows.add(entry.value.values());
-                advanceSource(entry.sourceIter, entry.priority);
+                advanceSource(entry.sourceIter, entry.priority, entry.seq);
             }
             if (heap.isEmpty()) {
                 exhausted = true;
             }
         }
 
-        private void advanceSource(Iterator<Map.Entry<List<Object>, RowValue>> iter, int priority) {
+        private void advanceSource(Iterator<Map.Entry<List<Object>, RowValue>> iter, int priority, long seq) {
             if (iter.hasNext()) {
                 Map.Entry<List<Object>, RowValue> e = iter.next();
                 // MemTable key 是 String，归一化为 Integer/Long/String 以匹配 SSTable key 类型
                 List<Object> key = priority == 0 ? normalizeKey(e.getKey()) : e.getKey();
-                heap.offer(new SourceEntry(key, e.getValue(), iter, priority));
+                heap.offer(new SourceEntry(key, e.getValue(), iter, priority, seq));
             }
         }
 
@@ -193,13 +189,15 @@ public class MergeIterator {
         final RowValue value;
         final Iterator<Map.Entry<List<Object>, RowValue>> sourceIter;
         final int priority;
+        final long seq;
 
         SourceEntry(List<Object> key, RowValue value,
-                    Iterator<Map.Entry<List<Object>, RowValue>> sourceIter, int priority) {
+                    Iterator<Map.Entry<List<Object>, RowValue>> sourceIter, int priority, long seq) {
             this.key = key;
             this.value = value;
             this.sourceIter = sourceIter;
             this.priority = priority;
+            this.seq = seq;
         }
     }
 }
