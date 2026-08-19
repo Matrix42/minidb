@@ -17,7 +17,8 @@ import org.apache.arrow.vector.VectorSchemaRoot;
 public class SSTableWriter {
     private static final int BLOCK_SIZE = 64 * 1024; // 64KB
     private static final byte[] MAGIC = "LSMTBL".getBytes(StandardCharsets.UTF_8);
-    private static final int FOOTER_SIZE = 64;
+    // 页脚变长,末尾 4 字节存页脚长度(不含这 4 字节自身)
+    private static final int FOOTER_LEN_SIZE = 4;
 
     private final Path file;
     private final int level;
@@ -84,9 +85,14 @@ public class SSTableWriter {
                     blockInfos.add(bi);
                 }
 
-                // Index block
+                // Index block: 先计算总大小再分配缓冲区,避免 key 超长溢出
                 long indexOffset = ch.position();
-                ByteBuffer idxBuf = ByteBuffer.allocate(blockInfos.size() * 32 + 4);
+                int idxSize = 4; // entryCount int
+                for (BlockInfo bi : blockInfos) {
+                    byte[] keyBytes = encodeKey(bi.startKey);
+                    idxSize += 2 + keyBytes.length + 8 + 4; // short keyLen + bytes + long offset + int size
+                }
+                ByteBuffer idxBuf = ByteBuffer.allocate(idxSize);
                 idxBuf.putInt(blockInfos.size());
                 for (BlockInfo bi : blockInfos) {
                     byte[] keyBytes = encodeKey(bi.startKey);
@@ -210,21 +216,25 @@ public class SSTableWriter {
     private void writeFooter(FileChannel ch, int blockCount, long rowCount,
                               List<Object> minKey, List<Object> maxKey,
                               long indexOffset, long bloomOffset) throws IOException {
-        ByteBuffer footer = ByteBuffer.allocate(FOOTER_SIZE);
+        byte[] minBytes = encodeKey(minKey);
+        byte[] maxBytes = encodeKey(maxKey);
+        // 页脚内容: magic(6) + level(1) + blockCount(4) + rowCount(8)
+        //   + minKeyLen(2) + minBytes + maxKeyLen(2) + maxBytes
+        //   + indexOffset(8) + bloomOffset(8)
+        int footerLen = 6 + 1 + 4 + 8 + 2 + minBytes.length + 2 + maxBytes.length + 8 + 8;
+        ByteBuffer footer = ByteBuffer.allocate(footerLen + FOOTER_LEN_SIZE);
         footer.put(MAGIC);
         footer.put((byte) level);
         footer.putInt(blockCount);
         footer.putLong(rowCount);
-        byte[] minBytes = encodeKey(minKey);
         footer.putShort((short) minBytes.length);
         footer.put(minBytes);
-        byte[] maxBytes = encodeKey(maxKey);
         footer.putShort((short) maxBytes.length);
         footer.put(maxBytes);
         footer.putLong(indexOffset);
         footer.putLong(bloomOffset);
-        // 填充到 64B
-        while (footer.hasRemaining()) footer.put((byte) 0);
+        // 末尾 4 字节: 页脚长度(不含自身)
+        footer.putInt(footerLen);
         footer.flip();
         while (footer.hasRemaining()) ch.write(footer);
     }

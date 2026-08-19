@@ -15,7 +15,7 @@ import org.apache.arrow.vector.VectorSchemaRoot;
 
 public class SSTableReader implements AutoCloseable {
     private static final byte[] MAGIC = "LSMTBL".getBytes(StandardCharsets.UTF_8);
-    private static final int FOOTER_SIZE = 64;
+    private static final int FOOTER_LEN_SIZE = 4;
 
     private final Path file;
     private final TableSchema schema;
@@ -32,10 +32,15 @@ public class SSTableReader implements AutoCloseable {
         this.allocator = allocator;
         try {
             long fileSize = Files.size(file);
-            // Read footer
+            // Read footer: 先读末尾 4 字节取页脚长度,再读页脚内容
             FileChannel ch = FileChannel.open(file, StandardOpenOption.READ);
-            ByteBuffer footerBuf = ByteBuffer.allocate(FOOTER_SIZE);
-            ch.position(fileSize - FOOTER_SIZE);
+            ByteBuffer lenBuf = ByteBuffer.allocate(FOOTER_LEN_SIZE);
+            ch.position(fileSize - FOOTER_LEN_SIZE);
+            readFully(ch, lenBuf);
+            lenBuf.flip();
+            int footerLen = lenBuf.getInt();
+            ByteBuffer footerBuf = ByteBuffer.allocate(footerLen);
+            ch.position(fileSize - FOOTER_LEN_SIZE - footerLen);
             readFully(ch, footerBuf);
             footerBuf.flip();
             byte[] magic = new byte[6];
@@ -63,7 +68,7 @@ public class SSTableReader implements AutoCloseable {
             ch = FileChannel.open(file, StandardOpenOption.READ);
             // bloom filter 在 index block 之后、footer 之前:
             // [data blocks] [index block] [bloom filter] [footer]
-            long bloomSize = fileSize - FOOTER_SIZE - bloomOffset;
+            long bloomSize = fileSize - FOOTER_LEN_SIZE - footerLen - bloomOffset;
             ByteBuffer bloomBuf = ByteBuffer.allocate((int) bloomSize);
             ch.position(bloomOffset);
             readFully(ch, bloomBuf);
@@ -166,13 +171,22 @@ public class SSTableReader implements AutoCloseable {
         return key;
     }
 
-    /** 单个 key 值的解码:尝试解析整数(兼容零填充),否则保留字符串。 */
+    /** 单个 key 值的解码:尝试解析整数(兼容零填充),否则保留字符串。
+     *  encodeKey 对 Integer/Long 都零填充到 20 位,这里先试 int 再试 long。 */
     static Object decodeKeyValue(String part) {
-        // 零填充的整数:尝试解析
         try {
             return Integer.parseInt(part);
         } catch (NumberFormatException e) {
-            return part;
+            try {
+                long v = Long.parseLong(part);
+                // 值在 int 范围内返回 Integer,否则返回 Long
+                if (v >= Integer.MIN_VALUE && v <= Integer.MAX_VALUE) {
+                    return (int) v;
+                }
+                return v;
+            } catch (NumberFormatException e2) {
+                return part;
+            }
         }
     }
 
