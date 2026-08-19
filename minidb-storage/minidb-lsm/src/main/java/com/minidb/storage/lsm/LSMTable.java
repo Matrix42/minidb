@@ -19,6 +19,8 @@ public class LSMTable implements TableHandle {
     private final Path tableDir;
     private final long flushThresholdBytes;
     private final int bloomBitsPerKey;
+    private final int l0FileLimit;
+    private final int levelSizeMultiplier;
     private final SSTableManager sstManager;
     private final Compaction compaction;
     private final WAL wal;
@@ -26,17 +28,25 @@ public class LSMTable implements TableHandle {
 
     public LSMTable(TableSchema schema, PartFormat format, BufferAllocator allocator,
                     Path tableDir, long flushThresholdBytes) {
-        this(schema, format, allocator, tableDir, flushThresholdBytes, 10);
+        this(schema, format, allocator, tableDir, flushThresholdBytes, 10, 4, 10);
     }
 
     public LSMTable(TableSchema schema, PartFormat format, BufferAllocator allocator,
                     Path tableDir, long flushThresholdBytes, int bloomBitsPerKey) {
+        this(schema, format, allocator, tableDir, flushThresholdBytes, bloomBitsPerKey, 4, 10);
+    }
+
+    public LSMTable(TableSchema schema, PartFormat format, BufferAllocator allocator,
+                    Path tableDir, long flushThresholdBytes, int bloomBitsPerKey,
+                    int l0FileLimit, int levelSizeMultiplier) {
         this.schema = schema;
         this.format = format;
         this.allocator = allocator;
         this.tableDir = tableDir;
         this.flushThresholdBytes = flushThresholdBytes;
         this.bloomBitsPerKey = bloomBitsPerKey;
+        this.l0FileLimit = l0FileLimit;
+        this.levelSizeMultiplier = levelSizeMultiplier;
         this.sstManager = new SSTableManager();
         this.compaction = new Compaction();
 
@@ -192,9 +202,28 @@ public class LSMTable implements TableHandle {
 
     @Override
     public int compact(long targetSizeBytes) {
-        // 调用方（LSMBackgroundExecutor）已经通过 needsCompaction(l0FileLimit) 检查，
-        // 这里不再重复检查，直接用配置的阈值执行 compaction
-        compaction.compactLevel0To1(sstManager, schema, format, allocator, tableDir, targetSizeBytes, bloomBitsPerKey);
+        // L0 → L1: 文件数触发
+        if (sstManager.levelFiles(0).size() >= l0FileLimit) {
+            compaction.compactLevel0To1(sstManager, schema, format, allocator,
+                    tableDir, targetSizeBytes, bloomBitsPerKey);
+        }
+        // L1+ → L(n+1): 层大小触发（每层上限 = targetSizeBytes * multiplier^level）
+        long levelSizeLimit = targetSizeBytes;
+        for (int level = 1; ; level++) {
+            List<SSTable> files = sstManager.levelFiles(level);
+            if (files.isEmpty()) break;
+            long levelSize = 0;
+            for (SSTable sst : files) {
+                levelSize += sst.rowCount() * 100; // 每行约 100 字节估算
+            }
+            if (levelSize >= levelSizeLimit) {
+                compaction.compactLevel(level, sstManager, schema, format, allocator,
+                        tableDir, targetSizeBytes, bloomBitsPerKey);
+            }
+            levelSizeLimit *= levelSizeMultiplier;
+            // 溢出保护
+            if (levelSizeLimit < 0) break;
+        }
         return 1;
     }
 
@@ -258,6 +287,21 @@ public class LSMTable implements TableHandle {
 
     // 暴露给后台任务
     public boolean needsCompaction(int l0Limit) {
-        return sstManager.levelFiles(0).size() >= l0Limit;
+        // L0: 文件数触发
+        if (sstManager.levelFiles(0).size() >= l0Limit) return true;
+        // L1+: 层大小触发
+        long levelSizeLimit = 64L * 1024 * 1024; // L1 基准: 64MB
+        for (int level = 1; ; level++) {
+            List<SSTable> files = sstManager.levelFiles(level);
+            if (files.isEmpty()) break;
+            long levelSize = 0;
+            for (SSTable sst : files) {
+                levelSize += sst.rowCount() * 100;
+            }
+            if (levelSize >= levelSizeLimit) return true;
+            levelSizeLimit *= levelSizeMultiplier;
+            if (levelSizeLimit < 0) break;
+        }
+        return false;
     }
 }
