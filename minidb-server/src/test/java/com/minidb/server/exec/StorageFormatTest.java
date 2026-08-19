@@ -30,7 +30,7 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
 
 /**
  * 存储格式(Arrow/Parquet)的路由与读写。格式经 Flink 风格
- * {@code WITH ('format'=...)} 子句选择,默认 arrow。
+ * {@code WITH ('format'=...)} 子句选择,默认 parquet。
  */
 class StorageFormatTest {
 
@@ -58,9 +58,9 @@ class StorageFormatTest {
     }
 
     @Test
-    void defaultIsArrow() {
+    void defaultIsParquet() {
         executor.execute("CREATE TABLE t (id INTEGER)");
-        assertEquals(StorageFormat.ARROW, catalog.getTable("public", "t").storageFormat());
+        assertEquals(StorageFormat.DEFAULT, catalog.getTable("public", "t").storageFormat());
         executor.execute("INSERT INTO t VALUES (1)");
         assertEquals(1, storage.getTable("public", "t").rowCount());
     }

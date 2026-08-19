@@ -12,21 +12,21 @@ public record TableSchema(String schemaName, String name, List<ColumnMeta> colum
         uniqueKeys = uniqueKeys == null ? List.of()
                 : uniqueKeys.stream().map(List::copyOf).toList();
         foreignKeys = foreignKeys == null ? List.of() : List.copyOf(foreignKeys);
-        storageFormat = storageFormat == null ? StorageFormat.ARROW : storageFormat;
+        storageFormat = storageFormat == null ? StorageFormat.DEFAULT : storageFormat;
     }
 
     public TableSchema(String name, List<ColumnMeta> columns) {
-        this("public", name, columns, List.of(), List.of(), List.of(), StorageFormat.ARROW);
+        this("public", name, columns, List.of(), List.of(), List.of(), StorageFormat.DEFAULT);
     }
 
     public TableSchema(String schemaName, String name, List<ColumnMeta> columns) {
-        this(schemaName, name, columns, List.of(), List.of(), List.of(), StorageFormat.ARROW);
+        this(schemaName, name, columns, List.of(), List.of(), List.of(), StorageFormat.DEFAULT);
     }
 
     public TableSchema(String schemaName, String name, List<ColumnMeta> columns,
                        List<String> primaryKey, List<List<String>> uniqueKeys,
                        List<ForeignKey> foreignKeys) {
-        this(schemaName, name, columns, primaryKey, uniqueKeys, foreignKeys, StorageFormat.ARROW);
+        this(schemaName, name, columns, primaryKey, uniqueKeys, foreignKeys, StorageFormat.DEFAULT);
     }
 
     /** 返回带指定存储格式的副本(加载时按引擎补格式用)。 */

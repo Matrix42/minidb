@@ -112,7 +112,8 @@ public class ParquetPartFormat implements PartFormat {
                 for (int r = 0; r < rows; r++) {
                     Group group = recordReader.read();
                     for (int c = 0; c < vectors.size(); c++) {
-                        if (group.getFieldRepetitionCount(c) > 0) {
+                        if (c < parquetSchema.getFieldCount()
+                                && group.getFieldRepetitionCount(c) > 0) {
                             readValue(vectors.get(c), dst + r, group, c);
                         }
                     }

@@ -224,7 +224,7 @@ public class QueryExecutor {
         List<String> primaryKey = List.of();
         List<List<String>> uniqueKeys = new ArrayList<>();
         List<ForeignKey> foreignKeys = new ArrayList<>();
-        StorageFormat storageFormat = StorageFormat.ARROW;
+        StorageFormat storageFormat = StorageFormat.DEFAULT;
         for (SqlNode node : create.columnList) {
             if (node instanceof SqlTableOptions options) {
                 storageFormat = storageFormatFromOptions(options);
@@ -324,7 +324,7 @@ public class QueryExecutor {
      * 其余键明确拒绝,避免拼写错误被静默吞掉。
      */
     private StorageFormat storageFormatFromOptions(SqlTableOptions options) {
-        StorageFormat format = StorageFormat.ARROW;
+        StorageFormat format = StorageFormat.DEFAULT;
         for (Map.Entry<String, SqlNode> e : options.options().entrySet()) {
             String key = e.getKey();
             if ("format".equalsIgnoreCase(key)) {
