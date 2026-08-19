@@ -41,24 +41,9 @@ public class TpcdsDataGenerator {
      * RelMdDistinctRowCount 能算出 join 键的 distinct 值,否则 join 行数估算退化为
      * 笛卡尔积(left×right),代价爆炸、plan 选错。事实表是复合主键,对估算帮助小,不设。
      */
-    private static final Map<String, List<String>> PRIMARY_KEYS = Map.ofEntries(
-            Map.entry("call_center", List.of("cc_call_center_sk")),
-            Map.entry("catalog_page", List.of("cp_catalog_page_sk")),
-            Map.entry("customer", List.of("c_customer_sk")),
-            Map.entry("customer_address", List.of("ca_address_sk")),
-            Map.entry("customer_demographics", List.of("cd_demo_sk")),
-            Map.entry("date_dim", List.of("d_date_sk")),
-            Map.entry("household_demographics", List.of("hd_demo_sk")),
-            Map.entry("income_band", List.of("ib_income_band_sk")),
-            Map.entry("item", List.of("i_item_sk")),
-            Map.entry("promotion", List.of("p_promo_sk")),
-            Map.entry("reason", List.of("r_reason_sk")),
-            Map.entry("ship_mode", List.of("sm_ship_mode_sk")),
-            Map.entry("store", List.of("s_store_sk")),
-            Map.entry("time_dim", List.of("t_time_sk")),
-            Map.entry("warehouse", List.of("w_warehouse_sk")),
-            Map.entry("web_page", List.of("wp_web_page_sk")),
-            Map.entry("web_site", List.of("web_site_sk")));
+    // TPC-DS 是批量数据加载 benchmark，不需要 LSM-Tree 的事务开销。
+    // 所有表走 SimpleTable 直接落 part 文件，不做 MemTable/WAL/Compaction。
+    private static final Map<String, List<String>> PRIMARY_KEYS = Map.of();
 
     public void generate(double scale, Path dataDir) {
         MiniDbCatalog catalog = new MiniDbCatalog();
