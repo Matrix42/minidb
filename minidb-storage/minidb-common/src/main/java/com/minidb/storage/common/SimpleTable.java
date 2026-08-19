@@ -22,7 +22,7 @@ import org.apache.arrow.vector.types.pojo.Schema;
  * 落成一个新 part,读取递归读所有 part 逐个返回 batch(用完释放)。part 的物理编码由
  * {@link PartFormat} 决定(arrow/parquet),本类只负责目录组织与分段。
  */
-public class SimpleTable {
+public class SimpleTable implements TableHandle {
 
     /** compaction 交换目录的后缀:新 part 先写 .tmp,交换时旧目录暂存 .bak。 */
     public static final String COMPACT_TMP_SUFFIX = ".compact.tmp";
@@ -104,6 +104,11 @@ public class SimpleTable {
     public void writePart(VectorSchemaRoot batch) {
         int seq = partSeq.incrementAndGet();
         format.write(tableDir.resolve(String.format("part-%06d.%s", seq, format.fileExtension())), batch);
+    }
+
+    @Override
+    public void writePart(VectorSchemaRoot batch, TableHandle.Operation op) {
+        writePart(batch);
     }
 
     /** 删除所有 part 文件(truncate)。 */

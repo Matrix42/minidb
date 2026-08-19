@@ -10,7 +10,7 @@ public interface TableHandle extends AutoCloseable {
     void writePart(VectorSchemaRoot batch, Operation op);
     long rowCount();
     int partCount();
-    void compact(long targetSizeBytes);
+    int compact(long targetSizeBytes);
     void clearParts();
     VectorSchemaRoot newBatchRoot();
 
