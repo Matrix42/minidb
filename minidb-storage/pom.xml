@@ -15,5 +15,6 @@
     <module>minidb-common</module>
     <module>minidb-arrow</module>
     <module>minidb-parquet</module>
+    <module>minidb-lsm</module>
   </modules>
 </project>
