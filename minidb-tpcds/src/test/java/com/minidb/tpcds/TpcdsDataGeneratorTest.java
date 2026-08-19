@@ -2,7 +2,7 @@ package com.minidb.tpcds;
 
 import com.minidb.server.catalog.MiniDbCatalog;
 import com.minidb.server.storage.StorageManager;
-import com.minidb.storage.common.SimpleTable;
+import com.minidb.storage.common.TableHandle;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import org.apache.arrow.memory.BufferAllocator;
@@ -25,10 +25,10 @@ class TpcdsDataGeneratorTest {
             assertTrue(catalog.hasTable("public", "store_sales"));
             assertTrue(catalog.hasTable("public", "customer"));
             assertTrue(catalog.hasTable("public", "date_dim"));
-            SimpleTable storeSales = storage.getTable("public", "store_sales");
+            TableHandle storeSales = storage.getTable("public", "store_sales");
             assertTrue(storeSales.rowCount() > 0, "store_sales 应有数据");
             assertTrue(Files.list(dataDir.resolve("public").resolve("store_sales"))
-                    .anyMatch(p -> p.getFileName().toString().endsWith(".arrow")));
+                    .anyMatch(p -> p.getFileName().toString().endsWith(".parquet")));
             storage.close();
         }
     }

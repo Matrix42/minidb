@@ -5,7 +5,7 @@ import com.minidb.server.exec.functions.Kernels;
 import com.minidb.server.storage.StorageManager;
 import com.minidb.storage.common.ColumnMeta;
 import com.minidb.storage.common.ColumnType;
-import com.minidb.storage.common.SimpleTable;
+import com.minidb.storage.common.TableHandle;
 import com.minidb.storage.common.TableSchema;
 import com.teradata.tpcds.Results;
 import com.teradata.tpcds.Session;
@@ -80,7 +80,7 @@ public class TpcdsDataGenerator {
         List<String> pk = PRIMARY_KEYS.getOrDefault(table.getName().toLowerCase(), List.of());
         TableSchema schema = new TableSchema("public", table.getName().toLowerCase(),
                 columns, pk, List.of(), List.of());
-        SimpleTable target = storage.createTable(schema);
+        TableHandle target = storage.createTable(schema);
 
         Results results = Results.constructResults(table, session);
         VectorSchemaRoot batch = target.newBatchRoot();
@@ -94,7 +94,7 @@ public class TpcdsDataGenerator {
             rows++;
             if (rows >= MAX_BATCH_ROWS) {
                 batch.setRowCount(rows);
-                target.writePart(batch);
+                target.writePart(batch, TableHandle.Operation.INSERT);
                 batch.close();
                 batch = target.newBatchRoot();
                 batch.allocateNew();
@@ -103,7 +103,7 @@ public class TpcdsDataGenerator {
         }
         if (rows > 0) {
             batch.setRowCount(rows);
-            target.writePart(batch);
+            target.writePart(batch, TableHandle.Operation.INSERT);
         }
         batch.close();
     }
