@@ -11,6 +11,7 @@ import com.minidb.storage.common.ForeignKey;
 import com.minidb.storage.common.TableHandle;
 import com.minidb.storage.common.SimpleTable;
 import com.minidb.storage.common.TableSchema;
+import com.minidb.storage.lsm.LSMTable;
 import java.math.BigDecimal;
 import java.nio.charset.StandardCharsets;
 import java.util.ArrayList;
@@ -65,6 +66,15 @@ public class AlterTableHandler {
         tableName = parts.get(parts.size() - 1);
         TableSchema oldSchema = storage.catalog().getTable(schemaName, tableName);
         TableHandle oldTable = storage.getTable(schemaName, tableName);
+        switch (alter.kind()) {
+            case ADD_COLUMN, DROP_COLUMN, ALTER_TYPE, SET_NOT_NULL, DROP_NOT_NULL, ADD_CONSTRAINT -> {
+                if (oldTable instanceof LSMTable) {
+                    throw new UnsupportedOperationException(
+                            "ALTER TABLE " + alter.kind().name().replace('_', ' ')
+                            + " not yet supported for LSM tables");
+                }
+            }
+        }
         switch (alter.kind()) {
             case ADD_COLUMN -> handleAddColumn(alter, oldSchema, (SimpleTable) oldTable);
             case DROP_COLUMN -> handleDropColumn(alter, oldSchema, (SimpleTable) oldTable);

@@ -39,7 +39,7 @@ public class BloomFilter {
         return true;
     }
 
-    /** 使用 MurmurHash3 风格的 64-bit hash，模拟多个 hash 函数 */
+    /** 使用 FNV-1a 64-bit hash，模拟多个 hash 函数 */
     private static long hash(byte[] key) {
         long h = 0xcbf29ce484222325L;
         for (byte b : key) {

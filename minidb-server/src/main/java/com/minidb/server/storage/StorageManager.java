@@ -182,7 +182,8 @@ public class StorageManager implements AutoCloseable {
         TableHandle table;
         if (old instanceof LSMTable) {
             table = new LSMTable(newSchema, formatFor(newSchema), allocator,
-                    tableStorage.tableDir(schemaName, tableName), config.lsmMemtableSizeBytes());
+                    tableStorage.tableDir(schemaName, tableName), config.lsmMemtableSizeBytes(),
+                    config.lsmBloomBitsPerKey());
         } else {
             table = new SimpleTable(newSchema, allocator,
                     tableStorage.tableDir(schemaName, tableName), formatFor(newSchema));
@@ -361,7 +362,8 @@ public class StorageManager implements AutoCloseable {
         PartFormat fmt = formatFor(schema);
         Path tDir = tableStorage.tableDir(schema.schemaName(), schema.name());
         if (!schema.primaryKey().isEmpty()) {
-            return new LSMTable(schema, fmt, allocator, tDir, config.lsmMemtableSizeBytes());
+            return new LSMTable(schema, fmt, allocator, tDir, config.lsmMemtableSizeBytes(),
+                    config.lsmBloomBitsPerKey());
         }
         return new SimpleTable(schema, allocator, tDir, fmt);
     }

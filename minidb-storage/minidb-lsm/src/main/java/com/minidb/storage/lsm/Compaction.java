@@ -18,7 +18,7 @@ public class Compaction {
     /** L0 → L1 compaction: 合并 L0 所有 SSTable + L1 中重叠的 SSTable */
     public void compactLevel0To1(SSTableManager mgr, TableSchema schema,
                                   PartFormat format, BufferAllocator allocator,
-                                  Path tableDir, long targetSizeBytes) {
+                                  Path tableDir, long targetSizeBytes, int bloomBitsPerKey) {
         List<SSTable> l0Files = mgr.levelFiles(0);
         if (l0Files.isEmpty()) return;
 
@@ -49,7 +49,7 @@ public class Compaction {
 
         // 归并排序输出
         List<SSTable> outputs = mergeAndWrite(inputs, 1, mgr, schema, format,
-                allocator, tableDir, targetSizeBytes);
+                allocator, tableDir, targetSizeBytes, bloomBitsPerKey);
 
         // 删除旧文件，添加新文件
         mgr.remove(inputs);
@@ -59,7 +59,7 @@ public class Compaction {
     /** 通用 compaction: 合并 L(n) → L(n+1) */
     public void compactLevel(int level, SSTableManager mgr, TableSchema schema,
                               PartFormat format, BufferAllocator allocator,
-                              Path tableDir, long targetSizeBytes) {
+                              Path tableDir, long targetSizeBytes, int bloomBitsPerKey) {
         List<SSTable> levelFiles = mgr.levelFiles(level);
         if (levelFiles.isEmpty()) return;
 
@@ -80,7 +80,7 @@ public class Compaction {
         inputs.addAll(nextOverlap);
 
         List<SSTable> outputs = mergeAndWrite(inputs, level + 1, mgr, schema,
-                format, allocator, tableDir, targetSizeBytes);
+                format, allocator, tableDir, targetSizeBytes, bloomBitsPerKey);
 
         mgr.remove(inputs);
         mgr.addLevelN(level + 1, outputs);
@@ -93,7 +93,8 @@ public class Compaction {
     private List<SSTable> mergeAndWrite(List<SSTable> inputs, int targetLevel,
                                          SSTableManager mgr, TableSchema schema,
                                          PartFormat format, BufferAllocator allocator,
-                                         Path tableDir, long targetSizeBytes) {
+                                         Path tableDir, long targetSizeBytes,
+                                         int bloomBitsPerKey) {
         // 读所有 input 行到内存
         List<Map.Entry<List<Object>, RowValue>> allRows = new ArrayList<>();
 
@@ -147,13 +148,13 @@ public class Compaction {
             chunk.add(entry);
             chunkBytes += estimateRowBytes(entry.getValue().values());
             if (chunkBytes >= targetSizeBytes) {
-                outputs.add(writeChunk(chunk, targetLevel, mgr, schema, format, allocator, tableDir));
+                outputs.add(writeChunk(chunk, targetLevel, mgr, schema, format, allocator, tableDir, bloomBitsPerKey));
                 chunk.clear();
                 chunkBytes = 0;
             }
         }
         if (!chunk.isEmpty()) {
-            outputs.add(writeChunk(chunk, targetLevel, mgr, schema, format, allocator, tableDir));
+            outputs.add(writeChunk(chunk, targetLevel, mgr, schema, format, allocator, tableDir, bloomBitsPerKey));
         }
 
         return outputs;
@@ -161,10 +162,11 @@ public class Compaction {
 
     private SSTable writeChunk(List<Map.Entry<List<Object>, RowValue>> chunk,
                                 int level, SSTableManager mgr, TableSchema schema,
-                                PartFormat format, BufferAllocator allocator, Path tableDir) {
+                                PartFormat format, BufferAllocator allocator, Path tableDir,
+                                int bloomBitsPerKey) {
         long seq = mgr.nextSeq();
         Path file = tableDir.resolve("sst-L" + level + "-" + String.format("%06d", seq) + ".sst");
-        SSTableWriter writer = new SSTableWriter(file, level, schema, format, allocator, 10);
+        SSTableWriter writer = new SSTableWriter(file, level, schema, format, allocator, bloomBitsPerKey);
         Iterator<Map.Entry<List<Object>, RowValue>> iter = chunk.iterator();
         writer.writeFromIterator(iter, chunk.size());
         SSTableReader reader = new SSTableReader(file, schema, format, allocator);

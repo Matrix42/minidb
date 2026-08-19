@@ -18,6 +18,7 @@ public class LSMTable implements TableHandle {
     private final BufferAllocator allocator;
     private final Path tableDir;
     private final long flushThresholdBytes;
+    private final int bloomBitsPerKey;
     private final SSTableManager sstManager;
     private final Compaction compaction;
     private final WAL wal;
@@ -25,11 +26,17 @@ public class LSMTable implements TableHandle {
 
     public LSMTable(TableSchema schema, PartFormat format, BufferAllocator allocator,
                     Path tableDir, long flushThresholdBytes) {
+        this(schema, format, allocator, tableDir, flushThresholdBytes, 10);
+    }
+
+    public LSMTable(TableSchema schema, PartFormat format, BufferAllocator allocator,
+                    Path tableDir, long flushThresholdBytes, int bloomBitsPerKey) {
         this.schema = schema;
         this.format = format;
         this.allocator = allocator;
         this.tableDir = tableDir;
         this.flushThresholdBytes = flushThresholdBytes;
+        this.bloomBitsPerKey = bloomBitsPerKey;
         this.sstManager = new SSTableManager();
         this.compaction = new Compaction();
 
@@ -187,7 +194,7 @@ public class LSMTable implements TableHandle {
     public int compact(long targetSizeBytes) {
         // 调用方（LSMBackgroundExecutor）已经通过 needsCompaction(l0FileLimit) 检查，
         // 这里不再重复检查，直接用配置的阈值执行 compaction
-        compaction.compactLevel0To1(sstManager, schema, format, allocator, tableDir, targetSizeBytes);
+        compaction.compactLevel0To1(sstManager, schema, format, allocator, tableDir, targetSizeBytes, bloomBitsPerKey);
         return 1;
     }
 
@@ -239,7 +246,7 @@ public class LSMTable implements TableHandle {
             return;
         }
 
-        SSTableWriter writer = new SSTableWriter(file, 0, schema, format, allocator, 10);
+        SSTableWriter writer = new SSTableWriter(file, 0, schema, format, allocator, bloomBitsPerKey);
         writer.writeFromIterator(normalized.iterator(), normalized.size());
         SSTableReader reader = new SSTableReader(file, schema, format, allocator);
         SSTable sst = reader.metadata();

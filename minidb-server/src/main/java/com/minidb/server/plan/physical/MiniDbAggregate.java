@@ -5,6 +5,7 @@ import com.minidb.storage.common.BatchIterator;
 import com.minidb.storage.common.TableHandle;
 import com.minidb.server.exec.ExecContext;
 import com.minidb.server.exec.RowCopier;
+import com.minidb.storage.lsm.LSMTable;
 import java.math.BigDecimal;
 import java.math.MathContext;
 import java.math.RoundingMode;
@@ -58,7 +59,9 @@ public class MiniDbAggregate extends Aggregate implements MiniDbRel {
                 && isCountStar(getAggCallList().get(0))
                 && getInput() instanceof MiniDbScan scan) {
             TableHandle table = scan.resolveTable(ctx);
-            if (table != null) {
+            // LSMTable.rowCount() is approximate (MemTable+SSTable rows overlap),
+            // so skip the metadata shortcut and always scan for accurate COUNT(*).
+            if (table != null && !(table instanceof LSMTable)) {
                 return singleRowCount(table.rowCount(), ctx);
             }
         }

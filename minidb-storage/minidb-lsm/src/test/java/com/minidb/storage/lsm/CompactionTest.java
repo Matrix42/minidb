@@ -41,7 +41,7 @@ class CompactionTest {
 
         // Compaction: L0 → L1
         Compaction compaction = new Compaction();
-        compaction.compactLevel0To1(mgr, schema, fmt, allocator, dir, 64 * 1024);
+        compaction.compactLevel0To1(mgr, schema, fmt, allocator, dir, 64 * 1024, 10);
 
         // L0 应该为空，L1 有文件
         assertEquals(0, mgr.levelFiles(0).size());
@@ -75,7 +75,7 @@ class CompactionTest {
         assertEquals(2, mgr.levelFiles(0).size());
 
         Compaction compaction = new Compaction();
-        compaction.compactLevel0To1(mgr, schema, fmt, allocator, dir, 64 * 1024);
+        compaction.compactLevel0To1(mgr, schema, fmt, allocator, dir, 64 * 1024, 10);
 
         // 应该去重：只有 3 行，key=2 的值是 "v2-new"
         long totalRows = 0;
