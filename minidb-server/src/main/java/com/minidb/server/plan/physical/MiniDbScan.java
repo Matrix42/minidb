@@ -4,7 +4,7 @@ import com.minidb.server.catalog.InformationSchemaCatalog;
 import com.minidb.storage.common.BatchIterator;
 import com.minidb.server.exec.ExecContext;
 import com.minidb.server.exec.InformationSchema;
-import com.minidb.storage.common.SimpleTable;
+import com.minidb.storage.common.TableHandle;
 import java.util.Iterator;
 import java.util.List;
 import org.apache.arrow.vector.VectorSchemaRoot;
@@ -37,7 +37,7 @@ public class MiniDbScan extends TableScan implements MiniDbRel {
                 return transientScan(transientRows, ctx);
             }
         }
-        SimpleTable arrowTable;
+        TableHandle tableHandle;
         if (n >= 3) {
             String schemaName = qualified.get(n - 2);
             String tableName = qualified.get(n - 1);
@@ -46,21 +46,20 @@ public class MiniDbScan extends TableScan implements MiniDbRel {
                         ctx.storage().catalog(), tableName, ctx.allocator()));
             }
             // qualified name like [minidb, other, t] — schema is second-to-last
-            arrowTable = ctx.getTable(schemaName, tableName);
+            tableHandle = ctx.getTable(schemaName, tableName);
         } else {
             // promoted table like [minidb, t] — resolve via current schema
-            arrowTable = ctx.getTable(qualified.get(n - 1));
+            tableHandle = ctx.getTable(qualified.get(n - 1));
         }
-        // 递归读表目录下所有 part 文件,逐个返回 batch(batch 归迭代器,用完释放)。
-        return arrowTable.scan();
+        return tableHandle.scan();
     }
 
     /**
-     * 解析真实表(非瞬态/系统表)的 {@link SimpleTable};瞬态表(单段名,递归 CTE)与
+     * 解析真实表(非瞬态/系统表)的 {@link TableHandle};瞬态表(单段名,递归 CTE)与
      * information_schema 系统表没有对应存储表,返回 null。供 COUNT(*) 短路直接读
      * {@code rowCount()} 而不扫描数据。
      */
-    public SimpleTable resolveTable(ExecContext ctx) {
+    public TableHandle resolveTable(ExecContext ctx) {
         List<String> qualified = table.getQualifiedName();
         int n = qualified.size();
         if (n == 1) {

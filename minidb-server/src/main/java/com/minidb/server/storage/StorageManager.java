@@ -6,6 +6,7 @@ import com.minidb.server.config.MiniDbConfig;
 import com.minidb.storage.arrow.ArrowPartFormat;
 import com.minidb.storage.arrow.IpcFileTableStorage;
 import com.minidb.storage.common.PartFormat;
+import com.minidb.storage.common.BatchIterator;
 import com.minidb.storage.common.SimpleTable;
 import com.minidb.storage.common.StorageFormat;
 import com.minidb.storage.common.TableHandle;
@@ -25,6 +26,7 @@ import java.util.List;
 import java.util.Map;
 import java.util.concurrent.ConcurrentHashMap;
 import org.apache.arrow.memory.BufferAllocator;
+import org.apache.arrow.vector.VectorSchemaRoot;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
@@ -155,20 +157,67 @@ public class StorageManager implements AutoCloseable {
     }
 
     /** 替换一张表的 TableSchema 并重建目录句柄(数据 part 不动,由调用方负责重写)。
-     *  LSMTable 先 close(flush MemTable+关闭 WAL)再重建。 */
+     *  LSMTable 先 close(flush MemTable+关闭 WAL)再重建。
+     *  保持旧表的存储类型不变(SimpleTable→SimpleTable, LSMTable→LSMTable),
+     *  避免 ADD/DROP PRIMARY KEY 等元数据操作导致数据丢失。
+     *  特例:LSMTable 掉主键后无法工作(所有行空 key),此时迁移到 SimpleTable。 */
     public void alterTable(String schemaName, String tableName, TableSchema newSchema) {
         String sk = storageKey(schemaName, tableName);
         TableHandle old = tables.remove(sk);
         if (old == null) {
             throw new IllegalArgumentException("table not found: " + tableName);
         }
+        // LSMTable lost PK: migrate data to SimpleTable before closing the old
+        // handle (we need the LSMTable's scan() which requires an open WAL).
+        boolean migrateToSimple = old instanceof LSMTable && newSchema.primaryKey().isEmpty();
+        if (migrateToSimple) {
+            SimpleTable simple = migrateLsmToSimple((LSMTable) old, newSchema, sk);
+            closeAndUnregister(old, sk);
+            catalog.alterTable(schemaName, tableName, newSchema);
+            tables.put(sk, simple);
+            return;
+        }
         closeAndUnregister(old, sk);
         catalog.alterTable(schemaName, tableName, newSchema);
-        TableHandle table = createTableHandle(newSchema);
+        TableHandle table;
+        if (old instanceof LSMTable) {
+            table = new LSMTable(newSchema, formatFor(newSchema), allocator,
+                    tableStorage.tableDir(schemaName, tableName), config.lsmMemtableSizeBytes());
+        } else {
+            table = new SimpleTable(newSchema, allocator,
+                    tableStorage.tableDir(schemaName, tableName), formatFor(newSchema));
+        }
         tables.put(sk, table);
         if (table instanceof LSMTable) {
             lsmExecutor.register(sk, (LSMTable) table);
         }
+    }
+
+    /** 将 LSMTable 的数据迁移到 SimpleTable:扫描 SSTable → 写入 SimpleTable part 文件。 */
+    private SimpleTable migrateLsmToSimple(LSMTable lsm, TableSchema newSchema, String sk) {
+        SimpleTable simple = new SimpleTable(newSchema, allocator,
+                tableStorage.tableDir(newSchema.schemaName(), newSchema.name()),
+                formatFor(newSchema));
+        try (BatchIterator it = lsm.scan()) {
+            while (it.hasNext()) {
+                VectorSchemaRoot batch = it.next();
+                if (batch.getRowCount() > 0) {
+                    VectorSchemaRoot copy = simple.newBatchRoot();
+                    copy.allocateNew();
+                    for (int i = 0; i < batch.getRowCount(); i++) {
+                        for (int c = 0; c < batch.getFieldVectors().size(); c++) {
+                            copy.getVector(c).copyFromSafe(i, i, batch.getVector(c));
+                        }
+                    }
+                    copy.setRowCount(batch.getRowCount());
+                    simple.writePart(copy, TableHandle.Operation.INSERT);
+                    copy.close();
+                }
+            }
+        }
+        // Clean up LSM artifacts (SSTables, WAL) — must be done before close()
+        lsm.clearParts();
+        return simple;
     }
 
     /** 改表名:迁移表目录 + 替换 catalog + 重建目录句柄。LSMTable 先 close 再重建。 */

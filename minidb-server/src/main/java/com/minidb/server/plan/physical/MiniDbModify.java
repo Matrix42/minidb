@@ -6,10 +6,12 @@ import com.minidb.server.catalog.MiniDbCatalog;
 import com.minidb.server.config.MiniDbConfig;
 import com.minidb.storage.common.TableSchema;
 import com.minidb.storage.common.BatchIterator;
+import com.minidb.storage.common.TableHandle;
 import com.minidb.server.exec.ConstraintChecker;
 import com.minidb.server.exec.ExecContext;
 import com.minidb.server.exec.RowCopier;
 import com.minidb.storage.common.SimpleTable;
+import com.minidb.storage.lsm.LSMTable;
 import java.util.ArrayList;
 import java.util.HashMap;
 import java.util.HashSet;
@@ -57,19 +59,22 @@ public class MiniDbModify extends TableModify implements MiniDbRel {
         // size==2: [minidb, t] (promoted table) → bare name resolves via ctx's
         // current schema.
         String schemaName = n >= 3 ? qualified.get(n - 2) : ctx.currentSchema();
-        SimpleTable target = ctx.getTable(schemaName, tableName);
+        TableHandle target = ctx.getTable(schemaName, tableName);
         BatchIterator input = ((MiniDbRel) getInput()).execute(ctx);
         if (getOperation() == Operation.INSERT) {
             appendRows(ctx, target, input);
+        } else if (target instanceof LSMTable) {
+            // LSMTable: write matched rows directly to MemTable (no full table rewrite).
+            lsmModify(ctx, target, input);
         } else {
-            rewriteTable(ctx, target, input);
+            rewriteTable(ctx, (SimpleTable) target, input);
         }
         // 写数据直接落盘,顺带标记统计过期。
         ctx.storage().catalog().markStatsStale(schemaName, tableName);
         return BatchIterator.interruptible(BatchIterator.empty());
     }
 
-    private void appendRows(ExecContext ctx, SimpleTable target, BatchIterator input) {
+    private void appendRows(ExecContext ctx, TableHandle target, BatchIterator input) {
         affected = 0;
         try {
             while (input.hasNext()) {
@@ -85,7 +90,7 @@ public class MiniDbModify extends TableModify implements MiniDbRel {
                 copy.setRowCount(batch.getRowCount());
                 affected += batch.getRowCount();
                 try {
-                    target.writePart(copy); // 直接落盘成一个新 part
+                    target.writePart(copy, TableHandle.Operation.INSERT);
                 } finally {
                     copy.close();
                 }
@@ -100,15 +105,81 @@ public class MiniDbModify extends TableModify implements MiniDbRel {
         }
     }
 
+    /**
+     * UPDATE/DELETE for LSMTable: write matched rows directly to MemTable
+     * with UPDATE/DELETE op, instead of rewriting the entire table.
+     * For UPDATE, the input batch has the schema [table columns] + [update columns];
+     * we construct a full table-schema batch with updated values before writing.
+     */
+    private void lsmModify(ExecContext ctx, TableHandle target, BatchIterator input) {
+        affected = 0;
+        TableHandle.Operation op = getOperation() == Operation.UPDATE
+                ? TableHandle.Operation.UPDATE : TableHandle.Operation.DELETE;
+        try {
+            if (op == TableHandle.Operation.DELETE) {
+                // Materialize input first so we can validate foreign key RESTRICT
+                // before writing tombstones (same as rewriteTable for SimpleTable).
+                VectorSchemaRoot matched = materializeInput(input, ctx);
+                input.close();
+                if (matched == null || matched.getRowCount() == 0) {
+                    if (matched != null) {
+                        matched.close();
+                    }
+                    return;
+                }
+                try {
+                    validateDeleteRestrict(ctx, target, matched);
+                } catch (RuntimeException e) {
+                    matched.close();
+                    throw e;
+                }
+                target.writePart(matched, op);
+                affected = matched.getRowCount();
+                matched.close();
+            } else {
+                // UPDATE: construct full table rows with updated values from the
+                // input batch [table cols] + [update cols].
+                int numTableCols = target.schema().columns().size();
+                List<String> updateCols = getUpdateColumnList();
+                List<Integer> updateIdx = new ArrayList<>();
+                for (String col : updateCols) {
+                    updateIdx.add(target.schema().columnIndex(col));
+                }
+                while (input.hasNext()) {
+                    VectorSchemaRoot batch = input.next();
+                    VectorSchemaRoot out = target.newBatchRoot();
+                    out.allocateNew();
+                    for (int i = 0; i < batch.getRowCount(); i++) {
+                        // Copy table columns (old values) from input
+                        for (int c = 0; c < numTableCols; c++) {
+                            out.getVector(c).copyFromSafe(i, i, batch.getVector(c));
+                        }
+                        // Overwrite updated columns with new values from trailing input cols
+                        for (int j = 0; j < updateCols.size(); j++) {
+                            RowCopier.writeValue(out.getFieldVectors().get(updateIdx.get(j)), i,
+                                    batch.getFieldVectors().get(numTableCols + j), i);
+                        }
+                    }
+                    out.setRowCount(batch.getRowCount());
+                    target.writePart(out, op);
+                    affected += batch.getRowCount();
+                    out.close();
+                }
+            }
+        } finally {
+            input.close();
+        }
+    }
+
     /** INSERT 前的约束校验:NOT NULL + 主键/唯一冲突 + 外键引用存在。 */
-    private void validateInsert(ExecContext ctx, SimpleTable target, VectorSchemaRoot batch) {
+    private void validateInsert(ExecContext ctx, TableHandle target, VectorSchemaRoot batch) {
         ConstraintChecker.validateInsert(ctx, target.schema(), target, batch);
     }
 
     /** 外键 INSERT 校验:child 行的外键列值必须存在于引用表(含 null 的键不校验)。 */
-    private void validateForeignKeys(ExecContext ctx, SimpleTable target, VectorSchemaRoot batch) {
+    private void validateForeignKeys(ExecContext ctx, TableHandle target, VectorSchemaRoot batch) {
         for (ForeignKey fk : target.schema().foreignKeys()) {
-            SimpleTable refTable = ctx.getTable(fk.refSchema(), fk.refTable());
+            TableHandle refTable = ctx.getTable(fk.refSchema(), fk.refTable());
             List<String> refColumns = fk.refColumns().isEmpty()
                     ? refTable.schema().primaryKey()
                     : fk.refColumns();
@@ -149,7 +220,7 @@ public class MiniDbModify extends TableModify implements MiniDbRel {
      * 引用本表主键的常见情况(引用非主键唯一列暂不校验);UPDATE 本表被引用列(如改主键)
      * 的外键校验暂未覆盖。
      */
-    private void validateDeleteRestrict(ExecContext ctx, SimpleTable target, VectorSchemaRoot matched) {
+    private void validateDeleteRestrict(ExecContext ctx, TableHandle target, VectorSchemaRoot matched) {
         TableSchema schema = target.schema();
         if (schema.primaryKey().isEmpty()) {
             return;
@@ -176,7 +247,7 @@ public class MiniDbModify extends TableModify implements MiniDbRel {
                     if (!refColumns.equals(schema.primaryKey())) {
                         continue; // 引用非主键列,暂不校验
                     }
-                    SimpleTable childTable = ctx.getTable(schemaName, tableName);
+                    TableHandle childTable = ctx.getTable(schemaName, tableName);
                     List<Integer> childIdx = ConstraintChecker.columnIndexes(childSchema, fk.columns());
                     try (BatchIterator it = childTable.scan()) {
                         while (it.hasNext()) {
@@ -197,7 +268,7 @@ public class MiniDbModify extends TableModify implements MiniDbRel {
     }
 
     /** 主键/唯一冲突校验:新行的键值不能与现有行(或同批早前行)重复。含 null 的键不参与(唯一约束允许多 null)。 */
-    private void validateUnique(SimpleTable target, VectorSchemaRoot batch,
+    private void validateUnique(TableHandle target, VectorSchemaRoot batch,
                                 List<String> columns, String constraintName) {
         List<Integer> idxs = new ArrayList<>(columns.size());
         for (String column : columns) {
