@@ -36,8 +36,9 @@ public class SSTableManager {
             if (list == null) list = new ArrayList<>();
             List<SSTable> newList = new ArrayList<>(list);
             newList.addAll(ssts);
-            // L1+: 按 minKey 升序
-            newList.sort(Comparator.comparing(SSTable::minKey, MemTable.KEY_COMPARATOR));
+            // L1+: 按 minKey 升序（用 SSTable 自己的 KEY_COMPARATOR，
+            // 支持 Integer/Long/String 等混合类型，避免 MemTable.KEY_COMPARATOR 的 String 强转）
+            newList.sort(Comparator.comparing(SSTable::minKey, SSTable.KEY_COMPARATOR));
             return newList;
         });
     }
@@ -97,8 +98,10 @@ public class SSTableManager {
         if (!Files.exists(tableDir)) return;
         try (DirectoryStream<Path> ds = Files.newDirectoryStream(tableDir, "sst-*.sst")) {
             for (Path file : ds) {
-                SSTableReader reader = new SSTableReader(file, schema, format, allocator);
-                SSTable sst = reader.metadata();
+                SSTable sst;
+                try (SSTableReader reader = new SSTableReader(file, schema, format, allocator)) {
+                    sst = reader.metadata();
+                }
                 // 从文件名解析 level 和 seq
                 String name = file.getFileName().toString();
                 // sst-L<level>-<seq>.sst
@@ -118,7 +121,6 @@ public class SSTableManager {
                 if (fileSeq > seq.get()) {
                     seq.set(fileSeq);
                 }
-                reader.close();
             }
         } catch (IOException e) {
             throw new UncheckedIOException(e);

@@ -12,6 +12,11 @@ public record SSTable(Path file, int level, long seq,
     private static final Comparator<Object> CMP = (a, b) ->
             ((Comparable) a).compareTo(b);
 
+    /** 按原始 Comparable 比较 key 列表（不假定 String 类型）。
+     *  与 MemTable.KEY_COMPARATOR 不同，后者要求 key 元素全为 String。
+     *  SSTable 的 key 可能含 Integer/Long（SSTableReader.decodeKeyValue 解析整数时产生）。 */
+    public static final Comparator<List<Object>> KEY_COMPARATOR = (a, b) -> compareKeys(a, b);
+
     public boolean overlaps(List<Object> rangeMin, List<Object> rangeMax) {
         // 两个 key range 不重叠的条件: maxKey < rangeMin 或 minKey > rangeMax
         // 重叠 = !(maxKey < rangeMin || minKey > rangeMax)
@@ -20,7 +25,7 @@ public record SSTable(Path file, int level, long seq,
         return !(maxLessThanRangeMin || minGreaterThanRangeMax);
     }
 
-    private static int compareKeys(List<Object> a, List<Object> b) {
+    static int compareKeys(List<Object> a, List<Object> b) {
         int minLen = Math.min(a.size(), b.size());
         for (int i = 0; i < minLen; i++) {
             int cmp = CMP.compare(a.get(i), b.get(i));
