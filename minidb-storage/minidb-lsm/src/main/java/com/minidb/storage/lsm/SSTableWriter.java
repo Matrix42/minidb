@@ -181,25 +181,91 @@ public class SSTableWriter {
     public static void setVectorValue(
             org.apache.arrow.vector.FieldVector vector, int row, Object val, ColumnType type) {
         switch (type) {
+            case SMALLINT:
+                ((org.apache.arrow.vector.SmallIntVector) vector).setSafe(row, ((Number) val).shortValue());
+                break;
             case INTEGER:
                 ((org.apache.arrow.vector.IntVector) vector).setSafe(row, ((Number) val).intValue());
                 break;
             case BIGINT:
                 ((org.apache.arrow.vector.BigIntVector) vector).setSafe(row, ((Number) val).longValue());
                 break;
+            case REAL:
+            case FLOAT:
+                ((org.apache.arrow.vector.Float4Vector) vector).setSafe(row, ((Number) val).floatValue());
+                break;
             case DOUBLE:
                 ((org.apache.arrow.vector.Float8Vector) vector).setSafe(row, ((Number) val).doubleValue());
                 break;
+            case DECIMAL:
+            case NUMERIC:
+                // Arrow DecimalVector 需要 BigDecimal 或特定 scale 的 long/int
+                if (val instanceof java.math.BigDecimal bd) {
+                    ((org.apache.arrow.vector.DecimalVector) vector).setSafe(row, bd);
+                } else if (val instanceof Number num) {
+                    ((org.apache.arrow.vector.DecimalVector) vector).setSafe(row,
+                            java.math.BigDecimal.valueOf(num.doubleValue()));
+                } else {
+                    ((org.apache.arrow.vector.DecimalVector) vector).setSafe(row,
+                            new java.math.BigDecimal(val.toString()));
+                }
+                break;
             case VARCHAR:
+            case CHAR:
+            case NCHAR:
+            case NVARCHAR:
                 byte[] bytes = val.toString().getBytes(StandardCharsets.UTF_8);
                 ((org.apache.arrow.vector.VarCharVector) vector).setSafe(row, bytes);
                 break;
             case BOOLEAN:
-                ((org.apache.arrow.vector.BitVector) vector).setSafe(row,
-                        ((Boolean) val) ? 1 : 0);
+                if (val instanceof Boolean b) {
+                    ((org.apache.arrow.vector.BitVector) vector).setSafe(row, b ? 1 : 0);
+                } else if (val instanceof Number num) {
+                    ((org.apache.arrow.vector.BitVector) vector).setSafe(row, num.intValue() != 0 ? 1 : 0);
+                } else {
+                    ((org.apache.arrow.vector.BitVector) vector).setSafe(row,
+                            Boolean.parseBoolean(val.toString()) ? 1 : 0);
+                }
                 break;
-            default:
-                throw new UnsupportedOperationException("unsupported type: " + type);
+            case DATE:
+                if (val instanceof Integer days) {
+                    ((org.apache.arrow.vector.DateDayVector) vector).setSafe(row, days);
+                } else if (val instanceof Number num) {
+                    ((org.apache.arrow.vector.DateDayVector) vector).setSafe(row, num.intValue());
+                } else {
+                    ((org.apache.arrow.vector.DateDayVector) vector).setSafe(row,
+                            Integer.parseInt(val.toString()));
+                }
+                break;
+            case TIME:
+                if (val instanceof Integer millis) {
+                    ((org.apache.arrow.vector.TimeMilliVector) vector).setSafe(row, millis);
+                } else if (val instanceof Number num) {
+                    ((org.apache.arrow.vector.TimeMilliVector) vector).setSafe(row, num.intValue());
+                } else {
+                    ((org.apache.arrow.vector.TimeMilliVector) vector).setSafe(row,
+                            Integer.parseInt(val.toString()));
+                }
+                break;
+            case TIMESTAMP:
+                if (val instanceof Long millis) {
+                    ((org.apache.arrow.vector.TimeStampMilliVector) vector).setSafe(row, millis);
+                } else if (val instanceof Number num) {
+                    ((org.apache.arrow.vector.TimeStampMilliVector) vector).setSafe(row, num.longValue());
+                } else {
+                    ((org.apache.arrow.vector.TimeStampMilliVector) vector).setSafe(row,
+                            Long.parseLong(val.toString()));
+                }
+                break;
+            case BINARY:
+            case VARBINARY:
+                if (val instanceof byte[] b) {
+                    ((org.apache.arrow.vector.VarBinaryVector) vector).setSafe(row, b);
+                } else {
+                    ((org.apache.arrow.vector.VarBinaryVector) vector).setSafe(row,
+                            val.toString().getBytes(StandardCharsets.UTF_8));
+                }
+                break;
         }
     }
 
