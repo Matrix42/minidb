@@ -234,7 +234,7 @@ public class SSTableWriter {
                     ((org.apache.arrow.vector.DateDayVector) vector).setSafe(row, num.intValue());
                 } else {
                     ((org.apache.arrow.vector.DateDayVector) vector).setSafe(row,
-                            Integer.parseInt(val.toString()));
+                            parseDate(val.toString()));
                 }
                 break;
             case TIME:
@@ -244,7 +244,7 @@ public class SSTableWriter {
                     ((org.apache.arrow.vector.TimeMilliVector) vector).setSafe(row, num.intValue());
                 } else {
                     ((org.apache.arrow.vector.TimeMilliVector) vector).setSafe(row,
-                            Integer.parseInt(val.toString()));
+                            parseTime(val.toString()));
                 }
                 break;
             case TIMESTAMP:
@@ -254,7 +254,7 @@ public class SSTableWriter {
                     ((org.apache.arrow.vector.TimeStampMilliVector) vector).setSafe(row, num.longValue());
                 } else {
                     ((org.apache.arrow.vector.TimeStampMilliVector) vector).setSafe(row,
-                            Long.parseLong(val.toString()));
+                            parseTimestamp(val.toString()));
                 }
                 break;
             case BINARY:
@@ -328,4 +328,39 @@ public class SSTableWriter {
     }
 
     private record BlockInfo(List<Object> startKey, long offset, int size) {}
+
+    /** 解析日期字符串："19740"（epoch days）、"2024-01-17" 或 "1970-01-01T..." 格式 */
+    private static int parseDate(String s) {
+        try {
+            return Integer.parseInt(s);
+        } catch (NumberFormatException e) {
+            // 提取日期部分：去掉可能的 "T..." 后缀
+            String datePart = s.contains("T") ? s.substring(0, s.indexOf('T')) : s;
+            return (int) java.time.LocalDate.parse(datePart).toEpochDay();
+        }
+    }
+
+    /** 解析时间字符串："43200000"（毫秒）、"HH:MM:SS" 或 "1970-01-01THH:MM:SS" 格式 */
+    private static int parseTime(String s) {
+        try {
+            return Integer.parseInt(s);
+        } catch (NumberFormatException e) {
+            String timePart = s.contains("T") ? s.substring(s.indexOf('T') + 1) : s;
+            String[] parts = timePart.split(":");
+            int h = Integer.parseInt(parts[0]);
+            int m = Integer.parseInt(parts[1]);
+            int sec = Integer.parseInt(parts[2]);
+            return (h * 3600 + m * 60 + sec) * 1000;
+        }
+    }
+
+    /** 解析时间戳字符串：毫秒数或 "2024-01-17T12:00:00" 格式 */
+    private static long parseTimestamp(String s) {
+        try {
+            return Long.parseLong(s);
+        } catch (NumberFormatException e) {
+            return java.time.LocalDateTime.parse(s)
+                    .atZone(java.time.ZoneOffset.UTC).toInstant().toEpochMilli();
+        }
+    }
 }
