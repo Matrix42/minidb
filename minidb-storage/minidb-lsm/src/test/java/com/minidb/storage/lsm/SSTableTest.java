@@ -3,10 +3,14 @@ package com.minidb.storage.lsm;
 import static org.junit.jupiter.api.Assertions.*;
 import com.minidb.storage.arrow.ArrowPartFormat;
 import com.minidb.storage.common.*;
+import java.math.BigDecimal;
 import java.nio.file.Path;
 import java.util.*;
 import org.apache.arrow.memory.RootAllocator;
 import org.apache.arrow.vector.VectorSchemaRoot;
+import org.apache.arrow.vector.util.Text;
+import org.junit.jupiter.api.AfterEach;
+import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
 
@@ -14,7 +18,17 @@ class SSTableTest {
     private final TableSchema schema = new TableSchema("public", "t",
             List.of(new ColumnMeta("id", ColumnType.INTEGER), new ColumnMeta("name", ColumnType.VARCHAR)),
             List.of("id"), List.of(), List.of());
-    private final RootAllocator allocator = new RootAllocator();
+    private RootAllocator allocator;
+
+    @BeforeEach
+    void setUp() {
+        allocator = new RootAllocator();
+    }
+
+    @AfterEach
+    void tearDown() {
+        allocator.close();
+    }
 
     @Test
     void writeAndReadRoundTrip(@TempDir Path dir) throws Exception {
@@ -101,5 +115,68 @@ class SSTableTest {
         assertFalse(sst.overlaps(List.of(1), List.of(5)));   // 完全不重叠(左)
         assertFalse(sst.overlaps(List.of(30), List.of(40))); // 完全不重叠(右)
         reader.close();
+    }
+
+    @Test
+    void allColumnTypesRoundTrip(@TempDir Path dir) throws Exception {
+        TableSchema multiSchema = new TableSchema("public", "mt",
+                List.of(
+                        new ColumnMeta("pk", ColumnType.INTEGER),
+                        new ColumnMeta("c_smallint", ColumnType.SMALLINT),
+                        new ColumnMeta("c_bigint", ColumnType.BIGINT),
+                        new ColumnMeta("c_float", ColumnType.FLOAT),
+                        new ColumnMeta("c_double", ColumnType.DOUBLE),
+                        new ColumnMeta("c_decimal", ColumnType.DECIMAL, 10, 2, true),
+                        new ColumnMeta("c_bool", ColumnType.BOOLEAN),
+                        new ColumnMeta("c_date", ColumnType.DATE),
+                        new ColumnMeta("c_time", ColumnType.TIME),
+                        new ColumnMeta("c_ts", ColumnType.TIMESTAMP),
+                        new ColumnMeta("c_varchar", ColumnType.VARCHAR),
+                        new ColumnMeta("c_char", ColumnType.CHAR),
+                        new ColumnMeta("c_binary", ColumnType.VARBINARY)),
+                List.of("pk"), List.of(), List.of());
+
+        MemTable mt = new MemTable(multiSchema, 1024 * 1024);
+        byte[] binVal = new byte[]{0x01, 0x02, 0x03};
+        mt.put(List.of(1), new RowValue(RowValue.INSERT, new Object[]{
+                1, (short) 100, 9999999999L, 3.14f, 2.718281828,
+                new BigDecimal("123.45"), true, 19740, // 19740 = 2024-01-17
+                43200000, // 12:00:00 in millis
+                1705478400000L, // 2024-01-17 12:00:00 UTC
+                "hello", "x", binVal}));
+
+        Path sstFile = dir.resolve("sst-L0-000001.sst");
+        SSTableWriter writer = new SSTableWriter(sstFile, 0, multiSchema,
+                new ArrowPartFormat(), allocator, 10);
+        writer.writeFromMemTable(mt);
+
+        SSTableReader reader = new SSTableReader(sstFile, multiSchema,
+                new ArrowPartFormat(), allocator);
+        BatchIterator it = reader.scan();
+        assertTrue(it.hasNext());
+        VectorSchemaRoot batch = it.next();
+        assertEquals(1, batch.getRowCount());
+
+        assertEquals(1, batch.getVector(0).getObject(0));                    // pk
+        assertEquals((short) 100, batch.getVector(1).getObject(0));          // c_smallint
+        assertEquals(9999999999L, batch.getVector(2).getObject(0));          // c_bigint
+        assertEquals(3.14f, (float) batch.getVector(3).getObject(0), 0.01f); // c_float
+        assertEquals(2.718281828, (double) batch.getVector(4).getObject(0), 1e-9); // c_double
+        assertEquals(new BigDecimal("123.45"), batch.getVector(5).getObject(0)); // c_decimal
+        assertEquals(true, batch.getVector(6).getObject(0));                    // c_bool
+        assertEquals(19740, batch.getVector(7).getObject(0));                // c_date
+        // Arrow TimeMilliVector/TimeStampMilliVector.getObject() 返回 LocalTime/LocalDateTime
+        assertNotNull(batch.getVector(8).getObject(0));                  // c_time
+        assertNotNull(batch.getVector(9).getObject(0));                  // c_ts
+        assertEquals("hello", textToString(batch.getVector(10).getObject(0))); // c_varchar
+        assertEquals("x", textToString(batch.getVector(11).getObject(0)));   // c_char
+        assertArrayEquals(binVal, (byte[]) batch.getVector(12).getObject(0)); // c_binary
+
+        it.close();
+        reader.close();
+    }
+
+    private static String textToString(Object val) {
+        return val instanceof Text t ? t.toString() : val.toString();
     }
 }
