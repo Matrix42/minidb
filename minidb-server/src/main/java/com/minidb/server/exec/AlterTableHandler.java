@@ -8,6 +8,7 @@ import com.minidb.storage.common.BatchIterator;
 import com.minidb.storage.common.ColumnMeta;
 import com.minidb.storage.common.ColumnType;
 import com.minidb.storage.common.ForeignKey;
+import com.minidb.storage.common.TableHandle;
 import com.minidb.storage.common.SimpleTable;
 import com.minidb.storage.common.TableSchema;
 import java.math.BigDecimal;
@@ -63,16 +64,16 @@ public class AlterTableHandler {
         schemaName = parts.size() > 1 ? parts.get(0) : currentSchema;
         tableName = parts.get(parts.size() - 1);
         TableSchema oldSchema = storage.catalog().getTable(schemaName, tableName);
-        SimpleTable oldTable = (SimpleTable) storage.getTable(schemaName, tableName);
+        TableHandle oldTable = storage.getTable(schemaName, tableName);
         switch (alter.kind()) {
-            case ADD_COLUMN -> handleAddColumn(alter, oldSchema, oldTable);
-            case DROP_COLUMN -> handleDropColumn(alter, oldSchema, oldTable);
+            case ADD_COLUMN -> handleAddColumn(alter, oldSchema, (SimpleTable) oldTable);
+            case DROP_COLUMN -> handleDropColumn(alter, oldSchema, (SimpleTable) oldTable);
             case RENAME_COLUMN -> handleRenameColumn(alter, oldSchema);
             case RENAME_TABLE -> handleRenameTable(alter);
-            case ALTER_TYPE -> handleAlterType(alter, oldSchema, oldTable);
-            case SET_NOT_NULL -> handleNotNull(alter, oldSchema, oldTable, false);
-            case DROP_NOT_NULL -> handleNotNull(alter, oldSchema, oldTable, true);
-            case ADD_CONSTRAINT -> handleAddConstraint(alter, oldSchema, oldTable);
+            case ALTER_TYPE -> handleAlterType(alter, oldSchema, (SimpleTable) oldTable);
+            case SET_NOT_NULL -> handleNotNull(alter, oldSchema, (SimpleTable) oldTable, false);
+            case DROP_NOT_NULL -> handleNotNull(alter, oldSchema, (SimpleTable) oldTable, true);
+            case ADD_CONSTRAINT -> handleAddConstraint(alter, oldSchema, (SimpleTable) oldTable);
             case DROP_CONSTRAINT -> handleDropConstraint(alter, oldSchema);
         }
         return new QueryResult.Update(0);

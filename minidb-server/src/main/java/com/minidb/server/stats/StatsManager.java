@@ -5,7 +5,7 @@ import com.minidb.server.catalog.InformationSchemaCatalog;
 import com.minidb.server.catalog.MiniDbCatalog;
 import com.minidb.storage.common.TableSchema;
 import com.minidb.storage.common.BatchIterator;
-import com.minidb.storage.common.SimpleTable;
+import com.minidb.storage.common.TableHandle;
 import com.minidb.server.storage.StorageManager;
 import java.util.ArrayList;
 import java.util.HashMap;
@@ -30,7 +30,7 @@ public class StatsManager implements AutoCloseable {
     /** 支持裸名(按 currentSchema 解析)或限定名 `schema.table`。 */
     public void analyze(String table, String currentSchema) {
         String[] st = split(table, currentSchema);
-        SimpleTable arrowTable = (SimpleTable) storage.getTable(st[0], st[1]);
+        TableHandle arrowTable = storage.getTable(st[0], st[1]);
         TableSchema schema = arrowTable.schema();
         Map<String, Histogram> columnHistograms = new HashMap<>();
         int numCols = schema.columns().size();

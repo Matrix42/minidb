@@ -2,7 +2,7 @@ package com.minidb.server.plan.physical;
 
 import com.minidb.storage.common.ArrowTypes;
 import com.minidb.storage.common.BatchIterator;
-import com.minidb.storage.common.SimpleTable;
+import com.minidb.storage.common.TableHandle;
 import com.minidb.server.exec.ExecContext;
 import com.minidb.server.exec.RowCopier;
 import java.math.BigDecimal;
@@ -57,7 +57,7 @@ public class MiniDbAggregate extends Aggregate implements MiniDbRel {
         if (getGroupSet().isEmpty() && getAggCallList().size() == 1
                 && isCountStar(getAggCallList().get(0))
                 && getInput() instanceof MiniDbScan scan) {
-            SimpleTable table = scan.resolveTable(ctx);
+            TableHandle table = scan.resolveTable(ctx);
             if (table != null) {
                 return singleRowCount(table.rowCount(), ctx);
             }
