@@ -110,10 +110,12 @@ public abstract class MiniDbJoin extends Join implements MiniDbRel {
             merged = emptyRoot(input, ctx);
         } else {
             merged = VectorSchemaRoot.create(batches.get(0).getSchema(), ctx.allocator());
-            merged.allocateNew();
-            // allocateNew 后 valueCount=0，copyFromSafe 需要 dst 有足够容量；
-            // 先设 valueCount 到 total 保证向量内部 buffer 可写。
-            merged.setRowCount(total);
+            // 预分配容量避免 copyFromSafe 时触发 reAlloc 导致 source buffer 检查失败
+            for (FieldVector v : merged.getFieldVectors()) {
+                v.setInitialCapacity(total);
+                v.allocateNew();
+                v.setValueCount(total);
+            }
             int dst = 0;
             for (VectorSchemaRoot batch : batches) {
                 for (int i = 0; i < batch.getRowCount(); i++) {
