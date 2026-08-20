@@ -11,46 +11,105 @@ import java.util.Map;
 import java.util.TreeMap;
 
 /**
- * 对比两次 TPC-DS 运行结果,生成单个自包含 HTML(Chart.js 分组柱状图):
- * X 轴 = 查询名,每查询两根柱(两次耗时),附逐条耗时/行数/失败原因的表格。
+ * 对比多次 TPC-DS 运行结果,生成单个自包含 HTML(Chart.js 分组柱状图):
+ * X 轴 = 查询名,每查询 N 根柱(N 次运行),附逐条耗时/行数/失败原因的表格。
  */
 public class TpcdsCompare {
 
-    public void compare(Path run1, Path run2, Path outputHtml) throws Exception {
-        ObjectMapper mapper = new ObjectMapper();
-        Map<String, Result> r1 = readResults(mapper.readTree(run1.toFile()));
-        Map<String, Result> r2 = readResults(mapper.readTree(run2.toFile()));
+    private static final String[] COLORS = {
+            "#4c6ef5", "#f59f00", "#40c057", "#fa5252", "#ae3ec9",
+            "#15aabf", "#f783ac", "#fab005", "#7950f2", "#82c91e"
+    };
 
+    public record NamedRun(String name, Path path) {
+    }
+
+    public void compare(List<NamedRun> runs, Path outputHtml) throws Exception {
+        ObjectMapper mapper = new ObjectMapper();
+
+        // 解析每个 run 的最终名称
+        List<String> names = new ArrayList<>();
+        List<Map<String, Result>> allResults = new ArrayList<>();
+        for (NamedRun run : runs) {
+            JsonNode root = mapper.readTree(run.path.toFile());
+            String runName = run.name;
+            if (runName == null || runName.isEmpty()) {
+                runName = root.path("name").asText(null);
+                if (runName == null || runName.isEmpty()) {
+                    runName = run.path.getFileName().toString();
+                }
+            }
+            names.add(runName);
+            allResults.add(readResults(root));
+        }
+
+        int n = names.size();
+
+        // 按查询号排序对齐
         TreeMap<String, long[]> aligned = new TreeMap<>((a, b) -> Integer.compare(
                 queryNumber(a), queryNumber(b)));
-        for (String name : r1.keySet()) {
-            aligned.computeIfAbsent(name, k -> new long[2])[0] = r1.get(name).elapsedMs();
-        }
-        for (String name : r2.keySet()) {
-            aligned.computeIfAbsent(name, k -> new long[2])[1] = r2.get(name).elapsedMs();
+        for (int i = 0; i < n; i++) {
+            int idx = i;
+            for (String qName : allResults.get(i).keySet()) {
+                long[] times = aligned.computeIfAbsent(qName, k -> {
+                    long[] arr = new long[n];
+                    for (int j = 0; j < arr.length; j++) {
+                        arr[j] = -1;
+                    }
+                    return arr;
+                });
+                times[idx] = allResults.get(idx).get(qName).elapsedMs();
+            }
         }
 
+        // 构建 JS 数据
         StringBuilder labels = new StringBuilder();
-        StringBuilder data1 = new StringBuilder();
-        StringBuilder data2 = new StringBuilder();
+        StringBuilder[] datasets = new StringBuilder[n];
+        for (int i = 0; i < n; i++) {
+            datasets[i] = new StringBuilder();
+        }
+
         StringBuilder tableRows = new StringBuilder();
         for (Map.Entry<String, long[]> e : aligned.entrySet()) {
-            String name = e.getKey();
+            String qName = e.getKey();
             long[] times = e.getValue();
             if (labels.length() > 0) {
                 labels.append(", ");
-                data1.append(", ");
-                data2.append(", ");
+                for (int i = 0; i < n; i++) {
+                    datasets[i].append(", ");
+                }
             }
-            labels.append('"').append(name).append('"');
-            data1.append(times[0] > 0 ? times[0] : 0);
-            data2.append(times[1] > 0 ? times[1] : 0);
-            tableRows.append("<tr><td>").append(name).append("</td>")
-                    .append("<td>").append(fmt(times[0])).append("</td>")
-                    .append("<td>").append(fmt(times[1])).append("</td>")
-                    .append("<td>").append(escape(r1.get(name) != null ? r1.get(name).error() : ""))
+            labels.append('"').append(qName).append('"');
+            for (int i = 0; i < n; i++) {
+                datasets[i].append(times[i] >= 0 ? times[i] : 0);
+            }
+
+            tableRows.append("<tr><td>").append(qName).append("</td>");
+            for (int i = 0; i < n; i++) {
+                tableRows.append("<td>").append(fmt(times[i])).append("</td>");
+            }
+            tableRows.append("<td>").append(escape(errorFor(allResults, qName)))
                     .append("</td></tr>\n");
         }
+
+        // 构建 Chart.js datasets
+        StringBuilder dsJson = new StringBuilder();
+        for (int i = 0; i < n; i++) {
+            if (i > 0) {
+                dsJson.append(", ");
+            }
+            dsJson.append("{label: '").append(escapeJs(names.get(i)))
+                    .append("', data: [").append(datasets[i])
+                    .append("], backgroundColor: '").append(COLORS[i % COLORS.length])
+                    .append("'}");
+        }
+
+        // 表格头
+        StringBuilder th = new StringBuilder("<tr><th>查询</th>");
+        for (String name : names) {
+            th.append("<th>").append(escape(name)).append("(ms)</th>");
+        }
+        th.append("<th>失败原因</th></tr>");
 
         String html = """
                 <!DOCTYPE html>
@@ -64,7 +123,7 @@ public class TpcdsCompare {
                 <h2>TPC-DS 查询耗时对比(毫秒)</h2>
                 <canvas id="chart" height="120"></canvas>
                 <table border="1" cellspacing="0" cellpadding="4">
-                <tr><th>查询</th><th>第 1 次(ms)</th><th>第 2 次(ms)</th><th>失败原因</th></tr>
+                %s
                 %s
                 </table>
                 <script>
@@ -72,17 +131,14 @@ public class TpcdsCompare {
                   type: 'bar',
                   data: {
                     labels: [%s],
-                    datasets: [
-                      {label: '第 1 次', data: [%s], backgroundColor: '#4c6ef5'},
-                      {label: '第 2 次', data: [%s], backgroundColor: '#f59f00'}
-                    ]
+                    datasets: [%s]
                   },
                   options: {scales: {y: {beginAtZero: true, title: {display: true, text: 'ms'}}}}
                 });
                 </script>
                 </body>
                 </html>
-                """.formatted(tableRows, labels, data1, data2);
+                """.formatted(th, tableRows, labels, dsJson);
 
         Files.writeString(outputHtml, html);
     }
@@ -101,6 +157,16 @@ public class TpcdsCompare {
         return map;
     }
 
+    private static String errorFor(List<Map<String, Result>> allResults, String qName) {
+        for (Map<String, Result> r : allResults) {
+            Result res = r.get(qName);
+            if (res != null && res.error() != null && !res.error().isEmpty()) {
+                return res.error();
+            }
+        }
+        return "";
+    }
+
     private static int queryNumber(String name) {
         try {
             return Integer.parseInt(name.substring("query".length()));
@@ -115,5 +181,9 @@ public class TpcdsCompare {
 
     private static String escape(String s) {
         return s == null ? "" : s.replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;");
+    }
+
+    private static String escapeJs(String s) {
+        return s == null ? "" : s.replace("\\", "\\\\").replace("'", "\\'");
     }
 }

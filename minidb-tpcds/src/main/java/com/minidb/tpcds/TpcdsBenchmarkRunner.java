@@ -31,7 +31,8 @@ public class TpcdsBenchmarkRunner {
                               boolean success, String error) {
     }
 
-    public void run(Map<String, String> queries, Path dataDir, Path outputJson, double scale)
+    public void run(Map<String, String> queries, Path dataDir, Path outputJson, double scale,
+                    String name)
             throws Exception {
         List<QueryResult> results = new ArrayList<>();
         MiniDbServer server = new MiniDbServer();
@@ -51,14 +52,15 @@ public class TpcdsBenchmarkRunner {
             }
         }
 
-        writeReport(results, outputJson, scale);
+        writeReport(results, outputJson, scale, name);
     }
 
     /**
      * 同 {@link #run} 但直接构造 {@link QueryExecutor} 执行,不走 MiniDbServer/JDBC
      * 网络层,更快、更稳定(失败时能直接看到内核异常)。
      */
-    public void runDirect(Map<String, String> queries, Path dataDir, Path outputJson, double scale)
+    public void runDirect(Map<String, String> queries, Path dataDir, Path outputJson, double scale,
+                          String name)
             throws Exception {
         List<QueryResult> results = new ArrayList<>();
         MiniDbCatalog catalog = new MiniDbCatalog();
@@ -72,7 +74,7 @@ public class TpcdsBenchmarkRunner {
             }
             storage.close();
         }
-        writeReport(results, outputJson, scale);
+        writeReport(results, outputJson, scale, name);
     }
 
     private QueryResult runOneDirect(QueryExecutor executor, String name, String sql) {
@@ -98,9 +100,11 @@ public class TpcdsBenchmarkRunner {
         }
     }
 
-    private void writeReport(List<QueryResult> results, Path outputJson, double scale)
+    private void writeReport(List<QueryResult> results, Path outputJson, double scale,
+                            String name)
             throws IOException {
         Map<String, Object> out = new LinkedHashMap<>();
+        out.put("name", name != null ? name : "unknown");
         out.put("scale", scale);
         out.put("timestamp", Instant.now().toString());
         out.put("queries", results);
