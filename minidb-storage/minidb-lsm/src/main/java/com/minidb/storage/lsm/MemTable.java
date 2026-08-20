@@ -15,13 +15,18 @@ public class MemTable {
     private final ConcurrentSkipListMap<List<Object>, RowValue> rows;
     private final AtomicLong estimatedBytes;
 
-    // 统一 key 比较器：用 raw Comparable，兼容 Integer/Long/String 等混合类型。
-    // 与 SSTable.KEY_COMPARATOR 语义一致，避免 MemTable/SSTable 边界处的类型转换。
+    // 统一 key 比较器：Number 类型用 long 值比较，其他用 raw Comparable。
     @SuppressWarnings({"unchecked", "rawtypes"})
     public static final Comparator<List<Object>> KEY_COMPARATOR = (a, b) -> {
         int minLen = Math.min(a.size(), b.size());
         for (int i = 0; i < minLen; i++) {
-            int cmp = ((Comparable) a.get(i)).compareTo(b.get(i));
+            Object ai = a.get(i), bi = b.get(i);
+            int cmp;
+            if (ai instanceof Number an && bi instanceof Number bn) {
+                cmp = Long.compare(an.longValue(), bn.longValue());
+            } else {
+                cmp = ((Comparable) ai).compareTo(bi);
+            }
             if (cmp != 0) return cmp;
         }
         return Integer.compare(a.size(), b.size());
