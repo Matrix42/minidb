@@ -158,6 +158,10 @@ public class MergeIterator {
         VectorSchemaRoot root = VectorSchemaRoot.create(
                 ArrowTypes.arrowSchema(schema), allocator);
         root.allocateNew();
+        if (!rows.isEmpty()) {
+            // allocateNew 后 vector valueCount=0，setRowCount 确保有效性缓冲区已分配
+            root.setRowCount(rows.size());
+        }
         for (int i = 0; i < rows.size(); i++) {
             SSTableWriter.writeRow(root, i, rows.get(i), schema);
         }
