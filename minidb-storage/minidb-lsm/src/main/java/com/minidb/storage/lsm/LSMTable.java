@@ -251,11 +251,11 @@ public class LSMTable implements TableHandle {
 
     @Override
     public void close() throws Exception {
-        closed = true;
-        // 关闭前 flush MemTable
+        // 先 flush MemTable 再设 closed=true,否则 flushMemTable() 的 closed 守卫会跳过 flush
         if (!memTable.isEmpty()) {
             flushMemTable();
         }
+        closed = true;
         wal.close();
     }
 
