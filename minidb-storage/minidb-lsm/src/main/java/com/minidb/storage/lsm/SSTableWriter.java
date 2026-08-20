@@ -330,7 +330,7 @@ public class SSTableWriter {
     private record BlockInfo(List<Object> startKey, long offset, int size) {}
 
     /** 解析日期字符串："19740"（epoch days）、"2024-01-17" 或 "1970-01-01T..." 格式 */
-    private static int parseDate(String s) {
+    static int parseDate(String s) {
         try {
             return Integer.parseInt(s);
         } catch (NumberFormatException e) {
@@ -341,7 +341,7 @@ public class SSTableWriter {
     }
 
     /** 解析时间字符串："43200000"（毫秒）、"HH:MM:SS" 或 "1970-01-01THH:MM:SS" 格式 */
-    private static int parseTime(String s) {
+    static int parseTime(String s) {
         try {
             return Integer.parseInt(s);
         } catch (NumberFormatException e) {
@@ -355,7 +355,7 @@ public class SSTableWriter {
     }
 
     /** 解析时间戳字符串：毫秒数或 "2024-01-17T12:00:00" 格式 */
-    private static long parseTimestamp(String s) {
+    static long parseTimestamp(String s) {
         try {
             return Long.parseLong(s);
         } catch (NumberFormatException e) {

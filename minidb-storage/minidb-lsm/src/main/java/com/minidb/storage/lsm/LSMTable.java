@@ -325,9 +325,9 @@ public class LSMTable implements TableHandle {
             case DOUBLE -> Double.parseDouble(s);
             case DECIMAL, NUMERIC -> new java.math.BigDecimal(s);
             case BOOLEAN -> Boolean.parseBoolean(s);
-            case DATE -> Integer.parseInt(s);
-            case TIME -> Integer.parseInt(s);
-            case TIMESTAMP -> Long.parseLong(s);
+            case DATE -> SSTableWriter.parseDate(s);
+            case TIME -> SSTableWriter.parseTime(s);
+            case TIMESTAMP -> SSTableWriter.parseTimestamp(s);
             default -> s; // VARCHAR, CHAR, BINARY 等保持字符串
         };
     }
