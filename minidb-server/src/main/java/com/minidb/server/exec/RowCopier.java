@@ -58,7 +58,9 @@ public final class RowCopier {
         List<FieldVector> srcVectors = src.getFieldVectors();
         List<FieldVector> dstVectors = dst.getFieldVectors();
         for (int i = 0; i < srcVectors.size(); i++) {
-            dstVectors.get(i).copyFromSafe(srcRow, dstRow, srcVectors.get(i));
+            // 委托给 FieldVector 版本:它处理 DecimalVector 跨 scale 和跨类型复制,
+            // 避免 scale=6 的值被 copyFromSafe 直接存到 scale=2 向量(放大 10^n)。
+            copyRow(srcVectors.get(i), srcRow, dstVectors.get(i), dstRow);
         }
     }
 

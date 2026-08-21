@@ -67,6 +67,11 @@ class TpcdsCorrectnessTest {
 
                 Map<String, String> queries = new TpcdsTemplateParser().parseBundled(SCALE);
                 int limit = "true".equals(System.getProperty("tpcds.full")) ? 99 : DEFAULT_LIMIT;
+                // 支持只跑指定查询号:-Dtpcds.query=5,14,22
+                String queryFilter = System.getProperty("tpcds.query");
+                if (queryFilter != null && !queryFilter.isEmpty()) {
+                    limit = 99;
+                }
 
                 List<String> failures = new ArrayList<>();
                 List<String> skipped = new ArrayList<>();
@@ -74,6 +79,19 @@ class TpcdsCorrectnessTest {
                 for (Map.Entry<String, String> e : queries.entrySet()) {
                     if (count++ >= limit) {
                         break;
+                    }
+                    if (queryFilter != null) {
+                        int qn = Integer.parseInt(e.getKey().substring("query".length()));
+                        boolean match = false;
+                        for (String q : queryFilter.split(",")) {
+                            if (Integer.parseInt(q.trim()) == qn) {
+                                match = true;
+                                break;
+                            }
+                        }
+                        if (!match) {
+                            continue;
+                        }
                     }
                     compareOne(e.getKey(), e.getValue(), miniDb, duckStmt, failures, skipped);
                 }

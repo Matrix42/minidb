@@ -7,6 +7,7 @@ import org.apache.arrow.vector.BigIntVector;
 import org.apache.arrow.vector.BitVector;
 import org.apache.arrow.vector.DateDayVector;
 import org.apache.arrow.vector.DecimalVector;
+import org.apache.arrow.vector.ValueVector;
 import org.apache.arrow.vector.Float4Vector;
 import org.apache.arrow.vector.Float8Vector;
 import org.apache.arrow.vector.IntVector;
@@ -140,6 +141,25 @@ public final class Kernels {
             if (l.isNull(i) || r.isNull(i)) { out.setNull(i); continue; }
             out.setSafe(i, compareToBool(cmp.apply(l.get(i), (long) r.get(i)), kind) ? 1 : 0);
         }
+    }
+
+    /** 跨族比较(FLOAT8 vs 整型/DECIMAL,AVG/STDDEV 提升为 Float8 后与整型列比较):两侧读 double。 */
+    public static void fillCompareMixed(ValueVector l, ValueVector r, BitVector out,
+                                        ScalarKernels.DoubleCompare cmp, SqlKind kind) {
+        for (int i = 0; i < l.getValueCount(); i++) {
+            if (l.isNull(i) || r.isNull(i)) { out.setNull(i); continue; }
+            out.setSafe(i, compareToBool(cmp.apply(toDouble(l, i), toDouble(r, i)), kind) ? 1 : 0);
+        }
+    }
+
+    private static double toDouble(ValueVector v, int i) {
+        if (v instanceof Float8Vector f) return f.get(i);
+        if (v instanceof Float4Vector f) return f.get(i);
+        if (v instanceof IntVector iv) return iv.get(i);
+        if (v instanceof BigIntVector bv) return bv.get(i);
+        if (v instanceof SmallIntVector sv) return sv.get(i);
+        if (v instanceof DecimalVector dv) return dv.getObject(i).doubleValue();
+        throw new IllegalArgumentException("not a numeric vector: " + v.getClass());
     }
 
     public static void fillBinaryShort(SmallIntVector l, SmallIntVector r, SmallIntVector out,

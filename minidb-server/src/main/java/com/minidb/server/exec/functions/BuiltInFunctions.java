@@ -733,7 +733,32 @@ public final class BuiltInFunctions {
                 new Overload(List.of(BigIntVector.class, IntVector.class), BitVector.class,
                         (args, out) -> Kernels.fillCompareLongInt(
                                 (BigIntVector) args.get(0), (IntVector) args.get(1),
-                                (BitVector) out, Long::compare, kind))));
+                                (BitVector) out, Long::compare, kind)),
+                // Float8 跨型比较(AVG/STDDEV 提升为 Float8 后与整型/DECIMAL 列比较)
+                new Overload(List.of(Float8Vector.class, SmallIntVector.class), BitVector.class,
+                        (args, out) -> Kernels.fillCompareMixed(
+                                args.get(0), args.get(1), (BitVector) out, Double::compare, kind)),
+                new Overload(List.of(SmallIntVector.class, Float8Vector.class), BitVector.class,
+                        (args, out) -> Kernels.fillCompareMixed(
+                                args.get(0), args.get(1), (BitVector) out, Double::compare, kind)),
+                new Overload(List.of(Float8Vector.class, IntVector.class), BitVector.class,
+                        (args, out) -> Kernels.fillCompareMixed(
+                                args.get(0), args.get(1), (BitVector) out, Double::compare, kind)),
+                new Overload(List.of(IntVector.class, Float8Vector.class), BitVector.class,
+                        (args, out) -> Kernels.fillCompareMixed(
+                                args.get(0), args.get(1), (BitVector) out, Double::compare, kind)),
+                new Overload(List.of(Float8Vector.class, BigIntVector.class), BitVector.class,
+                        (args, out) -> Kernels.fillCompareMixed(
+                                args.get(0), args.get(1), (BitVector) out, Double::compare, kind)),
+                new Overload(List.of(BigIntVector.class, Float8Vector.class), BitVector.class,
+                        (args, out) -> Kernels.fillCompareMixed(
+                                args.get(0), args.get(1), (BitVector) out, Double::compare, kind)),
+                new Overload(List.of(Float8Vector.class, DecimalVector.class), BitVector.class,
+                        (args, out) -> Kernels.fillCompareMixed(
+                                args.get(0), args.get(1), (BitVector) out, Double::compare, kind)),
+                new Overload(List.of(DecimalVector.class, Float8Vector.class), BitVector.class,
+                        (args, out) -> Kernels.fillCompareMixed(
+                                args.get(0), args.get(1), (BitVector) out, Double::compare, kind))));
     }
 
     private static void arithmetic(FunctionRegistry r) {
