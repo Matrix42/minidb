@@ -161,8 +161,10 @@ class TpcdsCorrectnessTest {
 
         for (int i = 0; i < miniRows.size(); i++) {
             if (!rowsEqual(miniRows.get(i), duckRows.get(i))) {
-                failures.add(name + ": 第" + (i + 1) + "行不匹配 "
-                        + miniRows.get(i) + " vs " + duckRows.get(i));
+                List<Object> ma = miniRows.get(i);
+                List<Object> da = duckRows.get(i);
+                failures.add(name + ": 第" + (i + 1) + "行不匹配 (sizes " + ma.size()
+                        + " vs " + da.size() + ") " + ma + " vs " + da);
                 return;
             }
         }
@@ -305,6 +307,20 @@ class TpcdsCorrectnessTest {
         if (b instanceof Integer && a instanceof java.sql.Date) {
             return ((Integer) b).intValue() == ((java.sql.Date) a).toLocalDate().toEpochDay();
         }
+        // DuckDB JDBC 可能返回 java.time.LocalDate 而非 java.sql.Date
+        if (a instanceof Integer && b instanceof java.time.LocalDate) {
+            return ((Integer) a).intValue() == ((java.time.LocalDate) b).toEpochDay();
+        }
+        if (b instanceof Integer && a instanceof java.time.LocalDate) {
+            return ((Integer) b).intValue() == ((java.time.LocalDate) a).toEpochDay();
+        }
+        // DuckDB 可能返回日期字符串 "2001-03-06"
+        if (a instanceof Integer && b instanceof String) {
+            return ((Integer) a).intValue() == java.time.LocalDate.parse((String) b).toEpochDay();
+        }
+        if (b instanceof Integer && a instanceof String) {
+            return ((Integer) b).intValue() == java.time.LocalDate.parse((String) a).toEpochDay();
+        }
         if (a instanceof Integer && b instanceof java.sql.Time) {
             return ((Integer) a).intValue() == (int) ((java.sql.Time) b).toLocalTime().toNanoOfDay() / 1_000_000;
         }
@@ -327,6 +343,9 @@ class TpcdsCorrectnessTest {
         }
         if (v instanceof java.sql.Date d) {
             return (int) d.toLocalDate().toEpochDay();
+        }
+        if (v instanceof java.time.LocalDate ld) {
+            return (int) ld.toEpochDay();
         }
         if (v instanceof java.sql.Time t) {
             return (int) (t.toLocalTime().toNanoOfDay() / 1_000_000);
