@@ -263,17 +263,19 @@ public class MiniDbAggregate extends Aggregate implements MiniDbRel {
                 ImmutableBitSet gs = groupSets.get(g);
                 for (Map.Entry<List<Object>, GroupState> e : groupMaps.get(g).entrySet()) {
                     List<Object> key = e.getKey();
-                    int keyIdx = 0;
-                    // 分组列:把 groupSet 的 set 位按序写到连续输出列。不能按输入索引
-                    // i<groupCount 检查 gs.get(i)——groupSet 可能不从 0 开始(如 EXISTS
-                    // 去相关产生 groupSet={1} 去重 b.aid,cardinality=1 但组列在输入下标 1,
-                    // 旧写法漏写该键,输出列恒 NULL,join 永远不匹配)。
+                    // 分组列:按完整 groupSet 的 set 位顺序写输出列。子集 groupSet(ROLLUP)
+                    // 中不在子集的列写 null。不能用「子集 gs 的 set 位按序递增 outCol」——
+                    // 子集 {53} 只有 i_category,但它是输出列 3(完整 groupSet 的第 4 位),
+                    // 递增 outCol 会把它写到列 0(i_product_name 位置)。
                     int outCol = 0;
-                    for (int i = 0; i < getInput().getRowType().getFieldCount(); i++) {
+                    int keyIdx = 0;
+                    for (Integer i : getGroupSet()) {
                         if (gs.get(i)) {
                             RowVectors.writeObject(vectors.get(outCol), row, key.get(keyIdx++));
-                            outCol++;
+                        } else {
+                            vectors.get(outCol).setNull(row);
                         }
+                        outCol++;
                     }
                     int col = groupCount;
                     List<Accumulator> accs = e.getValue().accs;
