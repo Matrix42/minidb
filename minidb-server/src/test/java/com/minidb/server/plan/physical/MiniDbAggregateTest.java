@@ -66,14 +66,14 @@ class MiniDbAggregateTest {
         VectorSchemaRoot root = rows(r);
         ValueVector s = root.getVector("s");
         ValueVector a = root.getVector("a");
-        // SUM(DECIMAL(10,2)) -> DECIMAL(19,2)、AVG(DECIMAL(10,2)) -> DECIMAL(10,2),都落 DecimalVector。
+        // SUM(DECIMAL(10,2)) -> DECIMAL(19,2)、AVG(DECIMAL(10,2)) -> 提升 scale 避免截断(scale=6)。
         assertTrue(s instanceof DecimalVector,
                 "expected DecimalVector for SUM, got " + s.getClass().getSimpleName());
         assertTrue(a instanceof DecimalVector,
                 "expected DecimalVector for AVG, got " + a.getClass().getSimpleName());
         assertEquals(0, new BigDecimal("61.00").compareTo((BigDecimal) s.getObject(0)));
-        // 61.00 / 3 = 20.3333...,按输出向量 scale=2 HALF_UP 舍入为 20.33。
-        assertEquals(0, new BigDecimal("20.33").compareTo((BigDecimal) a.getObject(0)));
+        // 61.00 / 3 = 20.333333...,scale=2 时舍入为 20.33,scale=6 时保留 20.333333。
+        assertEquals(0, new BigDecimal("20.333333").compareTo((BigDecimal) a.getObject(0)));
         root.close();
     }
 
@@ -102,14 +102,17 @@ class MiniDbAggregateTest {
         QueryResult r = executor.execute(
                 "SELECT SUM(x) AS s, AVG(x) AS a, MIN(x) AS mn, MAX(x) AS mx FROM t");
         VectorSchemaRoot root = rows(r);
-        // SUM/AVG/MIN/MAX(SMALLINT) -> SMALLINT,落 SmallIntVector。
-        for (String name : new String[]{"s", "a", "mn", "mx"}) {
-            assertTrue(root.getVector(name) instanceof SmallIntVector,
-                    "expected SmallIntVector for " + name + ", got "
-                            + root.getVector(name).getClass().getSimpleName());
-        }
+        // SUM/MIN/MAX(SMALLINT) -> SMALLINT,落 SmallIntVector;AVG(SMALLINT) -> Float8Vector(精度提升)。
+        assertTrue(root.getVector("s") instanceof SmallIntVector,
+                "expected SmallIntVector for s");
+        assertTrue(root.getVector("a") instanceof Float8Vector,
+                "expected Float8Vector for a, got " + root.getVector("a").getClass().getSimpleName());
+        assertTrue(root.getVector("mn") instanceof SmallIntVector,
+                "expected SmallIntVector for mn");
+        assertTrue(root.getVector("mx") instanceof SmallIntVector,
+                "expected SmallIntVector for mx");
         assertEquals(6, ((SmallIntVector) root.getVector("s")).get(0));
-        assertEquals(2, ((SmallIntVector) root.getVector("a")).get(0));
+        assertEquals(2.0, ((Float8Vector) root.getVector("a")).get(0), 0.001);
         assertEquals(1, ((SmallIntVector) root.getVector("mn")).get(0));
         assertEquals(3, ((SmallIntVector) root.getVector("mx")).get(0));
         root.close();

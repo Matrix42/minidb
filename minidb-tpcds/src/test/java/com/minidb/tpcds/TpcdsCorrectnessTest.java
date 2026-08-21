@@ -107,7 +107,9 @@ class TpcdsCorrectnessTest {
         try {
             miniRows = executeMiniDb(miniDb, sql);
         } catch (Exception ex) {
-            failures.add(name + ": MiniDB异常 " + ex.getMessage());
+            failures.add(name + ": MiniDB异常 " + ex.getClass().getSimpleName() + ": "
+                    + ex.getMessage());
+            ex.printStackTrace();
             return;
         }
 

@@ -38,7 +38,19 @@ public final class RowCopier {
     }
 
     public static void copyRow(FieldVector src, int srcRow, FieldVector dst, int dstRow) {
-        dst.copyFromSafe(srcRow, dstRow, src);
+        if (src.getMinorType() == dst.getMinorType()) {
+            // DecimalVector 的 copyFromSafe 要求 scale 精确一致,否则
+            // DecimalUtility.checkPrecisionAndScale 抛异常。跨 scale 时走 writeValue
+            // 的 scaleTo 转换。
+            if (src instanceof DecimalVector && dst instanceof DecimalVector
+                    && ((DecimalVector) src).getScale() != ((DecimalVector) dst).getScale()) {
+                writeValue(dst, dstRow, src, srcRow);
+                return;
+            }
+            dst.copyFromSafe(srcRow, dstRow, src);
+        } else {
+            writeValue(dst, dstRow, src, srcRow);
+        }
     }
 
     public static void copyRow(VectorSchemaRoot src, int srcRow,

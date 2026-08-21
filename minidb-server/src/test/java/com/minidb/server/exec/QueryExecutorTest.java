@@ -394,9 +394,9 @@ class QueryExecutorTest {
         VectorSchemaRoot root = ((QueryResult.Rows) r).data();
         assertEquals(1, root.getRowCount());
         assertEquals(3L, ((BigIntVector) root.getVector("c")).get(0));
-        // Calcite derives SUM(INTEGER)->INTEGER and AVG(INTEGER)->INTEGER
+        // Calcite derives SUM(INTEGER)->INTEGER;AVG(INTEGER) 提升为 Float8Vector(精度提升)。
         assertEquals(6, ((IntVector) root.getVector("s")).get(0));
-        assertEquals(2, ((IntVector) root.getVector("a")).get(0));
+        assertEquals(2.0, ((Float8Vector) root.getVector("a")).get(0), 0.001);
         assertEquals(1, ((IntVector) root.getVector("mn")).get(0));
         assertEquals(3, ((IntVector) root.getVector("mx")).get(0));
         root.close();
@@ -593,7 +593,7 @@ class QueryExecutorTest {
         VectorSchemaRoot root = ((QueryResult.Rows) r).data();
         assertEquals(1, root.getRowCount());
         assertEquals(6, ((IntVector) root.getVector("s")).get(0)); // 1+2+3
-        assertEquals(2, ((IntVector) root.getVector("a")).get(0));
+        assertEquals(2.0, ((Float8Vector) root.getVector("a")).get(0), 0.001);
         assertEquals(1, ((IntVector) root.getVector("mn")).get(0));
         assertEquals(3, ((IntVector) root.getVector("mx")).get(0));
         root.close();

@@ -227,6 +227,31 @@ public class MiniDbAggregate extends Aggregate implements MiniDbRel {
         for (RelDataTypeField f : getRowType().getFieldList()) {
             vectors.add(ArrowTypes.field(f).createVector(ctx.allocator()));
         }
+        // AVG(DECIMAL):增大 DecimalVector scale 防止截断小数位。
+        // AVG(INTEGER)/VARIANCE/STDDEV:IntVector 无法存小数,改用 Float8Vector。
+        for (int i = 0; i < getAggCallList().size(); i++) {
+            AggregateCall call = getAggCallList().get(i);
+            if (!needsDoubleOutput(call)) {
+                continue;
+            }
+            int idx = groupCount + i;
+            RelDataTypeField f = getRowType().getFieldList().get(idx);
+            vectors.get(idx).close();
+            FieldVector alt;
+            if (f.getType().getSqlTypeName() == SqlTypeName.DECIMAL) {
+                // 提升 DecimalVector scale:除到足够精度后由 writeDecimal 按新 scale HALF_UP 舍入
+                alt = new DecimalVector(f.getName(), ctx.allocator(),
+                        f.getType().getPrecision() + 4,
+                        Math.min(f.getType().getScale() + 4, 12));
+            } else {
+                alt = ArrowTypes.field(
+                        getCluster().getTypeFactory().createSqlType(SqlTypeName.DOUBLE),
+                        f.getName()).createVector(ctx.allocator());
+            }
+            alt.setInitialCapacity(total);
+            alt.allocateNew();
+            vectors.set(idx, alt);
+        }
         for (FieldVector v : vectors) {
             v.setInitialCapacity(total);
             v.allocateNew();
@@ -359,6 +384,18 @@ public class MiniDbAggregate extends Aggregate implements MiniDbRel {
         }
     }
 
+    /** AVG(*)/VARIANCE(*)/STDDEV(*) 输出提升精度:INTEGER→DOUBLE,DECIMAL→scale+4。 */
+    public static boolean needsDoubleOutput(AggregateCall call) {
+        SqlKind kind = call.getAggregation().kind;
+        if (kind != SqlKind.AVG && kind != SqlKind.VAR_SAMP && kind != SqlKind.VAR_POP
+                && kind != SqlKind.STDDEV_SAMP && kind != SqlKind.STDDEV_POP) {
+            return false;
+        }
+        SqlTypeName t = call.type.getSqlTypeName();
+        // FLOAT/REAL/DOUBLE 已有足够精度,无需提升
+        return t != SqlTypeName.FLOAT && t != SqlTypeName.REAL && t != SqlTypeName.DOUBLE;
+    }
+
     private interface Accumulator {
         void add(ValueVector v, int row);
 
@@ -459,7 +496,31 @@ public class MiniDbAggregate extends Aggregate implements MiniDbRel {
                         return;
                     }
                     Object first = set.iterator().next();
-                    if (first instanceof BigDecimal) {
+                    if (out instanceof Float8Vector fv) {
+                        // AVG 输出提升为 DOUBLE
+                        double result;
+                        if (first instanceof BigDecimal) {
+                            BigDecimal s = BigDecimal.ZERO;
+                            for (Object o : set) {
+                                s = s.add((BigDecimal) o);
+                            }
+                            result = s.divide(BigDecimal.valueOf(set.size()),
+                                    MathContext.DECIMAL128).doubleValue();
+                        } else if (first instanceof Float || first instanceof Double) {
+                            double s = 0;
+                            for (Object o : set) {
+                                s += ((Number) o).doubleValue();
+                            }
+                            result = s / set.size();
+                        } else {
+                            long s = 0;
+                            for (Object o : set) {
+                                s += ((Number) o).longValue();
+                            }
+                            result = (double) s / set.size();
+                        }
+                        fv.setSafe(row, result);
+                    } else if (first instanceof BigDecimal) {
                         BigDecimal s = BigDecimal.ZERO;
                         for (Object o : set) {
                             s = s.add((BigDecimal) o);
@@ -610,13 +671,22 @@ public class MiniDbAggregate extends Aggregate implements MiniDbRel {
                 out.setNull(row);
                 return;
             }
+            if (out instanceof Float8Vector fv) {
+                // AVG(DECIMAL) 输出提升为 DOUBLE,避免 DecimalVector scale 截断
+                double result = switch (domain) {
+                    case INTEGRAL -> (double) lsum / cnt;
+                    case DECIMAL -> decimalSum.divide(
+                            BigDecimal.valueOf(cnt), MathContext.DECIMAL128).doubleValue();
+                    case FLOATING -> fsum / cnt;
+                };
+                fv.setSafe(row, result);
+                return;
+            }
             switch (domain) {
                 case INTEGRAL:
                     writeLong(out, row, lsum / cnt);
                     break;
                 case DECIMAL:
-                    // AVG(DECIMAL) 输出仍是 DECIMAL;除到足够精度后由 writeDecimal
-                    // 按输出向量 scale 舍入(见 writeDecimal 注释)。
                     writeDecimal(out, row,
                             decimalSum.divide(BigDecimal.valueOf(cnt), MathContext.DECIMAL128));
                     break;
@@ -668,9 +738,10 @@ public class MiniDbAggregate extends Aggregate implements MiniDbRel {
                 variance = 0;
             }
             double result = sqrt ? Math.sqrt(variance) : variance;
-            // 输出类型与 AVG 同族(Calcite 用 SqlAvgAggFunction 推导 STDDEV/VAR),
-            // 与参数 domain 一致(INTEGER→INTEGER、DECIMAL→DECIMAL、DOUBLE→DOUBLE),
-            // 故按 domain 落向量(见 AvgAcc.write)。
+            if (out instanceof Float8Vector fv) {
+                fv.setSafe(row, result);
+                return;
+            }
             switch (domain) {
                 case INTEGRAL:
                     writeLong(out, row, (long) result);
