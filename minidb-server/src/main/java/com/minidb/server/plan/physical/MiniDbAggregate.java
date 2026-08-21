@@ -239,7 +239,6 @@ public class MiniDbAggregate extends Aggregate implements MiniDbRel {
             vectors.get(idx).close();
             FieldVector alt;
             if (f.getType().getSqlTypeName() == SqlTypeName.DECIMAL) {
-                // 提升 DecimalVector scale:除到足够精度后由 writeDecimal 按新 scale HALF_UP 舍入
                 alt = new DecimalVector(f.getName(), ctx.allocator(),
                         f.getType().getPrecision() + 4,
                         Math.min(f.getType().getScale() + 4, 12));

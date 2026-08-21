@@ -109,7 +109,6 @@ class TpcdsCorrectnessTest {
         } catch (Exception ex) {
             failures.add(name + ": MiniDB异常 " + ex.getClass().getSimpleName() + ": "
                     + ex.getMessage());
-            ex.printStackTrace();
             return;
         }
 
