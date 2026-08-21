@@ -72,7 +72,11 @@ public class Planner {
         RelOptTable.ViewExpander viewExpander =
                 new ViewExpander(volcanoPlanner, typeFactory, calcite, currentSchema);
         RelRoot root = calcite.planInCluster(sql, cluster, currentSchema, viewExpander);
-        RelNode logical = root.rel;
+        // root.project() 按 SELECT 的实际输出列裁剪:ORDER BY 引入的临时表达式列(如
+        // SELECT * ORDER BY (a-b) 会把 a-b 作为额外列挂在 Sort 上)在此被 Project 裁掉,
+        // 否则会泄露成输出列(坑:禁用 ProjectRemoveRule 保列别名,但该规则只按索引判
+        // trivial、无法处理 ORDER BY 临时列的裁剪,故须在 plan 入口显式 project())。
+        RelNode logical = root.project();
         // Phase 1: logical optimization (HepPlanner over Calcite Logical* tree)
         RelNode optimized = LogicalOptimizer.optimize(logical);
         // Phase 2: physical conversion (VolcanoPlanner)

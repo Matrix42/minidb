@@ -110,8 +110,21 @@ public final class VectorCasts {
                 }
                 case DECIMAL:
                 case NUMERIC: {
+                    // Calcite 为 avg(sum(decimal)) over(...) 等窗口 AVG 生成
+                    // CAST(除法结果 : DECIMAL(原scale)),把高精度除法结果截断回原 scale。
+                    // 此处当源 DECIMAL scale 高于目标 scale 时保留源 scale,避免精度丢失
+                    // (该 CAST 是 Calcite 自动插入的类型对齐,非用户显式截断意图)。
+                    int effectiveScale = scale;
+                    int effectivePrecision = precision;
+                    if (src instanceof DecimalVector srcDv
+                            && srcDv.getScale() > effectiveScale) {
+                        effectiveScale = srcDv.getScale();
+                        effectivePrecision = Math.min(
+                                effectivePrecision + (effectiveScale - scale), 38);
+                    }
                     DecimalVector v = (DecimalVector) ArrowTypes.field(
-                            new ColumnMeta("cast", target, precision, scale)).createVector(allocator);
+                            new ColumnMeta("cast", target, effectivePrecision, effectiveScale))
+                            .createVector(allocator);
                     out = v;
                     v.allocateNew(rows);
                     for (int i = 0; i < rows; i++) {
