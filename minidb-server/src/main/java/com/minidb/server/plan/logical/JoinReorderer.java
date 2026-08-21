@@ -7,6 +7,7 @@ import org.apache.calcite.plan.RelOptCluster;
 import org.apache.calcite.rel.RelNode;
 import org.apache.calcite.rel.core.CorrelationId;
 import org.apache.calcite.rel.core.JoinRelType;
+import org.apache.calcite.rel.logical.LogicalFilter;
 import org.apache.calcite.rel.logical.LogicalJoin;
 import org.apache.calcite.rel.logical.LogicalProject;
 import org.apache.calcite.rex.RexBuilder;
@@ -161,17 +162,25 @@ public final class JoinReorderer {
         }
 
         // 4. 重建左深树,把每个合取项赋给「后加入的那个叶子」所在的 join。
+        // 引用恰好 2 个叶子的合取项作为 join 条件;引用 >2 个叶子的合取项(如 query4 的
+        // CASE ratio 比较引用 4 个 year_total 列)无法放进单个 join,收集起来在重建后
+        // 作为顶层 Filter 保留(否则会被丢弃 → 查询结果错误)。
         RelOptCluster cluster = root.getCluster();
         RexBuilder rexBuilder = cluster.getRexBuilder();
         List<Integer> currentOrder = new ArrayList<>();
         RelNode current = leaves.get(order[0]);
         currentOrder.add(order[0]);
+        List<RexNode> unassignedConjuncts = new ArrayList<>();
         for (int k = 1; k < n; k++) {
             int leafId = order[k];
             List<RexNode> joinConjuncts = new ArrayList<>();
             for (int c = 0; c < conjuncts.size(); c++) {
                 Set<Integer> refs = conjunctLeaves.get(c);
-                if (refs.size() != 2 || !refs.contains(leafId)) {
+                if (!refs.contains(leafId)) {
+                    continue;
+                }
+                if (refs.size() != 2) {
+                    // 跨 >2 叶子的合取项:不能放进单个 join,留待顶层 Filter。
                     continue;
                 }
                 boolean otherInCurrent = false;
@@ -190,6 +199,12 @@ public final class JoinReorderer {
                     joinCond, root.getVariablesSet(), JoinRelType.INNER);
             currentOrder.add(leafId);
         }
+        // 收集所有引用 >2 个叶子的合取项(原扁平偏移,稍后经 Project 还原字段顺序后引用)。
+        for (int c = 0; c < conjuncts.size(); c++) {
+            if (conjunctLeaves.get(c).size() > 2) {
+                unassignedConjuncts.add(conjuncts.get(c));
+            }
+        }
 
         // 重排改变了 join 输出字段顺序,上层节点(Project/Aggregate)仍按原顺序引用列,
         // 必须补一个 Project 把字段顺序还原成原扁平顺序(order 为恒等置换时跳过)。
@@ -200,23 +215,33 @@ public final class JoinReorderer {
                 break;
             }
         }
+        // 跨 >2 叶子的合取项(原扁平偏移)在 Project 还原字段顺序后引用,故对 identity
+        // 和 non-identity 两种情况都适用:identity 时直接对 join 输出过滤;non-identity
+        // 时对 Project 输出过滤(Project 已把字段还原成原扁平顺序)。
+        RelNode result;
         if (identity) {
-            return current;
-        }
-        int[] reorderedOffset = new int[n];
-        int off = 0;
-        for (int p = 0; p < n; p++) {
-            reorderedOffset[order[p]] = off;
-            off += fieldCount[order[p]];
-        }
-        List<RexNode> projects = new ArrayList<>(totalFields(fieldCount));
-        for (int l = 0; l < n; l++) {
-            for (int f = 0; f < fieldCount[l]; f++) {
-                projects.add(rexBuilder.makeInputRef(current, reorderedOffset[l] + f));
+            result = current;
+        } else {
+            int[] reorderedOffset = new int[n];
+            int off = 0;
+            for (int p = 0; p < n; p++) {
+                reorderedOffset[order[p]] = off;
+                off += fieldCount[order[p]];
             }
+            List<RexNode> projects = new ArrayList<>(totalFields(fieldCount));
+            for (int l = 0; l < n; l++) {
+                for (int f = 0; f < fieldCount[l]; f++) {
+                    projects.add(rexBuilder.makeInputRef(current, reorderedOffset[l] + f));
+                }
+            }
+            result = LogicalProject.create(current, List.of(), projects,
+                    root.getRowType().getFieldNames());
         }
-        return LogicalProject.create(current, List.of(), projects,
-                root.getRowType().getFieldNames());
+        if (!unassignedConjuncts.isEmpty()) {
+            RexNode filterCond = RexUtil.composeConjunction(rexBuilder, unassignedConjuncts);
+            result = LogicalFilter.create(result, filterCond);
+        }
+        return result;
     }
 
     /** 合取项引用的叶子下标集合(按字段偏移范围归到叶子)。 */
