@@ -63,7 +63,7 @@ public class MiniDbHashJoin extends MiniDbJoin {
         // 残留(非等值)条件:等值键之外的合取项(query13/15 的 OR 残留在等值键匹配后仍需过滤)。
         RexNode residual = info.getRemaining(getCluster().getRexBuilder());
         boolean hasResidual = !residual.isAlwaysTrue();
-        VectorSchemaRoot probeRoot = hasResidual ? buildProbeRoot(ctx) : null;
+        VectorSchemaRoot probeRoot = hasResidual ? buildProbeRoot(ctx, left, right) : null;
         // Build: key -> row indices of the left input sharing that key.
         // Null-keyed rows are skipped (they can never match).
         Map<ColumnKey, List<Integer>> buildTable = new HashMap<>();

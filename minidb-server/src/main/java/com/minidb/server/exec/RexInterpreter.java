@@ -534,8 +534,13 @@ public class RexInterpreter {
             case DOUBLE:
                 return new Float8Vector("case", allocator);
             case DECIMAL:
-                // DecimalVector 构造需要 precision/scale,只能经 ArrowTypes.field 从 RelDataType 取。
-                return ArrowTypes.field(type, "case").createVector(allocator);
+                // DecimalVector 构造需要 precision/scale。AVG 等聚合在 buildOutput 里提升了
+                // scale(避免截断),但 CASE 等表达式的类型(RexNode)仍是原 scale,若按原 scale
+                // 建向量,writeValue 的 scaleTo 会把高 scale 值截断回低 scale。这里把 scale
+                // 提升到至少 6,precision 相应放大,使中间 DECIMAL 表达式不丢精度。
+                int scale = Math.max(type.getScale(), 6);
+                int precision = Math.min(type.getPrecision() + (scale - type.getScale()), 38);
+                return new DecimalVector("case", allocator, precision, scale);
             case VARCHAR:
             case CHAR:
                 return new VarCharVector("case", allocator);

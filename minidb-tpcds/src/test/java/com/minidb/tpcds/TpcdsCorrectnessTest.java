@@ -263,6 +263,19 @@ class TpcdsCorrectnessTest {
             return false;
         }
         if (isNumeric(a) && isNumeric(b)) {
+            // 若任一方是浮点(DuckDB 对 AVG 等返回 Double),用相对容差比较,
+            // 因为 MiniDB 的 DECIMAL 除法按 scale 舍入,DuckDB 用全精度 DOUBLE。
+            boolean anyFloating = a instanceof Double || a instanceof Float
+                    || b instanceof Double || b instanceof Float;
+            if (anyFloating) {
+                double da = toBigDecimal(a).doubleValue();
+                double db = toBigDecimal(b).doubleValue();
+                if (Double.isNaN(da) || Double.isNaN(db)) {
+                    return false;
+                }
+                double tol = Math.max(1e-6, Math.abs(db) * 1e-6);
+                return Math.abs(da - db) < tol;
+            }
             return toBigDecimal(a).compareTo(toBigDecimal(b)) == 0;
         }
         if (a instanceof String sa && b instanceof String sb) {

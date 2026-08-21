@@ -151,8 +151,13 @@ public abstract class MiniDbJoin extends Join implements MiniDbRel {
     private VectorSchemaRoot buildOutput(VectorSchemaRoot left, VectorSchemaRoot right,
                                          List<int[]> pairs, ExecContext ctx) {
         List<FieldVector> vectors = new ArrayList<>();
-        for (RelDataTypeField f : getRowType().getFieldList()) {
-            vectors.add(ArrowTypes.field(f).createVector(ctx.allocator()));
+        // 用实际物化向量 schema(而非 plan rowType):子节点(Aggregate)可能在 buildOutput
+        // 里提升了 DECIMAL scale,plan rowType 仍是原 scale,会导致输出截断。
+        for (FieldVector v : left.getFieldVectors()) {
+            vectors.add(v.getField().createVector(ctx.allocator()));
+        }
+        for (FieldVector v : right.getFieldVectors()) {
+            vectors.add(v.getField().createVector(ctx.allocator()));
         }
         int total = pairs.size();
         for (FieldVector v : vectors) {
@@ -196,10 +201,17 @@ public abstract class MiniDbJoin extends Join implements MiniDbRel {
     }
 
     /** 建一个 1 行 probe root,列结构 = join 输出的行类型(左列 + 右列),供评估残留条件。 */
-    protected final VectorSchemaRoot buildProbeRoot(ExecContext ctx) {
+    protected final VectorSchemaRoot buildProbeRoot(ExecContext ctx, VectorSchemaRoot left,
+                                                        VectorSchemaRoot right) {
         List<FieldVector> vectors = new ArrayList<>();
-        for (RelDataTypeField f : getRowType().getFieldList()) {
-            vectors.add(ArrowTypes.field(f).createVector(ctx.allocator()));
+        // 用实际物化向量 schema(而非 plan rowType)建 probeRoot:子节点(Aggregate)可能
+        // 在 buildOutput 里提升了 DECIMAL scale,plan rowType 仍是原 scale,若用 plan
+        // rowType 建 probeRoot,copyRow 会把高 scale 值截断回低 scale。
+        for (FieldVector v : left.getFieldVectors()) {
+            vectors.add(v.getField().createVector(ctx.allocator()));
+        }
+        for (FieldVector v : right.getFieldVectors()) {
+            vectors.add(v.getField().createVector(ctx.allocator()));
         }
         for (FieldVector v : vectors) {
             v.setInitialCapacity(1);

@@ -227,8 +227,10 @@ public class MiniDbAggregate extends Aggregate implements MiniDbRel {
         for (RelDataTypeField f : getRowType().getFieldList()) {
             vectors.add(ArrowTypes.field(f).createVector(ctx.allocator()));
         }
-        // AVG(DECIMAL):增大 DecimalVector scale 防止截断小数位。
-        // AVG(INTEGER)/VARIANCE/STDDEV:IntVector 无法存小数,改用 Float8Vector。
+        // 提升 AVG/VARIANCE/STDDEV 输出向量精度:DECIMAL→scale+4,INTEGER→Float8Vector。
+        // getRowType() 仍是 Calcite 推导的原类型(plan 层无法改 rowType),故这里替换向量。
+        // 下游算子(Join/Project)的 probeRoot 按 plan rowType(scale=2)建向量,RowCopier
+        // 的跨 scale 路径(writeValue→scaleTo)会把 scale+6 的值正确转写进去。
         for (int i = 0; i < getAggCallList().size(); i++) {
             AggregateCall call = getAggCallList().get(i);
             if (!needsDoubleOutput(call)) {
@@ -383,7 +385,8 @@ public class MiniDbAggregate extends Aggregate implements MiniDbRel {
         }
     }
 
-    /** AVG(*)/VARIANCE(*)/STDDEV(*) 输出提升精度:INTEGER→DOUBLE,DECIMAL→scale+4。 */
+    /** 判断聚合调用是否需要精度提升(由 AggregateAvgPrecisionRule 在逻辑层处理)。
+     *  保留为 public 供测试/诊断引用。 */
     public static boolean needsDoubleOutput(AggregateCall call) {
         SqlKind kind = call.getAggregation().kind;
         if (kind != SqlKind.AVG && kind != SqlKind.VAR_SAMP && kind != SqlKind.VAR_POP
@@ -671,7 +674,7 @@ public class MiniDbAggregate extends Aggregate implements MiniDbRel {
                 return;
             }
             if (out instanceof Float8Vector fv) {
-                // AVG(DECIMAL) 输出提升为 DOUBLE,避免 DecimalVector scale 截断
+                // AVG(INTEGER/BIGINT) 输出提升为 DOUBLE(由 AggregateAvgPrecisionRule)
                 double result = switch (domain) {
                     case INTEGRAL -> (double) lsum / cnt;
                     case DECIMAL -> decimalSum.divide(
@@ -697,7 +700,8 @@ public class MiniDbAggregate extends Aggregate implements MiniDbRel {
     }
 
     /** VAR_SAMP/VAR_POP/STDDEV_SAMP/STDDEV_POP:方差 = 均值平方差,在线累计 sum 与 sum²。
-     *  STDDEV 再取 sqrt;VAR 直接输出方差。输出恒 DOUBLE(Float8Vector)。 */
+     *  STDDEV 再取 sqrt;VAR 直接输出方差。输出类型由 AggregateAvgPrecisionRule 提升
+     *  (INTEGER/BIGINT→DOUBLE,DECIMAL→DECIMAL scale+4)。 */
     private static final class VarianceAcc implements Accumulator {
         private final NumericDomain domain;
         private final boolean sample; // true = 除以 n-1(VAR_SAMP/STDDEV_SAMP)

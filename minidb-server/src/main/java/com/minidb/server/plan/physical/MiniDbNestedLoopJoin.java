@@ -58,7 +58,7 @@ public class MiniDbNestedLoopJoin extends MiniDbJoin {
         boolean keepUnmatchedRight = type == JoinRelType.RIGHT || type == JoinRelType.FULL;
         boolean[] matchedLeft = new boolean[left.getRowCount()];
         boolean[] matchedRight = new boolean[right.getRowCount()];
-        VectorSchemaRoot probeRoot = buildProbeRoot(ctx);
+        VectorSchemaRoot probeRoot = buildProbeRoot(ctx, left, right);
         List<int[]> outputRows = new ArrayList<>();
         try {
             for (int leftIdx = 0; leftIdx < left.getRowCount(); leftIdx++) {
