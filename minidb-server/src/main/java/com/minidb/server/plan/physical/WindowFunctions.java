@@ -210,7 +210,8 @@ public final class WindowFunctions {
                 if (isDecimal) {
                     return decimalSum.divide(BigDecimal.valueOf(count), java.math.MathContext.DECIMAL128);
                 }
-                return isFloating ? doubleSum / count : longSum / count;
+                // AVG(整数) 返回 double,避免整数除法截断
+                return isFloating ? doubleSum / count : (double) longSum / count;
             case MIN:
             case MAX:
                 return bestValue;

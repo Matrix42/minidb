@@ -20,6 +20,8 @@ import org.apache.calcite.rel.RelNode;
 import org.apache.calcite.rel.core.Project;
 import org.apache.calcite.rel.type.RelDataType;
 import org.apache.calcite.rel.type.RelDataTypeField;
+import org.apache.calcite.sql.SqlKind;
+import org.apache.calcite.sql.type.SqlTypeName;
 import org.apache.calcite.rex.RexCall;
 import org.apache.calcite.rex.RexInputRef;
 import org.apache.calcite.rex.RexNode;
@@ -131,7 +133,24 @@ public class MiniDbProject extends Project implements MiniDbRel {
             vectors.add(ArrowTypes.field(field).createVector(ctx.allocator()));
         }
         for (RexOver over : windowOvers) {
-            vectors.add(ArrowTypes.field(over.getType(), "w" + windowOvers.indexOf(over))
+            RelDataType overType = over.getType();
+            // AVG/STDDEV 窗口函数提升 DECIMAL scale(避免截断),INTEGER→DOUBLE
+            SqlKind aggKind = over.getOperator().getKind();
+            if ((aggKind == SqlKind.AVG || aggKind == SqlKind.STDDEV_SAMP
+                    || aggKind == SqlKind.STDDEV_POP || aggKind == SqlKind.VAR_SAMP
+                    || aggKind == SqlKind.VAR_POP)
+                    && overType.getSqlTypeName() != SqlTypeName.DOUBLE
+                    && overType.getSqlTypeName() != SqlTypeName.REAL
+                    && overType.getSqlTypeName() != SqlTypeName.FLOAT) {
+                if (overType.getSqlTypeName() == SqlTypeName.DECIMAL) {
+                    overType = getCluster().getTypeFactory().createSqlType(SqlTypeName.DECIMAL,
+                            overType.getPrecision() + 4,
+                            Math.min(overType.getScale() + 4, 12));
+                } else {
+                    overType = getCluster().getTypeFactory().createSqlType(SqlTypeName.DOUBLE);
+                }
+            }
+            vectors.add(ArrowTypes.field(overType, "w" + windowOvers.indexOf(over))
                     .createVector(ctx.allocator()));
         }
         for (FieldVector vector : vectors) {
