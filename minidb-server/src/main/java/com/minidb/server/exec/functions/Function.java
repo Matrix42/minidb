@@ -34,15 +34,18 @@ public final class Function {
                                 BufferAllocator allocator) {
         // 先解析(含输出类型)再分配:解析失败不泄漏输出向量。
         Class<? extends FieldVector> outputClass = outputVectorClass(resultType);
-        Kernel kernel = resolve(args, outputClass);
-        FieldVector out = ArrowTypes.field(resultType, "expr").createVector(allocator);
+        Overload matched = resolveOverload(args, outputClass);
+        // 精确匹配失败时(如 STDDEV 提升为 Float8 但 plan 结果类型仍是 INTEGER),
+        // 用重载声明的 outputType 创建向量,避免类型不匹配。
+        Class<? extends FieldVector> actualOutput = matched.outputType();
+        FieldVector out = createOutputVector(actualOutput, allocator);
         out.setInitialCapacity(rows);
         out.allocateNew();
         // 先 setValueCount 再执行 kernel:0 参函数(如 CURRENT_DATE)没有入参可读行数,
         // 靠 out.getValueCount() 得知要写多少行;有参函数不受影响(仍读 args 的行数)。
         out.setValueCount(rows);
         try {
-            kernel.execute(args, out);
+            matched.kernel().execute(args, out);
         } finally {
             for (ValueVector a : args) {
                 a.close();
@@ -51,15 +54,63 @@ public final class Function {
         return out;
     }
 
-    private Kernel resolve(List<ValueVector> args, Class<? extends FieldVector> outputClass) {
+    private Overload resolveOverload(List<ValueVector> args, Class<? extends FieldVector> outputClass) {
         for (Overload o : overloads) {
             if (o.outputType().equals(outputClass) && matches(o.inputTypes(), args)) {
-                return o.kernel();
+                return o;
+            }
+        }
+        // 精确匹配失败:操作数类型因精度提升(AVG/STDDEV→Float8)与 plan 推导结果类型
+        // (INTEGER)不一致。回退到忽略 outputType 的匹配,用重载声明的 outputType。
+        for (Overload o : overloads) {
+            if (matches(o.inputTypes(), args)) {
+                return o;
             }
         }
         throw new UnsupportedOperationException(
                 "no overload of " + name + " for argument types " + argClasses(args)
                         + " with result " + outputClass.getSimpleName());
+    }
+
+    private static FieldVector createOutputVector(Class<? extends FieldVector> vectorClass,
+                                                   BufferAllocator allocator) {
+        if (vectorClass == SmallIntVector.class) {
+            return new SmallIntVector("expr", allocator);
+        }
+        if (vectorClass == IntVector.class) {
+            return new IntVector("expr", allocator);
+        }
+        if (vectorClass == BigIntVector.class) {
+            return new BigIntVector("expr", allocator);
+        }
+        if (vectorClass == Float4Vector.class) {
+            return new Float4Vector("expr", allocator);
+        }
+        if (vectorClass == Float8Vector.class) {
+            return new Float8Vector("expr", allocator);
+        }
+        if (vectorClass == DecimalVector.class) {
+            return new DecimalVector("expr", allocator, 38, 6);
+        }
+        if (vectorClass == BitVector.class) {
+            return new BitVector("expr", allocator);
+        }
+        if (vectorClass == VarCharVector.class) {
+            return new VarCharVector("expr", allocator);
+        }
+        if (vectorClass == DateDayVector.class) {
+            return new DateDayVector("expr", allocator);
+        }
+        if (vectorClass == TimeMilliVector.class) {
+            return new TimeMilliVector("expr", allocator);
+        }
+        if (vectorClass == TimeStampMilliVector.class) {
+            return new TimeStampMilliVector("expr", allocator);
+        }
+        if (vectorClass == VarBinaryVector.class) {
+            return new VarBinaryVector("expr", allocator);
+        }
+        throw new IllegalArgumentException("unsupported output vector class: " + vectorClass);
     }
 
     private static boolean matches(List<Class<? extends ValueVector>> types, List<ValueVector> args) {
