@@ -468,8 +468,7 @@ public class RexInterpreter {
         return (Comparable<?>) value;
     }
 
-    private ValueVector caseExpr(RexCall call, VectorSchemaRoot input) {
-        int rows = input.getRowCount();
+    private ValueVector caseExpr(RexCall call, VectorSchemaRoot input) {        int rows = input.getRowCount();
         List<RexNode> operands = call.getOperands();
         List<ValueVector> conds = new java.util.ArrayList<>();
         List<ValueVector> thens = new java.util.ArrayList<>();
@@ -480,7 +479,30 @@ public class RexInterpreter {
             i += 2;
         }
         ValueVector elseV = i < operands.size() ? eval(operands.get(i), input) : null;
-        FieldVector out = newVector(call.getType());
+        // CASE 输出类型:取 plan 类型,但如果 then/else 分支实际是浮点(AVG/STDDEV 提升后),
+        // 而 plan 类型是整数,用 Float8Vector 避免截断。
+        SqlTypeName outTypeName = call.getType().getSqlTypeName();
+        boolean needFloat = (outTypeName == SqlTypeName.INTEGER
+                || outTypeName == SqlTypeName.BIGINT
+                || outTypeName == SqlTypeName.SMALLINT);
+        if (needFloat) {
+            boolean anyFloat = elseV != null && isFloatingVector(elseV);
+            for (ValueVector t : thens) {
+                if (isFloatingVector(t)) {
+                    anyFloat = true;
+                    break;
+                }
+            }
+            if (anyFloat) {
+                outTypeName = SqlTypeName.DOUBLE;
+            }
+        }
+        FieldVector out;
+        if (outTypeName == SqlTypeName.DOUBLE && call.getType().getSqlTypeName() != SqlTypeName.DOUBLE) {
+            out = new Float8Vector("case", allocator);
+        } else {
+            out = newVector(call.getType());
+        }
         out.setInitialCapacity(rows);
         out.allocateNew();
         try {
@@ -518,6 +540,11 @@ public class RexInterpreter {
                 elseV.close();
             }
         }
+    }
+
+    /** 判断向量是否为浮点类型(Float4/Float8),用于 CASE 表达式提升整数输出为 DOUBLE。 */
+    private static boolean isFloatingVector(ValueVector v) {
+        return v instanceof Float8Vector || v instanceof Float4Vector;
     }
 
     private FieldVector newVector(RelDataType type) {
