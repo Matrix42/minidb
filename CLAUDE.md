@@ -10,7 +10,7 @@ MiniDB 是一个基于 Apache Calcite(解析/规划)+ Apache Arrow(列式存储)
 - `minidb-server` — 服务端:Calcite 解析/规划、Arrow 存储、向量化批式执行、JDBC 协议处理。
 - `minidb-jdbc` — 客户端 JDBC 驱动(`jdbc:minidb://host:port`),基于自定义 Netty 协议。
 
-**定位**:学习型、功能完整的数据库。无事务(autoCommit 恒 true)、结果集客户端一次性物化(无服务端分页)。
+**定位**:功能完整的单机数据库。无事务(autoCommit 恒 true)。
 
 ## 构建与运行
 
@@ -143,7 +143,7 @@ QueryExecutor.execute(sql, currentSchema)
 2. **Calcite 默认语法无 `ANALYZE` 关键字**。`EXPLAIN`/`EXPLAIN ANALYZE`/`ANALYZE` 必须在 `calcite.parse` 之前字符串前缀拦截(`QueryExecutor.execute` 顶部)。前缀匹配顺序:`EXPLAIN ANALYZE ` 必须先于 `EXPLAIN `,`ANALYZE`(exact)先于 `ANALYZE <table>`。
 3. **Calcite 总是插入 `MiniDbProject`** 做列选择(`SELECT id,name FROM ...`)。EXPLAIN 要折叠 trivial Project 否则行数与预期不符;但 `estimate` 仍要遍历真实树(含 Project)算 childRows。
 4. **`MiniDbSort.execute()` 是 eager**——物化+排序在 `execute()` 内完成,返回惰性迭代器。插桩计时 `start` 必须在 `wrapped.execute()` 之前,否则 Sort 的耗时漏掉。Sort 在物化后会 `input.close()`(此时子节点 elapsed 被记录)。
-5. **Scan 的 batches 是表 owned**——`MiniDbScan.execute()` 的迭代器 `close()` 是 no-op。EXPLAIN ANALYZE 不能 `b.close()` 发出的 batch,靠 `it.close()` 级联(Filter/Sort 在自己 `close()` 里关 owned batches)。`MiniDbSort`/`MiniDbFilter` 分配自己的输出 batch 并在 `close()` 关闭。
+5. **Scan 的 batch 所有权与迭代器 close**——`MiniDbScan.execute()` 直接返回 `tableHandle.scan()` 迭代器,**batch 归迭代器所有,不归表所有**:SimpleTable.scan/MergeScanIterator(LSM) 的 `next()` 把读出的 batch 累积到内部 list,`close()` 统一释放。故 EXPLAIN ANALYZE 等不能 `b.close()` 发出的 batch(会被迭代器 close double-close 或破坏释放),靠 `it.close()` 级联释放。**LSM MergeScanIterator 的坑(已修)**:`next()` 原在返回新批前 close 上一批,但上一批已返回调用方(materializeColumns 收进 batches list 后 copyRow),use-after-close 致 copyRow 读已释放 buffer + 释放链断裂残留内存(每条 join 残留 16MB,查询间累积撑爆 allocator);修为累积到 emitted list、close 统一释放。`MiniDbSort`/`MiniDbFilter` 分配自己的输出 batch 并在 `close()` 关闭。
 6. **`FieldVector` 只有 no-arg `allocateNew()`**;要预设容量用 `setInitialCapacity(n); allocateNew();`,不是 `allocateNew(n)`。
 7. **`Histogram` 的选择率是单列模型**——`ExplainExecutor.histogramForCondition` 按条件里第一个 `RexInputRef` 选列的直方图,然后对**整个**条件求选择率。复合跨列条件(如 `id>1 AND name<'m'`)对非匹配列走 `DEFAULT_SELECTIVITY` 兜底(已加 `typesCompatible` 守卫,不会抛 ClassCastException)。等值用 `Objects.equals`(类型安全)。
 8. **`Histogram.compareValue` 泛型擦除坑**:`(Comparable<Object>)(Comparable<Double>)x` javac 拒绝(Comparable 不变),要 `(Comparable<Object>)(Comparable)x` raw 中转,加 `@SuppressWarnings`。
