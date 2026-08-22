@@ -75,6 +75,12 @@ class TpcdsCorrectnessTest {
 
                 List<String> failures = new ArrayList<>();
                 List<String> skipped = new ArrayList<>();
+                // 两边都返回 0 行的查询:行数一致但无数据可比,记为「空洞验证」,
+                // 与「实质验证」(非空行级对比)区分。0.01 scale 下事实表虽非空,但 store 等
+                // 维度表极稀疏(如 store=2),多数查询的过滤条件命中 0 行 —— 这是数据规模导致,
+                // 不是 MiniDB 算错(DuckDB 在同数据上同样 0 行)。空洞验证仍证明 MiniDB 没把
+                // 「该非空」算成空(没漏行),但无法验证数据细节,故单独标记。
+                List<String> vacuous = new ArrayList<>();
                 int count = 0;
                 for (Map.Entry<String, String> e : queries.entrySet()) {
                     if (count++ >= limit) {
@@ -93,11 +99,20 @@ class TpcdsCorrectnessTest {
                             continue;
                         }
                     }
-                    compareOne(e.getKey(), e.getValue(), miniDb, duckStmt, failures, skipped);
+                    compareOne(e.getKey(), e.getValue(), miniDb, duckStmt, failures, skipped, vacuous);
                 }
 
+                int total = count;
+                int substantiated = total - skipped.size() - vacuous.size();
+                System.out.println("==== 正确性验证汇总 ====");
+                System.out.println("  实质验证(非空行级对比通过): " + substantiated + " 条");
+                System.out.println("  空洞验证(两边均 0 行,无数据可比): " + vacuous.size() + " 条");
+                System.out.println("  跳过(DuckDB 异常/不支持): " + skipped.size() + " 条");
+                if (!vacuous.isEmpty()) {
+                    System.out.println("  空洞查询: " + String.join(", ", vacuous));
+                }
                 if (!skipped.isEmpty()) {
-                    System.out.println("跳过(DuckDB 不支持): " + String.join(", ", skipped));
+                    System.out.println("  跳过查询: " + String.join(", ", skipped));
                 }
                 assertTrue(failures.isEmpty(),
                         "结果不匹配(" + failures.size() + "条):\n" + String.join("\n", failures));
@@ -120,7 +135,7 @@ class TpcdsCorrectnessTest {
     }
 
     private void compareOne(String name, String sql, QueryExecutor miniDb, Statement duckStmt,
-                            List<String> failures, List<String> skipped) {
+                            List<String> failures, List<String> skipped, List<String> vacuous) {
         List<List<Object>> miniRows;
         try {
             miniRows = executeMiniDb(miniDb, sql);
@@ -155,6 +170,12 @@ class TpcdsCorrectnessTest {
             return;
         }
 
+        // 两边均 0 行:行数一致但无数据可比,记为空洞验证(不进 failures)。
+        if (miniRows.isEmpty()) {
+            vacuous.add(name);
+            return;
+        }
+
         Comparator<List<Object>> cmp = TpcdsCorrectnessTest::compareRows;
         miniRows.sort(cmp);
         duckRows.sort(cmp);
@@ -168,7 +189,7 @@ class TpcdsCorrectnessTest {
                 return;
             }
         }
-        System.out.println("通过: " + name + " (" + miniRows.size() + "行)");
+        System.out.println("实质验证通过: " + name + " (" + miniRows.size() + "行)");
     }
 
     // ---- MiniDB 执行 ----
