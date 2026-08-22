@@ -42,12 +42,27 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
  * <p>数据生成后以 Parquet 格式落盘。DuckDB 通过 {@code read_parquet} 直接读取同一份
  * Parquet 文件,无需额外导入。同一个 SQL 字符串喂给两边,对比行数和排序后的内容。</p>
  *
- * <p>默认只跑前 10 条。全量 99 条加 {@code -Dtpcds.full=true}。</p>
+ * <p>默认 0.01 scale(快测试,~10s)。0.01 scale 下 store 等维度表极稀疏(teradata 库
+ * SF0.01 store=2),多数查询过滤条件命中 0 行,两边都 0 行仅作「空洞验证」(0==0,无数据可比)。
+ * 不做空洞验证、要实质的行级对比,用 SF1 数据:</p>
+ * <pre>{@code
+ *   # 前 10 条(默认):
+ *   mvn test -pl minidb-tpcds -Dtest=TpcdsCorrectnessTest -Dtpcds.scale=1.0
+ *   # 全 99 条(约 18 分钟):
+ *   mvn test -pl minidb-tpcds -Dtest=TpcdsCorrectnessTest -Dtpcds.scale=1.0 -Dtpcds.full=true
+ *   # 指定查询:
+ *   mvn test -pl minidb-tpcds -Dtest=TpcdsCorrectnessTest -Dtpcds.scale=1.0 -Dtpcds.query=8,9,10
+ * }</pre>
+ * <p>SF1 下 store=12,customer=100000,查询条件命中率大幅提升,前 10 条中 9 条有实质数据
+ * 可对比(0.01 下只有 2 条)。</p>
  */
 class TpcdsCorrectnessTest {
 
     private static final int DEFAULT_LIMIT = 10;
-    private static final double SCALE = 0.01;
+    /** 默认 0.01 scale(快测试)。更大 scale(1.0)数据更密集,更多查询返回非空,但生成慢,手动触发:
+     *  {@code -Dtpcds.scale=1.0}。 */
+    private static final double SCALE =
+            Double.parseDouble(System.getProperty("tpcds.scale", "0.01"));
 
     @Test
     void verifyQueryResults(@TempDir Path dataDir) throws Exception {
