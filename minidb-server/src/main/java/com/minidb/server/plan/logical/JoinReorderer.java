@@ -5,6 +5,7 @@ import java.util.List;
 import java.util.Set;
 import org.apache.calcite.plan.RelOptCluster;
 import org.apache.calcite.rel.RelNode;
+import org.apache.calcite.rel.metadata.RelMetadataQuery;
 import org.apache.calcite.rel.core.CorrelationId;
 import org.apache.calcite.rel.core.JoinRelType;
 import org.apache.calcite.rel.logical.LogicalFilter;
@@ -127,13 +128,22 @@ public final class JoinReorderer {
         }
 
         // 3. 贪心排序:种子 = 连接度最高;每步加入「与已选集合连接数最多」的叶子。
+        // 连接度平手时按行数破平手(小表优先):否则大表(如 TPC-DS query8 的 store_sales,
+        // 行数最多、下标靠前)会因平手取首见而当选种子,把非等值条件推到大表 join 结果之上,
+        // NestedLoop 物化 left×right 对(2.3 亿次求值)。行数取 RelMetadataQuery.getRowCount,
+        // 无统计时默认 1e8(Calcite 对无统计表的估算默认值),保证不被误当小表种子。
+        RelMetadataQuery mq = root.getCluster().getMetadataQuery();
         int[] order = new int[n];
         boolean[] used = new boolean[n];
         int seed = 0;
         int seedDegree = -1;
+        double seedRows = Double.POSITIVE_INFINITY;
         for (int i = 0; i < n; i++) {
-            if (adjacency.get(i).size() > seedDegree) {
-                seedDegree = adjacency.get(i).size();
+            int degree = adjacency.get(i).size();
+            if (degree > seedDegree
+                    || (degree == seedDegree && rowCount(leaves.get(i), mq) < seedRows)) {
+                seedDegree = degree;
+                seedRows = rowCount(leaves.get(i), mq);
                 seed = i;
             }
         }
@@ -142,6 +152,7 @@ public final class JoinReorderer {
         for (int k = 1; k < n; k++) {
             int best = -1;
             int bestScore = -1;
+            double bestRows = Double.POSITIVE_INFINITY;
             for (int i = 0; i < n; i++) {
                 if (used[i]) {
                     continue;
@@ -152,8 +163,11 @@ public final class JoinReorderer {
                         score++;
                     }
                 }
-                if (score > bestScore) {
+                double rows = rowCount(leaves.get(i), mq);
+                if (score > bestScore
+                        || (score == bestScore && rows < bestRows)) {
                     bestScore = score;
+                    bestRows = rows;
                     best = i;
                 }
             }
@@ -295,6 +309,24 @@ public final class JoinReorderer {
             }
         };
         return shuttle.apply(node);
+    }
+
+    /**
+     * 叶子行数估算,用于连接度平手时按「小表优先」破平手。
+     *
+     * <p>无统计时(Calcite 对无 ANALYZE 的表返回 null rowCount,且 1.42 的
+     * {@code RelMdUtil.estimateFilteredRows} 对 null selectivity 直接 unboxing 抛 NPE)
+     * 回退 1e8:所有叶子取相同值,行数破平手退化为不生效,贪心回到纯连接度决策——
+     * 与修复前行为一致,保证无统计场景不回退已有交叉连接消除(query10/18)。</p>
+     */
+    private static double rowCount(RelNode leaf, RelMetadataQuery mq) {
+        try {
+            Double r = mq.getRowCount(leaf);
+            return r == null ? 1e8 : r;
+        } catch (RuntimeException e) {
+            // Calcite 1.42 无统计 Filter 的 estimateFilteredRows NPE;回退默认值。
+            return 1e8;
+        }
     }
 
     private static int totalFields(int[] fieldCount) {
