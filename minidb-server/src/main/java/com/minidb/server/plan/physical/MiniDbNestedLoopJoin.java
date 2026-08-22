@@ -2,7 +2,9 @@ package com.minidb.server.plan.physical;
 
 import com.minidb.server.exec.ExecContext;
 import java.util.ArrayList;
+import java.util.HashMap;
 import java.util.List;
+import java.util.Map;
 import org.apache.arrow.vector.BitVector;
 import org.apache.arrow.vector.ValueVector;
 import org.apache.arrow.vector.VectorSchemaRoot;
@@ -15,12 +17,24 @@ import org.apache.calcite.rel.core.Join;
 import org.apache.calcite.rel.core.JoinInfo;
 import org.apache.calcite.rel.core.JoinRelType;
 import org.apache.calcite.rel.metadata.RelMetadataQuery;
+import org.apache.calcite.rex.RexCall;
+import org.apache.calcite.rex.RexInputRef;
 import org.apache.calcite.rex.RexNode;
+import org.apache.calcite.rex.RexShuttle;
+import org.apache.calcite.rex.RexVisitorImpl;
+import org.apache.calcite.sql.SqlKind;
 
 /**
  * Nested-loop join: for every (left, right) candidate pair it builds a
  * one-row joined vector and evaluates the full RexNode condition on it.
  * Correctness over speed — works for any condition, not just equi-joins.
+ *
+ * <p>Hash acceleration: when the join condition is {@code f(left_cols) = g(right_cols)}
+ * (a single equality whose operands reference disjoint sides), we build a hash
+ * map from the smaller side and probe from the larger side, reducing the nested
+ * loop from O(n×m) to O(n+m). This handles TPC-DS query8's {@code substr(s_zip)
+ * = substr(ca_zip)} and similar expression-equalities that Calcite's
+ * HashJoin/SortMergeJoin rules can't match (they require bare RexInputRef keys).
  */
 public class MiniDbNestedLoopJoin extends MiniDbJoin {
 
@@ -54,6 +68,140 @@ public class MiniDbNestedLoopJoin extends MiniDbJoin {
     @Override
     protected List<int[]> joinPairs(VectorSchemaRoot left, VectorSchemaRoot right,
                                     JoinInfo info, JoinRelType type, ExecContext ctx) {
+        // 尝试 hash 加速:f(left_cols) = g(right_cols) 可用 hash map 代替逐对求值。
+        List<int[]> accelerated = tryHashAccelerated(left, right, type, ctx);
+        if (accelerated != null) {
+            return accelerated;
+        }
+        return nestedLoopJoin(left, right, type, ctx);
+    }
+
+    /**
+     * 若条件为 {@code f(left_cols) = g(right_cols)}(各操作数只引用单侧列),则对右侧建
+     * hash map、左侧 probe,避免 O(n×m) 逐对求值。无法加速时返回 null,调用方回退到
+     * {@link #nestedLoopJoin}。
+     */
+    private List<int[]> tryHashAccelerated(VectorSchemaRoot left, VectorSchemaRoot right,
+                                           JoinRelType type, ExecContext ctx) {
+        RexNode condition = getCondition();
+        if (!(condition instanceof RexCall call) || call.getKind() != SqlKind.EQUALS
+                || call.getOperands().size() != 2) {
+            return null;
+        }
+        RexNode op0 = call.getOperands().get(0);
+        RexNode op1 = call.getOperands().get(1);
+        int leftCols = leftColumnCount();
+        int rightCols = rightColumnCount();
+        boolean op0Left = onlyReferences(op0, 0, leftCols);
+        boolean op0Right = onlyReferences(op0, leftCols, leftCols + rightCols);
+        boolean op1Left = onlyReferences(op1, 0, leftCols);
+        boolean op1Right = onlyReferences(op1, leftCols, leftCols + rightCols);
+        if (!(op0Left && op1Right) && !(op0Right && op1Left)) {
+            return null;
+        }
+        // 统一:leftExpr 只引用左侧列,rightExpr 只引用右侧列。
+        RexNode leftExpr = op0Left ? op0 : op1;
+        RexNode rightExpr = op0Left ? op1 : op0;
+        return hashAcceleratedJoin(left, right, leftExpr, rightExpr, leftCols, type, ctx);
+    }
+
+    /** 检查 expr 里所有 RexInputRef 索引是否都在 [minIndex, maxIndex) 范围内。 */
+    private static boolean onlyReferences(RexNode expr, int minIndex, int maxIndex) {
+        boolean[] ok = {true};
+        expr.accept(new RexVisitorImpl<Void>(true) {
+            @Override
+            public Void visitInputRef(RexInputRef inputRef) {
+                if (inputRef.getIndex() < minIndex || inputRef.getIndex() >= maxIndex) {
+                    ok[0] = false;
+                }
+                return null;
+            }
+        });
+        return ok[0];
+    }
+
+    /**
+     * 对右侧表达式建 hash map,左侧逐行 probe。rightExpr 的 RexInputRef 索引需从
+     * [leftCols..] 偏移到 [0..rightCols),由 {@link #shiftIndices} 完成。
+     */
+    private List<int[]> hashAcceleratedJoin(VectorSchemaRoot left, VectorSchemaRoot right,
+                                            RexNode leftExpr, RexNode rightExpr, int leftCols,
+                                            JoinRelType type, ExecContext ctx) {
+        boolean keepUnmatchedLeft = type == JoinRelType.LEFT || type == JoinRelType.FULL;
+        boolean keepUnmatchedRight = type == JoinRelType.RIGHT || type == JoinRelType.FULL;
+        boolean[] matchedLeft = new boolean[left.getRowCount()];
+        boolean[] matchedRight = new boolean[right.getRowCount()];
+        List<int[]> outputRows = new ArrayList<>();
+
+        // 右侧建 hash map:shift 索引后一次求值全量右行,逐行读 key 入 hash。
+        RexNode rightExprShifted = shiftIndices(rightExpr, -leftCols);
+        Map<Object, List<Integer>> hashMap = new HashMap<>();
+        ValueVector rightResults = ctx.interpreter().eval(rightExprShifted, right);
+        try {
+            for (int rightIdx = 0; rightIdx < right.getRowCount(); rightIdx++) {
+                if (!rightResults.isNull(rightIdx)) {
+                    Object key = RowVectors.readObject(rightResults, rightIdx);
+                    hashMap.computeIfAbsent(key, k -> new ArrayList<>()).add(rightIdx);
+                }
+            }
+        } finally {
+            rightResults.close();
+        }
+
+        // 左侧 probe:一次求值全量左行,逐行查 hash map。
+        ValueVector leftResults = ctx.interpreter().eval(leftExpr, left);
+        try {
+            for (int leftIdx = 0; leftIdx < left.getRowCount(); leftIdx++) {
+                if (leftIdx % 1000 == 0) {
+                    ExecContext.checkInterrupted();
+                }
+                if (leftResults.isNull(leftIdx)) {
+                    continue;
+                }
+                List<Integer> matchingRight = hashMap.get(
+                        RowVectors.readObject(leftResults, leftIdx));
+                if (matchingRight != null) {
+                    for (int rightIdx : matchingRight) {
+                        outputRows.add(new int[]{leftIdx, rightIdx});
+                        matchedLeft[leftIdx] = true;
+                        matchedRight[rightIdx] = true;
+                    }
+                }
+            }
+        } finally {
+            leftResults.close();
+        }
+
+        if (keepUnmatchedLeft) {
+            for (int leftIdx = 0; leftIdx < left.getRowCount(); leftIdx++) {
+                if (!matchedLeft[leftIdx]) {
+                    outputRows.add(new int[]{leftIdx, -1});
+                }
+            }
+        }
+        if (keepUnmatchedRight) {
+            for (int rightIdx = 0; rightIdx < right.getRowCount(); rightIdx++) {
+                if (!matchedRight[rightIdx]) {
+                    outputRows.add(new int[]{-1, rightIdx});
+                }
+            }
+        }
+        return outputRows;
+    }
+
+    /** 把 RexNode 里所有 RexInputRef 索引偏移 {@code delta}(可为负)。 */
+    private static RexNode shiftIndices(RexNode expr, int delta) {
+        return expr.accept(new RexShuttle() {
+            @Override
+            public RexNode visitInputRef(RexInputRef inputRef) {
+                return new RexInputRef(inputRef.getIndex() + delta, inputRef.getType());
+            }
+        });
+    }
+
+    /** 原始嵌套循环:O(n×m) 逐对求值,当 hash 加速不可用时回退到此处。 */
+    private List<int[]> nestedLoopJoin(VectorSchemaRoot left, VectorSchemaRoot right,
+                                       JoinRelType type, ExecContext ctx) {
         boolean keepUnmatchedLeft = type == JoinRelType.LEFT || type == JoinRelType.FULL;
         boolean keepUnmatchedRight = type == JoinRelType.RIGHT || type == JoinRelType.FULL;
         boolean[] matchedLeft = new boolean[left.getRowCount()];
@@ -84,7 +232,6 @@ public class MiniDbNestedLoopJoin extends MiniDbJoin {
         } finally {
             probeRoot.close();
         }
-        // Emit rows that matched nothing, padded with nulls on the other side.
         if (keepUnmatchedLeft) {
             for (int leftIdx = 0; leftIdx < left.getRowCount(); leftIdx++) {
                 if (!matchedLeft[leftIdx]) {
