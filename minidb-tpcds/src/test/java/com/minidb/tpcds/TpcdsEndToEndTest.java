@@ -34,7 +34,7 @@ class TpcdsEndToEndTest {
 
         // 3. 跑查询
         Path runJson = dataDir.resolve("run.json");
-        new TpcdsBenchmarkRunner().run(subset, dataDir, runJson, 0.01, "test-run");
+        new TpcdsBenchmarkRunner().run(subset, dataDir, runJson, 0.01, "test-run", 0);
         JsonNode root = new ObjectMapper().readTree(runJson.toFile());
         assertEquals(10, root.path("queries").size());
 
