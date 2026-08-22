@@ -96,6 +96,7 @@ public class TpcdsBenchmarkRunner {
                 System.out.println("[" + idx + "/" + total + "] " + e.getKey()
                         + " -> " + (qr.success() ? "ok " + qr.rowCount() + " rows" : "FAIL")
                         + " in " + (System.nanoTime() - qstart) / 1_000_000 + " ms"
+                        + " alloc=" + allocator.getAllocatedMemory() + "/" + allocator.getLimit()
                         + (qr.error() != null ? " (" + qr.error() + ")" : ""));
                 results.add(qr);
             }

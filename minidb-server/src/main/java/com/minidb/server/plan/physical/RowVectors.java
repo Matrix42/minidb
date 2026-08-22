@@ -178,28 +178,41 @@ public final class RowVectors {
         List<VectorSchemaRoot> batches = new ArrayList<>();
         int total = 0;
         BatchIterator it = ((MiniDbRel) input).execute(ctx);
-        while (it.hasNext()) {
-            VectorSchemaRoot b = it.next();
-            batches.add(b);
-            total += b.getRowCount();
-        }
-        VectorSchemaRoot merged;
-        if (batches.isEmpty()) {
-            merged = emptyRoot(input.getRowType(), ctx.allocator());
-        } else {
-            merged = VectorSchemaRoot.create(batches.get(0).getSchema(), ctx.allocator());
-            merged.allocateNew();
-            int dst = 0;
-            for (VectorSchemaRoot batch : batches) {
-                for (int i = 0; i < batch.getRowCount(); i++) {
-                    RowCopier.copyRow(batch, i, merged, dst++);
-                }
+        VectorSchemaRoot merged = null;
+        try {
+            while (it.hasNext()) {
+                VectorSchemaRoot b = it.next();
+                batches.add(b);
+                total += b.getRowCount();
             }
-            merged.setRowCount(dst);
+            if (batches.isEmpty()) {
+                merged = emptyRoot(input.getRowType(), ctx.allocator());
+            } else {
+                merged = VectorSchemaRoot.create(batches.get(0).getSchema(), ctx.allocator());
+                merged.allocateNew();
+                int dst = 0;
+                for (VectorSchemaRoot batch : batches) {
+                    for (int i = 0; i < batch.getRowCount(); i++) {
+                        RowCopier.copyRow(batch, i, merged, dst++);
+                    }
+                }
+                merged.setRowCount(dst);
+            }
+            // 数据已 copy 到 merged。源 batches 的释放委托给 it.close()——迭代器知道
+            // 自己输入的 batch 所有权(Scan 的 batch 归表所有、close 是 no-op;
+            // Filter/Project 关 owned 队列),故不在此显式 close,避免误关表 owned batch。
+            it.close();
+            return merged;
+        } catch (RuntimeException e) {
+            // 异常路径:merged 可能已分配(allocateNew/copyRow OOM)或为 null。
+            // 必须释放 merged 和迭代器,否则大数据量下中间结果泄漏撑爆 allocator
+            // (TPC-DS 基准 query33 起 OOM 连锁即此路径未释放所致)。
+            if (merged != null) {
+                merged.close();
+            }
+            it.close();
+            throw e;
         }
-        // close only AFTER copying: Filter/Project own their batches.
-        it.close();
-        return merged;
     }
 
     private static VectorSchemaRoot emptyRoot(RelDataType rowType, BufferAllocator allocator) {

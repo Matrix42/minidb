@@ -99,40 +99,51 @@ public abstract class MiniDbJoin extends Join implements MiniDbRel {
         List<VectorSchemaRoot> batches = new ArrayList<>();
         int total = 0;
         BatchIterator it = ((MiniDbRel) input).execute(ctx);
-        while (it.hasNext()) {
-            ExecContext.checkInterrupted();
-            VectorSchemaRoot b = it.next();
-            batches.add(b);
-            total += b.getRowCount();
-        }
-        VectorSchemaRoot merged;
-        if (batches.isEmpty()) {
-            merged = emptyRoot(input, ctx);
-        } else {
-            merged = VectorSchemaRoot.create(batches.get(0).getSchema(), ctx.allocator());
-            // 预分配: allocateNew 可能分配不足,显式按 total 分配并设 valueCount
-            for (FieldVector v : merged.getFieldVectors()) {
-                v.setInitialCapacity(total);
-                v.allocateNew();
-                v.setValueCount(total);
+        VectorSchemaRoot merged = null;
+        try {
+            while (it.hasNext()) {
+                ExecContext.checkInterrupted();
+                VectorSchemaRoot b = it.next();
+                batches.add(b);
+                total += b.getRowCount();
             }
-            int dst = 0;
-            for (VectorSchemaRoot batch : batches) {
-                // 确保源 batch 的向量已正确分配(防御 copyFromSafe 读有效性缓冲区)
-                for (FieldVector sv : batch.getFieldVectors()) {
-                    if (sv.getValueCount() == 0 && batch.getRowCount() > 0) {
-                        sv.setValueCount(batch.getRowCount());
+            if (batches.isEmpty()) {
+                merged = emptyRoot(input, ctx);
+            } else {
+                merged = VectorSchemaRoot.create(batches.get(0).getSchema(), ctx.allocator());
+                // 预分配: allocateNew 可能分配不足,显式按 total 分配并设 valueCount
+                for (FieldVector v : merged.getFieldVectors()) {
+                    v.setInitialCapacity(total);
+                    v.allocateNew();
+                    v.setValueCount(total);
+                }
+                int dst = 0;
+                for (VectorSchemaRoot batch : batches) {
+                    // 确保源 batch 的向量已正确分配(防御 copyFromSafe 读有效性缓冲区)
+                    for (FieldVector sv : batch.getFieldVectors()) {
+                        if (sv.getValueCount() == 0 && batch.getRowCount() > 0) {
+                            sv.setValueCount(batch.getRowCount());
+                        }
+                    }
+                    for (int i = 0; i < batch.getRowCount(); i++) {
+                        RowCopier.copyRow(batch, i, merged, dst++);
                     }
                 }
-                for (int i = 0; i < batch.getRowCount(); i++) {
-                    RowCopier.copyRow(batch, i, merged, dst++);
-                }
+                merged.setRowCount(dst);
             }
-            merged.setRowCount(dst);
+            // 源 batches 的释放委托给 it.close(迭代器按所有权决定:Scan no-op、
+            // Filter/Project 关 owned)。不在此显式 close batches,避免误关表 owned batch。
+            it.close();
+            return merged;
+        } catch (RuntimeException e) {
+            // 异常路径必须释放 merged 和迭代器,否则大数据量下 join 物化两侧时
+            // 中间结果泄漏撑爆 allocator(TPC-DS 基准 OOM 连锁)。
+            if (merged != null) {
+                merged.close();
+            }
+            it.close();
+            throw e;
         }
-        // close input only AFTER copying: Filter/Project own their batches.
-        it.close();
-        return merged;
     }
 
     private static VectorSchemaRoot emptyRoot(RelNode input, ExecContext ctx) {
