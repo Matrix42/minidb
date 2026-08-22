@@ -40,6 +40,12 @@ public class MergeIterator {
         private int batchPos = 0;
         private final List<Object[]> batchRows = new ArrayList<>();
         private boolean exhausted = false;
+        // 已通过 next() 返回给调用方的 batch。调用方不负责 close(所有权模型与
+        // SimpleTable 一致:靠迭代器 close 统一释放),故在此累积,close() 时全关。
+        // 原 next() 关上一批 currentBatch 会 close 掉调用方仍在使用的 batch
+        // (materializeColumns 把它收进 batches list),导致 use-after-close 和
+        // merged.copyRow 读已释放 buffer —— 内存泄漏 + 潜在数据错乱。
+        private final List<VectorSchemaRoot> emitted = new ArrayList<>();
 
         MergeScanIterator() {
             // 优先级：MemTable=0, L0=1, L1=2, L2=3...
@@ -84,19 +90,23 @@ public class MergeIterator {
         @Override
         public VectorSchemaRoot next() {
             if (!hasNext()) throw new NoSuchElementException();
-            if (currentBatch != null) {
-                currentBatch.close();
-            }
+            // 不关闭上一批 currentBatch:它已通过前一次 next() 返回给调用方,
+            // 调用方可能仍在使用(materializeColumns 收进 batches list 后 copyRow)。
+            // 改为累积到 emitted,由 close() 统一释放。
             currentBatch = rowsToRoot(batchRows);
+            emitted.add(currentBatch);
             batchPos = batchRows.size(); // 标记已消费
             return currentBatch;
         }
 
         @Override
         public void close() {
-            if (currentBatch != null) {
-                currentBatch.close();
+            // 关闭所有已发出的 batch + 未发出的当前批 + SSTable reader。
+            for (VectorSchemaRoot batch : emitted) {
+                batch.close();
             }
+            emitted.clear();
+            // currentBatch 已在 emitted 中(若发过),避免 double close。
             for (SSTableReader reader : readers) {
                 reader.close();
             }
