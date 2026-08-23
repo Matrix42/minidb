@@ -93,6 +93,16 @@ public class ExecContext {
         cseCache.put(key, batches);
     }
 
+    /** 释放 CSE 缓存中所有批(查询结束时调用)。 */
+    public void close() {
+        for (List<VectorSchemaRoot> batches : cseCache.values()) {
+            for (VectorSchemaRoot b : batches) {
+                b.close();
+            }
+        }
+        cseCache.clear();
+    }
+
     /** 检查当前线程是否被中断(客户端断连→Future.cancel→线程中断),是则抛异常。 */
     public static void checkInterrupted() {
         if (Thread.currentThread().isInterrupted()) {
