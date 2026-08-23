@@ -758,7 +758,17 @@ public final class BuiltInFunctions {
                                 args.get(0), args.get(1), (BitVector) out, Double::compare, kind)),
                 new Overload(List.of(DecimalVector.class, Float8Vector.class), BitVector.class,
                         (args, out) -> Kernels.fillCompareMixed(
-                                args.get(0), args.get(1), (BitVector) out, Double::compare, kind))));
+                                args.get(0), args.get(1), (BitVector) out, Double::compare, kind)),
+                // BigInt↔VarChar 跨型比较:Calcite 有时不插入 CAST(scale 10 下 query2),
+                // VarChar 侧解析为 long 后比较
+                new Overload(List.of(BigIntVector.class, VarCharVector.class), BitVector.class,
+                        (args, out) -> Kernels.fillCompareLongString(
+                                (BigIntVector) args.get(0), (VarCharVector) args.get(1),
+                                (BitVector) out, Long::compare, kind)),
+                new Overload(List.of(VarCharVector.class, BigIntVector.class), BitVector.class,
+                        (args, out) -> Kernels.fillCompareLongString(
+                                (BigIntVector) args.get(1), (VarCharVector) args.get(0),
+                                (BitVector) out, Long::compare, kind))));
     }
 
     private static void arithmetic(FunctionRegistry r) {

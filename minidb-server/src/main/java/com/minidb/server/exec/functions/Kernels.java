@@ -143,6 +143,22 @@ public final class Kernels {
         }
     }
 
+    /** BigInt vs VarChar:VarChar 侧解析为 long 后比较;解析失败视作不匹配。 */
+    public static void fillCompareLongString(BigIntVector l, VarCharVector r, BitVector out,
+                                              ScalarKernels.LongCompare cmp, SqlKind kind) {
+        for (int i = 0; i < l.getValueCount(); i++) {
+            if (l.isNull(i) || r.isNull(i)) { out.setNull(i); continue; }
+            long rv;
+            try {
+                rv = Long.parseLong(new String(r.get(i), StandardCharsets.UTF_8).trim());
+            } catch (NumberFormatException e) {
+                out.setSafe(i, 0);
+                continue;
+            }
+            out.setSafe(i, compareToBool(cmp.apply(l.get(i), rv), kind) ? 1 : 0);
+        }
+    }
+
     /** 跨族比较(FLOAT8 vs 整型/DECIMAL,AVG/STDDEV 提升为 Float8 后与整型列比较):两侧读 double。 */
     public static void fillCompareMixed(ValueVector l, ValueVector r, BitVector out,
                                         ScalarKernels.DoubleCompare cmp, SqlKind kind) {
