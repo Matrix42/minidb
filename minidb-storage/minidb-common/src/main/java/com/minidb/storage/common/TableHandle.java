@@ -7,6 +7,10 @@ public interface TableHandle extends AutoCloseable {
 
     TableSchema schema();
     BatchIterator scan();
+    /** 列裁剪扫描:只读指定列。默认回退全量扫描。 */
+    default BatchIterator scan(int[] projectedColumns) {
+        return scan();
+    }
     void writePart(VectorSchemaRoot batch, Operation op);
     long rowCount();
     int partCount();

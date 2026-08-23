@@ -21,6 +21,15 @@ public interface PartFormat {
      */
     VectorSchemaRoot read(Path part, Schema schema, BufferAllocator allocator);
 
+    /**
+     * 列裁剪读:只读 {@code projectedColumns} 指定的列(0-based 索引),产出只含这些列的 batch。
+     * 默认回退全量读——子类覆写以利用列存格式(Parquet)的列裁剪能力。
+     */
+    default VectorSchemaRoot read(Path part, Schema schema, BufferAllocator allocator,
+                                   int[] projectedColumns) {
+        return read(part, schema, allocator);
+    }
+
     /** 统计一个 part 文件的行数。 */
     long rowCount(Path part, BufferAllocator allocator);
 

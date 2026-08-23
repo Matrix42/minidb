@@ -73,6 +73,28 @@ public class SimpleTable implements TableHandle {
 
     /** 递归读取目录下所有 part 文件,逐个返回 batch。batch 归本迭代器,close 时统一释放。 */
     public BatchIterator scan() {
+        return scan(null);
+    }
+
+    /** 列裁剪扫描:只读指定列索引。null 或全列索引时回退全量扫描。 */
+    public BatchIterator scan(int[] projectedColumns) {
+        if (projectedColumns == null || projectedColumns.length == arrowSchema.getFields().size()) {
+            return scanAll();
+        }
+        // 验证投影列索引有效(ALTER TABLE 可能增列,plan 的投影列可能过时)
+        for (int col : projectedColumns) {
+            if (col < 0 || col >= arrowSchema.getFields().size()) {
+                return scanAll();
+            }
+        }
+        return scanAll(projectedColumns);
+    }
+
+    private BatchIterator scanAll() {
+        return scanAll(null);
+    }
+
+    private BatchIterator scanAll(int[] projectedColumns) {
         List<Path> parts = partFiles();
         return new BatchIterator() {
             int idx = 0;
@@ -85,7 +107,9 @@ public class SimpleTable implements TableHandle {
 
             @Override
             public VectorSchemaRoot next() {
-                VectorSchemaRoot batch = format.read(parts.get(idx++), arrowSchema, allocator);
+                VectorSchemaRoot batch = projectedColumns == null
+                        ? format.read(parts.get(idx++), arrowSchema, allocator)
+                        : format.read(parts.get(idx++), arrowSchema, allocator, projectedColumns);
                 read.add(batch);
                 return batch;
             }

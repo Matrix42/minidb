@@ -41,17 +41,39 @@ public class ArrowPartFormat implements PartFormat {
     @Override
     public VectorSchemaRoot read(Path part, org.apache.arrow.vector.types.pojo.Schema schema,
                                  BufferAllocator allocator) {
+        return read(part, schema, allocator, null);
+    }
+
+    @Override
+    public VectorSchemaRoot read(Path part, org.apache.arrow.vector.types.pojo.Schema schema,
+                                 BufferAllocator allocator, int[] projectedColumns) {
         try (SeekableByteChannel channel = Files.newByteChannel(part, StandardOpenOption.READ);
              ArrowFileReader reader = new ArrowFileReader(channel, allocator)) {
             VectorSchemaRoot src = reader.getVectorSchemaRoot();
-            VectorSchemaRoot out = VectorSchemaRoot.create(schema, allocator);
+            // 列裁剪:只分配投影列的输出向量
+            org.apache.arrow.vector.types.pojo.Schema projSchema;
+            int[] cols;
+            if (projectedColumns == null || projectedColumns.length == schema.getFields().size()) {
+                projSchema = schema;
+                cols = null;
+            } else {
+                java.util.List<org.apache.arrow.vector.types.pojo.Field> projFields = new java.util.ArrayList<>();
+                for (int col : projectedColumns) {
+                    projFields.add(schema.getFields().get(col));
+                }
+                projSchema = new org.apache.arrow.vector.types.pojo.Schema(projFields, schema.getCustomMetadata());
+                cols = projectedColumns;
+            }
+            VectorSchemaRoot out = VectorSchemaRoot.create(projSchema, allocator);
             out.allocateNew();
             int dst = 0;
+            int outCols = cols == null ? src.getFieldVectors().size() : cols.length;
             while (reader.loadNextBatch()) {
                 int batchRows = src.getRowCount();
                 for (int i = 0; i < batchRows; i++) {
-                    for (int c = 0; c < src.getFieldVectors().size(); c++) {
-                        out.getVector(c).copyFromSafe(i, dst + i, src.getVector(c));
+                    for (int c = 0; c < outCols; c++) {
+                        int srcCol = cols == null ? c : cols[c];
+                        out.getVector(c).copyFromSafe(i, dst + i, src.getVector(srcCol));
                     }
                 }
                 dst += batchRows;

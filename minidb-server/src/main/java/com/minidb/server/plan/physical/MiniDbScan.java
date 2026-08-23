@@ -100,7 +100,12 @@ public class MiniDbScan extends TableScan implements MiniDbRel {
             // promoted table like [minidb, t] — resolve via current schema
             tableHandle = ctx.getTable(qualified.get(n - 1));
         }
-        return applyPushdown(tableHandle.scan(), ctx);
+        return applyPushdown(
+                    projectedColumns != null && pushedFilter == null
+                            && projectedColumns.length == tableHandle.schema().columns().size()
+                            ? tableHandle.scan(projectedColumns)
+                            : tableHandle.scan(),
+                    ctx);
     }
 
     /**
@@ -111,6 +116,8 @@ public class MiniDbScan extends TableScan implements MiniDbRel {
         if (projectedColumns == null && pushedFilter == null) {
             return source;
         }
+        // 存储层已做列裁剪(source 只含投影列),只做谓词过滤,跳过 applyProject
+        boolean sourceAlreadyProjected = projectedColumns != null && pushedFilter == null;
         Deque<VectorSchemaRoot> owned = new ArrayDeque<>();
         return BatchIterator.interruptible(new BatchIterator() {
             VectorSchemaRoot pending;
@@ -125,12 +132,14 @@ public class MiniDbScan extends TableScan implements MiniDbRel {
                         if (filtered == null) {
                             continue; // 全批被过滤
                         }
-                        VectorSchemaRoot projected = applyProject(filtered, ctx);
-                        if (filtered != projected) {
+                        VectorSchemaRoot result = sourceAlreadyProjected
+                                ? filtered
+                                : applyProject(filtered, ctx);
+                        if (result != filtered) {
                             filtered.close();
                         }
-                        owned.add(projected);
-                        pending = projected;
+                        owned.add(result);
+                        pending = result;
                     } catch (RuntimeException e) {
                         // applyProject/applyFilter 失败时释放中间结果
                         if (filtered != null && filtered != pending) {

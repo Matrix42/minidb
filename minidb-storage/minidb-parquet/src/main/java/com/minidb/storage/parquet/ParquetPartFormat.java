@@ -49,6 +49,7 @@ import org.apache.parquet.io.RecordReader;
 import org.apache.parquet.io.SeekableInputStream;
 import org.apache.parquet.io.api.Binary;
 import org.apache.parquet.schema.MessageType;
+import org.apache.parquet.schema.Type;
 
 /**
  * Apache Parquet 格式的 part 读写。
@@ -97,24 +98,57 @@ public class ParquetPartFormat implements PartFormat {
 
     @Override
     public VectorSchemaRoot read(Path part, Schema schema, BufferAllocator allocator) {
+        return read(part, schema, allocator, null);
+    }
+
+    @Override
+    public VectorSchemaRoot read(Path part, Schema schema, BufferAllocator allocator,
+                                   int[] projectedColumns) {
         try (ParquetFileReader reader = openReader(part)) {
             MessageType parquetSchema = reader.getFooter().getFileMetaData().getSchema();
-            MessageColumnIO columnIO = new ColumnIOFactory().getColumnIO(parquetSchema);
-            VectorSchemaRoot root = VectorSchemaRoot.create(schema, allocator);
+            // 列裁剪:构建投影 schema 和 Parquet 列路径
+            Schema projSchema;
+            java.util.List<String> columnPaths;
+            if (projectedColumns == null || projectedColumns.length == schema.getFields().size()) {
+                projSchema = schema;
+                columnPaths = null; // 全量读
+            } else {
+                java.util.List<org.apache.arrow.vector.types.pojo.Field> projFields = new java.util.ArrayList<>();
+                columnPaths = new java.util.ArrayList<>();
+                for (int col : projectedColumns) {
+                    projFields.add(schema.getFields().get(col));
+                    columnPaths.add(schema.getFields().get(col).getName());
+                }
+                projSchema = new Schema(projFields, schema.getCustomMetadata());
+            }
+            MessageColumnIO columnIO;
+            if (columnPaths == null) {
+                columnIO = new ColumnIOFactory().getColumnIO(parquetSchema, parquetSchema);
+            } else {
+                java.util.List<org.apache.parquet.schema.Type> projParquetFields = new java.util.ArrayList<>();
+                for (String col : columnPaths) {
+                    projParquetFields.add(parquetSchema.getType(col));
+                }
+                MessageType projParquet = new MessageType(parquetSchema.getName(), projParquetFields);
+                columnIO = new ColumnIOFactory().getColumnIO(projParquet, parquetSchema);
+            }
+            VectorSchemaRoot root = VectorSchemaRoot.create(projSchema, allocator);
             root.allocateNew();
             int dst = 0;
             PageReadStore pages;
+            java.util.List<FieldVector> vectors = root.getFieldVectors();
+            int outCols = vectors.size();
             while ((pages = reader.readNextRowGroup()) != null) {
                 RecordReader<Group> recordReader =
                         columnIO.getRecordReader(pages, new GroupRecordConverter(parquetSchema));
                 int rows = (int) pages.getRowCount();
-                List<FieldVector> vectors = root.getFieldVectors();
                 for (int r = 0; r < rows; r++) {
                     Group group = recordReader.read();
-                    for (int c = 0; c < vectors.size(); c++) {
-                        if (c < parquetSchema.getFieldCount()
-                                && group.getFieldRepetitionCount(c) > 0) {
-                            readValue(vectors.get(c), dst + r, group, c);
+                    for (int c = 0; c < outCols; c++) {
+                        int parquetCol = projectedColumns == null ? c : projectedColumns[c];
+                        if (parquetCol < parquetSchema.getFieldCount()
+                                && group.getFieldRepetitionCount(parquetCol) > 0) {
+                            readValue(vectors.get(c), dst + r, group, parquetCol);
                         }
                     }
                 }
