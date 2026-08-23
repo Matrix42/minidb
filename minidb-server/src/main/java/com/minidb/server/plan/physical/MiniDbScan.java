@@ -119,17 +119,25 @@ public class MiniDbScan extends TableScan implements MiniDbRel {
             public boolean hasNext() {
                 while (pending == null && source.hasNext()) {
                     VectorSchemaRoot batch = source.next();
-                    VectorSchemaRoot filtered = applyFilter(batch, ctx);
-                    if (filtered == null) {
-                        continue; // 全批被过滤
+                    VectorSchemaRoot filtered = null;
+                    try {
+                        filtered = applyFilter(batch, ctx);
+                        if (filtered == null) {
+                            continue; // 全批被过滤
+                        }
+                        VectorSchemaRoot projected = applyProject(filtered, ctx);
+                        if (filtered != projected) {
+                            filtered.close();
+                        }
+                        owned.add(projected);
+                        pending = projected;
+                    } catch (RuntimeException e) {
+                        // applyProject/applyFilter 失败时释放中间结果
+                        if (filtered != null && filtered != pending) {
+                            filtered.close();
+                        }
+                        throw e;
                     }
-                    VectorSchemaRoot projected = applyProject(filtered, ctx);
-                    if (filtered != projected) {
-                        // applyProject 创建了新批,原批可释放
-                        filtered.close();
-                    }
-                    owned.add(projected);
-                    pending = projected;
                 }
                 return pending != null;
             }
