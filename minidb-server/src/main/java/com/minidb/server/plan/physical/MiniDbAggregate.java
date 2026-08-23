@@ -55,9 +55,11 @@ public class MiniDbAggregate extends Aggregate implements MiniDbRel {
     @Override
     public BatchIterator execute(ExecContext ctx) {
         // COUNT(*) 无 GROUP BY 直接读表行数(元数据),不扫描数据。
+        // 但若 Scan 有下推谓词(Filter/Project 已折叠进 Scan),不能走捷径——必须扫描+过滤。
         if (getGroupSet().isEmpty() && getAggCallList().size() == 1
                 && isCountStar(getAggCallList().get(0))
-                && getInput() instanceof MiniDbScan scan) {
+                && getInput() instanceof MiniDbScan scan
+                && !scan.hasPushdown()) {
             TableHandle table = scan.resolveTable(ctx);
             // LSMTable.rowCount() is approximate (MemTable+SSTable rows overlap),
             // so skip the metadata shortcut and always scan for accurate COUNT(*).

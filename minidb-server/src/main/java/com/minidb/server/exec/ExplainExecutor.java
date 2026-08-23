@@ -169,10 +169,10 @@ public class ExplainExecutor {
     private String operationName(RelNode node) {
         String name;
         if (node instanceof MiniDbCalc calc) {
-            // A Calc is a merged Project+Filter; report what it actually does
-            // so EXPLAIN stays readable. With a condition it filters, without
-            // one it only projects.
             name = calc.getProgram().getCondition() == null ? "Project" : "Filter";
+        } else if (node instanceof MiniDbScan scan && scan.pushedFilter() != null) {
+            // 谓词下推:Filter 折叠进 Scan,EXPLAIN 仍显示为 Filter 以保持可读
+            name = "Filter";
         } else {
             name = node.getClass().getSimpleName();
             if (name.startsWith("MiniDb")) {
@@ -191,7 +191,15 @@ public class ExplainExecutor {
         if (node instanceof MiniDbScan scan) {
             String[] st = resolveTable(scan, currentSchema);
             TableHandle t = storage.getTable(st[0], st[1]);
-            return new Est((long) t.rowCount(), t.partCount(), null);
+            long rows = t.rowCount();
+            // 谓词下推:Scan 携带过滤条件,估算选择率
+            String remarks = null;
+            if (scan.pushedFilter() != null) {
+                Sel s = filterSelectivity(scan.pushedFilter(), scan, currentSchema);
+                rows = Math.max(0, Math.round(rows * s.selectivity));
+                remarks = s.remarks;
+            }
+            return new Est(rows, t.partCount(), remarks);
         }
         if (node instanceof MiniDbProject) {
             return new Est(childRows(node, currentSchema), null, null);

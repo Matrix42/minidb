@@ -5,6 +5,7 @@ import com.minidb.server.exec.QueryExecutor;
 import com.minidb.server.exec.QueryResult;
 import com.minidb.server.plan.physical.MiniDbFilter;
 import com.minidb.server.plan.physical.MiniDbJoin;
+import com.minidb.server.plan.physical.MiniDbScan;
 import com.minidb.server.plan.physical.MiniDbSort;
 import com.minidb.server.storage.StorageManager;
 import com.minidb.server.stats.StatsManager;
@@ -43,8 +44,11 @@ class LogicalOptimizerTest {
                 RelNode plan = new Planner(catalog).plan(sql);
                 MiniDbJoin join = findJoin(plan);
                 assertTrue(join != null, "plan has no join: " + plan);
-                // FilterPushDown: join 的直接输入应是 MiniDbFilter,而非 join 之上
-                assertTrue(isDirectInput(join, MiniDbFilter.class),
+                // FilterPushDown: join 的输入中应有过滤——可能是 MiniDbFilter 或
+                // 下推到 Scan 的 MiniDbScan(含 pushedFilter)
+                assertTrue(isDirectInput(join, MiniDbFilter.class)
+                                || isDirectInput(join, MiniDbScan.class, scan ->
+                                        ((MiniDbScan) scan).pushedFilter() != null),
                         "filter should be pushed into join inputs, plan=" + plan);
 
                 List<String> rows = rows(executor, sql);
@@ -110,6 +114,16 @@ class LogicalOptimizerTest {
     private static boolean isDirectInput(MiniDbJoin join, Class<?> clazz) {
         for (RelNode input : join.getInputs()) {
             if (clazz.isInstance(input)) {
+                return true;
+            }
+        }
+        return false;
+    }
+
+    private static boolean isDirectInput(MiniDbJoin join, Class<?> clazz,
+                                          java.util.function.Predicate<RelNode> pred) {
+        for (RelNode input : join.getInputs()) {
+            if (clazz.isInstance(input) && pred.test(input)) {
                 return true;
             }
         }

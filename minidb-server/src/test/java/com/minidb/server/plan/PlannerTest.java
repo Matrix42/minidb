@@ -34,7 +34,7 @@ class PlannerTest {
     @Test
     void filterProjectPlansToPhysical() {
         String plan = planText("SELECT name FROM t WHERE id > 1");
-        assertTrue(plan.contains("MiniDbFilter"));
+        // Filter 已下推到 Scan(谓词下推),MiniDbFilter 不再出现
         assertTrue(plan.contains("MiniDbProject"));
         assertTrue(plan.contains("MiniDbScan"));
     }

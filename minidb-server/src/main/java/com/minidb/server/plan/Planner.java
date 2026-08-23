@@ -5,7 +5,10 @@ import com.minidb.server.calcite.Utf8SqlTypeFactory;
 import com.minidb.server.catalog.MiniDbCatalog;
 import com.minidb.server.plan.logical.LogicalOptimizer;
 import com.minidb.server.plan.physical.MiniDbConvention;
+import com.minidb.server.plan.physical.MiniDbFilter;
+import com.minidb.server.plan.physical.MiniDbProject;
 import com.minidb.server.plan.physical.MiniDbRel;
+import com.minidb.server.plan.physical.MiniDbScan;
 import com.minidb.server.rule.logical.MiniDbLogicalRules;
 import com.minidb.server.rule.physical.MiniDbPhysicalRules;
 import org.apache.calcite.DataContexts;
@@ -23,8 +26,12 @@ import org.apache.calcite.rel.type.RelDataType;
 import org.apache.calcite.rel.type.RelDataTypeSystem;
 import org.apache.calcite.rex.RexBuilder;
 import org.apache.calcite.rex.RexExecutorImpl;
+import org.apache.calcite.rex.RexInputRef;
+import org.apache.calcite.rex.RexNode;
+import org.apache.calcite.rex.RexShuttle;
 import org.apache.calcite.sql.type.SqlTypeFactoryImpl;
 
+import java.util.ArrayList;
 import java.util.List;
 
 public class Planner {
@@ -88,7 +95,126 @@ public class Planner {
             throw new IllegalStateException(
                     "planner produced non-physical root: " + best);
         }
-        return best;
+        // Phase 3: 谓词下推 + 列裁剪到 Scan——折叠 Filter(Scan)/Project(Scan) 进 Scan 自身,
+        // 消除中间 Filter/Project 的逐行拷贝和全量列读取。
+        return pushDownToScan(best);
+    }
+
+    /**
+     * 遍历物理树,把 {@code MiniDbFilter(MiniDbScan)} 和
+     * {@code MiniDbProject(MiniDbScan)} 折叠进 Scan 自身。
+     * 多层下推递归处理,但 {@code Filter(Project(Scan))} 时只推 Filter 进 Scan,
+     * 保留 Project 做列裁剪——若 Project 也折叠,Filter 需要的列可能被裁掉(如视图
+     * {@code SELECT name WHERE id=2} 的 Project 裁掉 id,但 Filter 需要 id)。
+     */
+    private static RelNode pushDownToScan(RelNode node) {
+        if (node instanceof MiniDbFilter filter) {
+            // Filter(Project(Scan)):推 Filter 进 Scan,保留 Project
+            RelNode filterChild = filter.getInput();
+            if (filterChild instanceof MiniDbProject project) {
+                RelNode projChild = pushDownToScan(project.getInput());
+                if (projChild instanceof MiniDbScan scan) {
+                    int[] cols = extractProjectColumns(project.getProjects());
+                    RexNode cond = filter.getCondition();
+                    if (cols != null) {
+                        cond = remapToOriginal(cond, cols);
+                    }
+                    // 只推 Filter,不推 Project(列裁剪保留在 Project 中)
+                    MiniDbScan newScan = new MiniDbScan(scan.getCluster(),
+                            scan.getTraitSet(), scan.getTable(), null, cond);
+                    return project.copy(project.getTraitSet(), newScan,
+                            project.getProjects(), project.getRowType());
+                }
+                if (projChild != project.getInput()) {
+                    RelNode newProj = project.copy(project.getTraitSet(), projChild,
+                            project.getProjects(), project.getRowType());
+                    return filter.copy(filter.getTraitSet(), newProj, filter.getCondition());
+                }
+            }
+            // Filter(Scan):折叠 Filter 进 Scan
+            RelNode child = pushDownToScan(filter.getInput());
+            if (child instanceof MiniDbScan scan) {
+                RexNode cond = filter.getCondition();
+                if (scan.projectedColumns() != null) {
+                    cond = remapToOriginal(cond, scan.projectedColumns());
+                }
+                return new MiniDbScan(scan.getCluster(), scan.getTraitSet(),
+                        scan.getTable(), scan.projectedColumns(), cond);
+            }
+            if (child != filter.getInput()) {
+                return filter.copy(filter.getTraitSet(), child, filter.getCondition());
+            }
+            return filter;
+        }
+        if (node instanceof MiniDbProject project) {
+            RelNode child = pushDownToScan(project.getInput());
+            if (child instanceof MiniDbScan scan && !scan.hasPushdown()) {
+                // 纯列裁剪:Project 表达式全为 RexInputRef 时折叠进 Scan
+                int[] cols = extractProjectColumns(project.getProjects());
+                if (cols != null) {
+                    return new MiniDbScan(scan.getCluster(), scan.getTraitSet(),
+                            scan.getTable(), cols, null);
+                }
+            }
+            if (child != project.getInput()) {
+                return project.copy(project.getTraitSet(), child,
+                        project.getProjects(), project.getRowType());
+            }
+            return project;
+        }
+        // 递归处理其他算子(Join/Aggregate/Sort 等)
+        if (node.getInputs().isEmpty()) {
+            return node;
+        }
+        List<RelNode> inputs = node.getInputs();
+        List<RelNode> newInputs = null;
+        for (int i = 0; i < inputs.size(); i++) {
+            RelNode newChild = pushDownToScan(inputs.get(i));
+            if (newChild != inputs.get(i)) {
+                if (newInputs == null) {
+                    newInputs = new ArrayList<>(inputs);
+                }
+                newInputs.set(i, newChild);
+            }
+        }
+        if (newInputs == null) {
+            return node;
+        }
+        return node.copy(node.getTraitSet(), newInputs);
+    }
+
+    /**
+     * 若 project 表达式全是 RexInputRef(纯列索引),返回索引数组;否则返回 null。
+     * 索引连续恒等(0,1,2,...)时也返回 null——不需要裁剪,调用方不建新 Scan。
+     */
+    /**
+     * 将 RexNode 中的 RexInputRef 索引从「投影后位置」映射回「原始列索引」。
+     * 当 Scan 先被 Project 裁剪列(如 [2,0]),后续 Filter 条件引用的是新索引(0→原列2),
+     * 推入 Scan 时需还原为原索引。
+     */
+    private static RexNode remapToOriginal(RexNode node, int[] projectedColumns) {
+        return node.accept(new RexShuttle() {
+            @Override
+            public RexNode visitInputRef(RexInputRef inputRef) {
+                int origIdx = projectedColumns[inputRef.getIndex()];
+                return new RexInputRef(origIdx, inputRef.getType());
+            }
+        });
+    }
+
+    private static int[] extractProjectColumns(List<RexNode> projects) {
+        int[] cols = new int[projects.size()];
+        boolean identity = true;
+        for (int i = 0; i < projects.size(); i++) {
+            if (!(projects.get(i) instanceof RexInputRef ref)) {
+                return null;
+            }
+            cols[i] = ref.getIndex();
+            if (cols[i] != i) {
+                identity = false;
+            }
+        }
+        return identity ? null : cols;
     }
 
     /** 展开视图定义 SQL:取 schemaPath 最后一段作视图所在 schema,复用共享 planner 重新 plan。 */

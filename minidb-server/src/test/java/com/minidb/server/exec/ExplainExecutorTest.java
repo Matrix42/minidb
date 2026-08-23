@@ -78,19 +78,19 @@ class ExplainExecutorTest {
         QueryResult r = explain.explain("SELECT id, name FROM t WHERE id > 1 ORDER BY id");
         QueryResult.Rows rows = (QueryResult.Rows) r;
         VectorSchemaRoot root = rows.data();
-        // Sort, Filter, Scan = 3 operators
-        assertEquals(3, root.getRowCount());
+        // Sort, Scan(pushed filter shown as Filter) = 2 operators
+        assertEquals(2, root.getRowCount());
         assertEquals(7, root.getFieldVectors().size());
 
-        // operation column contains Sort/Filter/Scan
+        // operation column contains Sort / Scan
         VarCharVector op = (VarCharVector) root.getVector("operation");
         java.util.Set<String> ops = new java.util.HashSet<>();
         for (int i = 0; i < root.getRowCount(); i++) {
             ops.add(new String(op.get(i)));
         }
         assertTrue(ops.stream().anyMatch(s -> s.contains("Sort")));
+        // 谓词下推后 Scan 显示为 Filter(name),但仍可在父节点追溯 Scan
         assertTrue(ops.stream().anyMatch(s -> s.contains("Filter")));
-        assertTrue(ops.stream().anyMatch(s -> s.contains("Scan")));
 
         // id starts at 1, root (Sort) has parent_id NULL
         IntVector id = (IntVector) root.getVector("id");
@@ -98,16 +98,19 @@ class ExplainExecutorTest {
         assertEquals(1, id.get(0));
         assertTrue(parent.isNull(0)); // root parent is NULL
 
-        // Scan rows = 3 (free, table.rowCount)
+        // Scan rows = 3 (free, table.rowCount). 谓词下推后 Scan 显示为 Filter(t)
         BigIntVector rowVec = (BigIntVector) root.getVector("rows");
         int scanIdx = -1;
         for (int i = 0; i < root.getRowCount(); i++) {
-            if (new String(op.get(i)).contains("Scan")) {
+            String s = new String(op.get(i));
+            if (s.contains("Scan") || s.contains("Filter")) {
                 scanIdx = i;
             }
         }
-        assertTrue(scanIdx >= 0);
-        assertEquals(3L, rowVec.get(scanIdx));
+        assertTrue(scanIdx >= 0, "should find Scan or Filter node");
+        // 谓词下推后 Scan 显示过滤后行数(无统计时默认选择率 0.33)
+        assertTrue(rowVec.get(scanIdx) > 0);
+        assertTrue(rowVec.get(scanIdx) < 3L);
         root.close();
     }
 
@@ -129,10 +132,15 @@ class ExplainExecutorTest {
             if (s.contains("Filter")) {
                 filterRows = rowVec.get(i);
                 filterRemarks = remarks.isNull(i) ? null : new String(remarks.get(i));
+                // 谓词下推:Filter 折叠进 Scan,Filter 节点也是 Scan 节点
+                if (scanRows < 0) {
+                    scanRows = rowVec.get(i);
+                }
             }
         }
         assertTrue(filterRows > 0);
-        assertTrue(filterRows < scanRows);
+        // 谓词下推后 Scan 和 Filter 合并为一个节点,filterRows 就是 scanRows
+        assertTrue(filterRows < 3L); // 小于全表 3 行
         assertTrue(filterRemarks != null && filterRemarks.contains("estimated"));
         root.close();
     }
@@ -164,7 +172,7 @@ class ExplainExecutorTest {
     void explainAnalyzeRunsAndMeasuresAllOperators() {
         QueryResult r = explain.analyze("SELECT id FROM t WHERE id > 1 ORDER BY id");
         VectorSchemaRoot root = ((QueryResult.Rows) r).data();
-        assertEquals(3, root.getRowCount()); // Sort, Filter, Scan
+        assertEquals(2, root.getRowCount()); // Sort, Scan(pushed filter)
         VarCharVector op = (VarCharVector) root.getVector("operation");
         BigIntVector rowVec = (BigIntVector) root.getVector("rows");
         IntVector batches = (IntVector) root.getVector("batches");
