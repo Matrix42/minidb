@@ -101,7 +101,7 @@ public class MiniDbScan extends TableScan implements MiniDbRel {
             tableHandle = ctx.getTable(qualified.get(n - 1));
         }
         return applyPushdown(
-                    projectedColumns != null && pushedFilter == null
+                    projectedColumns != null
                             ? tableHandle.scan(projectedColumns)
                             : tableHandle.scan(),
                     ctx);
@@ -115,8 +115,11 @@ public class MiniDbScan extends TableScan implements MiniDbRel {
         if (projectedColumns == null && pushedFilter == null) {
             return source;
         }
-        // 存储层已做列裁剪(source 只含投影列),只做谓词过滤,跳过 applyProject
-        boolean sourceAlreadyProjected = projectedColumns != null && pushedFilter == null;
+        // 存储层已做列裁剪(source 只含投影列),filter 需映射到投影位置后 eval
+        boolean sourceAlreadyProjected = projectedColumns != null;
+        final RexNode effectiveFilter = sourceAlreadyProjected && pushedFilter != null
+                ? remapToProjected(pushedFilter, projectedColumns)
+                : pushedFilter;
         Deque<VectorSchemaRoot> owned = new ArrayDeque<>();
         return BatchIterator.interruptible(new BatchIterator() {
             VectorSchemaRoot pending;
@@ -127,7 +130,7 @@ public class MiniDbScan extends TableScan implements MiniDbRel {
                     VectorSchemaRoot batch = source.next();
                     VectorSchemaRoot filtered = null;
                     try {
-                        filtered = applyFilter(batch, ctx);
+                        filtered = applyFilter(batch, effectiveFilter, ctx);
                         if (filtered == null) {
                             continue; // 全批被过滤
                         }
@@ -170,10 +173,14 @@ public class MiniDbScan extends TableScan implements MiniDbRel {
 
     /** 谓词过滤:null→原样返回;全匹配→原样返回;无匹配→null(释放原批)。 */
     private VectorSchemaRoot applyFilter(VectorSchemaRoot batch, ExecContext ctx) {
-        if (pushedFilter == null) {
+        return applyFilter(batch, pushedFilter, ctx);
+    }
+
+    private VectorSchemaRoot applyFilter(VectorSchemaRoot batch, RexNode filter, ExecContext ctx) {
+        if (filter == null) {
             return batch;
         }
-        ValueVector condition = ctx.interpreter().eval(pushedFilter, batch);
+        ValueVector condition = ctx.interpreter().eval(filter, batch);
         try {
             int kept = 0;
             for (int i = 0; i < batch.getRowCount(); i++) {
@@ -226,6 +233,28 @@ public class MiniDbScan extends TableScan implements MiniDbRel {
             v.setValueCount(rows);
         }
         return VectorSchemaRoot.of(outVectors.toArray(new FieldVector[0]));
+    }
+
+    /**
+     * 将 filter 条件中的列索引从「原表索引」映射到「投影后的位置」。
+     * 存储层已做列裁剪,source 只含投影列,filter 需要引用投影位置而非原位置。
+     */
+    private static RexNode remapToProjected(RexNode node, int[] projectedColumns) {
+        int maxCol = 0;
+        for (int c : projectedColumns) maxCol = Math.max(maxCol, c);
+        int[] inverse = new int[maxCol + 1];
+        java.util.Arrays.fill(inverse, -1);
+        for (int i = 0; i < projectedColumns.length; i++) {
+            inverse[projectedColumns[i]] = i;
+        }
+        return node.accept(new RexShuttle() {
+            @Override
+            public RexNode visitInputRef(RexInputRef inputRef) {
+                int orig = inputRef.getIndex();
+                int proj = orig < inverse.length ? inverse[orig] : -1;
+                return proj >= 0 ? new RexInputRef(proj, inputRef.getType()) : inputRef;
+            }
+        });
     }
 
     /**
