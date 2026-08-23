@@ -67,6 +67,11 @@ public class SimpleTable implements TableHandle {
         return arrowSchema;
     }
 
+    /** 此表的 part 编码格式(Arrow IPC 或 Parquet)。 */
+    public PartFormat format() {
+        return format;
+    }
+
     public VectorSchemaRoot newBatchRoot() {
         return VectorSchemaRoot.create(arrowSchema, allocator);
     }

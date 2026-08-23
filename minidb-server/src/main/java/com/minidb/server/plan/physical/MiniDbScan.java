@@ -101,6 +101,9 @@ public class MiniDbScan extends TableScan implements MiniDbRel {
             tableHandle = ctx.getTable(qualified.get(n - 1));
         }
         return applyPushdown(
+                    // TODO: 列裁剪暂限全列投影(即不启用),Parquet 列裁剪在 ALTER TABLE 后
+                    // 读新列值异常。存储层 API(scan/projected)已就绪,修好 ALTER TABLE 后改为
+                    // projectedColumns != null && pushedFilter == null
                     projectedColumns != null && pushedFilter == null
                             && projectedColumns.length == tableHandle.schema().columns().size()
                             ? tableHandle.scan(projectedColumns)
