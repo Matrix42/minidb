@@ -34,7 +34,7 @@ public record CursorHandle(BatchIterator iterator, ExecContext context, Schema s
                 }
             }
         } finally {
-            iterator.close();
+            close(); // 释放 iterator + CSE 缓存
         }
         if (merged == null) {
             return emptyRoot();
