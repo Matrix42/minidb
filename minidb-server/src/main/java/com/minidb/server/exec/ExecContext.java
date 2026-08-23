@@ -3,10 +3,12 @@ package com.minidb.server.exec;
 import com.minidb.server.catalog.MiniDbCatalog;
 import com.minidb.storage.common.TableHandle;
 import com.minidb.server.storage.StorageManager;
+import java.util.ArrayList;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
 import org.apache.arrow.memory.BufferAllocator;
+import org.apache.arrow.vector.VectorSchemaRoot;
 
 public class ExecContext {
 
@@ -19,6 +21,9 @@ public class ExecContext {
     // recursive body's scan reads them back. Per-query, so a plain HashMap
     // suffices (no concurrent access).
     private final Map<String, List<Object[]>> transientTables = new HashMap<>();
+
+    // CSE 缓存:key 为子树 digest,value 为物化后的批列表
+    private final Map<String, List<VectorSchemaRoot>> cseCache = new HashMap<>();
 
     public ExecContext(StorageManager storage, BufferAllocator allocator) {
         this(storage, allocator, MiniDbCatalog.DEFAULT_SCHEMA);
@@ -76,6 +81,16 @@ public class ExecContext {
 
     public void removeTransientTable(String name) {
         transientTables.remove(name);
+    }
+
+    /** CSE 缓存:按 key 取已物化的批列表,无命中返回 null。 */
+    public List<VectorSchemaRoot> getCseCache(String key) {
+        return cseCache.get(key);
+    }
+
+    /** CSE 缓存:存入物化结果。 */
+    public void putCseCache(String key, List<VectorSchemaRoot> batches) {
+        cseCache.put(key, batches);
     }
 
     /** 检查当前线程是否被中断(客户端断连→Future.cancel→线程中断),是则抛异常。 */

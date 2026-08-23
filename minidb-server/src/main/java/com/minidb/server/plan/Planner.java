@@ -4,8 +4,11 @@ import com.minidb.server.calcite.CalciteContext;
 import com.minidb.server.calcite.Utf8SqlTypeFactory;
 import com.minidb.server.catalog.MiniDbCatalog;
 import com.minidb.server.plan.logical.LogicalOptimizer;
+import com.minidb.server.plan.physical.MiniDbAggregate;
 import com.minidb.server.plan.physical.MiniDbConvention;
+import com.minidb.server.plan.physical.MiniDbCse;
 import com.minidb.server.plan.physical.MiniDbFilter;
+import com.minidb.server.plan.physical.MiniDbJoin;
 import com.minidb.server.plan.physical.MiniDbProject;
 import com.minidb.server.plan.physical.MiniDbRel;
 import com.minidb.server.plan.physical.MiniDbScan;
@@ -32,7 +35,9 @@ import org.apache.calcite.rex.RexShuttle;
 import org.apache.calcite.sql.type.SqlTypeFactoryImpl;
 
 import java.util.ArrayList;
+import java.util.HashMap;
 import java.util.List;
+import java.util.Map;
 
 public class Planner {
 
@@ -95,9 +100,96 @@ public class Planner {
             throw new IllegalStateException(
                     "planner produced non-physical root: " + best);
         }
-        // Phase 3: 谓词下推 + 列裁剪到 Scan——折叠 Filter(Scan)/Project(Scan) 进 Scan 自身,
-        // 消除中间 Filter/Project 的逐行拷贝和全量列读取。
-        return pushDownToScan(best);
+        // Phase 3: 谓词下推 + 列裁剪到 Scan
+        RelNode pushed = pushDownToScan(best);
+        // Phase 4: 公共子表达式消除(CSE)——相同子树只执行一次,后续缓存回放
+        return deduplicateSubtrees(pushed);
+    }
+
+    /**
+     * CSE:自底向上遍历,对重复的 Join/Aggregate 子树(如 query65 的 ss⨝date_dim 出现两次)
+     * 包装为共享 {@link MiniDbCse} 节点。首次执行物化到缓存,后续命中回放。
+     * 只对 Join/Aggregate 做——它们是昂贵操作,Scan/Filter/Project 已下推无需 CSE。
+     */
+    private static RelNode deduplicateSubtrees(RelNode node) {
+        Map<String, Integer> counts = new HashMap<>();
+        Map<String, MiniDbCse> cseMap = new HashMap<>();
+        countJoinsAndAggregates(node, counts);
+        return deduplicateSubtrees(node, counts, cseMap);
+    }
+
+    /** 第一轮:统计 Join/Aggregate 子树的出现次数。 */
+    private static void countJoinsAndAggregates(RelNode node, Map<String, Integer> counts) {
+        if (node instanceof MiniDbJoin || node instanceof MiniDbAggregate) {
+            counts.merge(structuralDigest(node), 1, Integer::sum);
+        }
+        for (RelNode input : node.getInputs()) {
+            countJoinsAndAggregates(input, counts);
+        }
+    }
+
+    /**
+     * 计算子树的结构哈希(不含 RelNode 实例 ID)。Join/Aggregate 递归包含子节点哈希,
+     * 其他节点用 explainTerms 去掉实例 ID 的部分。
+     */
+    private static String structuralDigest(RelNode node) {
+        StringBuilder sb = new StringBuilder();
+        sb.append(node.getClass().getSimpleName());
+        // 用 explainTerms 输出,去掉 #id 后缀
+        sb.append('{').append(inputStrippedDigest(node)).append('}');
+        // 追加子节点信息
+        for (RelNode input : node.getInputs()) {
+            if (input instanceof MiniDbJoin || input instanceof MiniDbAggregate) {
+                sb.append('(').append(structuralDigest(input)).append(')');
+            } else {
+                sb.append('[').append(inputStrippedDigest(input)).append(']');
+            }
+        }
+        return sb.toString();
+    }
+
+    /** 节点的 explainTerms 去掉 RelNode 实例 ID(#id) 后的摘要。 */
+    private static String inputStrippedDigest(RelNode node) {
+        String full = node.getDigest();
+        return full.replaceAll("#\\d+", "");
+    }
+
+    /**
+     * 第二轮:对出现次数 >1 的 Join/Aggregate 子树,首次出现包装 MiniDbCse,
+     * 后续出现替换为共享的 MiniDbCse。
+     */
+    private static RelNode deduplicateSubtrees(RelNode node, Map<String, Integer> counts,
+                                                Map<String, MiniDbCse> cseMap) {
+        // 先递归处理子节点
+        List<RelNode> inputs = node.getInputs();
+        List<RelNode> newInputs = null;
+        for (int i = 0; i < inputs.size(); i++) {
+            RelNode newChild = deduplicateSubtrees(inputs.get(i), counts, cseMap);
+            if (newChild != inputs.get(i)) {
+                if (newInputs == null) {
+                    newInputs = new ArrayList<>(inputs);
+                }
+                newInputs.set(i, newChild);
+            }
+        }
+        if (newInputs != null) {
+            node = node.copy(node.getTraitSet(), newInputs);
+        }
+        if (!(node instanceof MiniDbJoin) && !(node instanceof MiniDbAggregate)) {
+            return node;
+        }
+        String digest = structuralDigest(node);
+        if (counts.getOrDefault(digest, 0) <= 1) {
+            return node; // 唯一子树,不包装
+        }
+        MiniDbCse existing = cseMap.get(digest);
+        if (existing != null) {
+            return existing; // 重复子树:返回已缓存的 CSE 节点
+        }
+        // 首次出现:包装 CSE 节点
+        MiniDbCse cse = new MiniDbCse(node.getCluster(), node.getTraitSet(), node, digest);
+        cseMap.put(digest, cse);
+        return cse;
     }
 
     /**
