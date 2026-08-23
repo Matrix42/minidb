@@ -146,9 +146,11 @@ public class ParquetPartFormat implements PartFormat {
                     Group group = recordReader.read();
                     for (int c = 0; c < outCols; c++) {
                         int parquetCol = projectedColumns == null ? c : projectedColumns[c];
+                        // 列裁剪时 Group 索引是投影后的位置(c),不是原列索引(parquetCol)
+                        int groupCol = projectedColumns == null ? c : c;
                         if (parquetCol < parquetSchema.getFieldCount()
-                                && group.getFieldRepetitionCount(parquetCol) > 0) {
-                            readValue(vectors.get(c), dst + r, group, parquetCol);
+                                && group.getFieldRepetitionCount(groupCol) > 0) {
+                            readValue(vectors.get(c), dst + r, group, groupCol);
                         }
                     }
                 }
