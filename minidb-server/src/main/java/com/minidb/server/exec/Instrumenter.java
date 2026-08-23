@@ -3,6 +3,7 @@ import com.minidb.storage.common.BatchIterator;
 
 import com.minidb.server.plan.physical.MiniDbAggregate;
 import com.minidb.server.plan.physical.MiniDbCalc;
+import com.minidb.server.plan.physical.MiniDbCse;
 import com.minidb.server.plan.physical.MiniDbFilter;
 import com.minidb.server.plan.physical.MiniDbJoin;
 import com.minidb.server.plan.physical.MiniDbProject;
@@ -77,6 +78,9 @@ public final class Instrumenter {
         }
         if (node instanceof MiniDbSetOp setOp) {
             return setOp.copy(traits, inputs, setOp.all);
+        }
+        if (node instanceof MiniDbCse cse) {
+            return cse.copy(traits, inputs);
         }
         throw new UnsupportedOperationException("cannot instrument: " + node.getClass());
     }
