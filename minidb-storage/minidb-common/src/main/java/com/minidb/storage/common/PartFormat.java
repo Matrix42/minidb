@@ -30,6 +30,15 @@ public interface PartFormat {
         return read(part, schema, allocator);
     }
 
+    /**
+     * 把一个 batch 编码为内存字节(不落盘),与 {@link #read(byte[], Schema, BufferAllocator)}
+     * 对称。供 LSM 的 SSTable 块级编解码用——避免块写盘时经临时文件的往返。
+     */
+    byte[] writeToBytes(VectorSchemaRoot batch);
+
+    /** 从内存字节读回一个 batch(与 {@link #writeToBytes} 对称)。 */
+    VectorSchemaRoot read(byte[] data, Schema schema, BufferAllocator allocator);
+
     /** 统计一个 part 文件的行数。 */
     long rowCount(Path part, BufferAllocator allocator);
 

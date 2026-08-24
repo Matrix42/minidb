@@ -3,6 +3,7 @@ package com.minidb.storage.lsm;
 import static org.junit.jupiter.api.Assertions.*;
 import com.minidb.storage.arrow.ArrowPartFormat;
 import com.minidb.storage.common.*;
+import com.minidb.storage.parquet.ParquetPartFormat;
 import java.math.BigDecimal;
 import java.nio.file.Path;
 import java.util.*;
@@ -74,6 +75,41 @@ class SSTableTest {
         assertEquals("bob", rows.get(1)[1]);
         assertEquals(3, rows.get(2)[0]);
         assertEquals("carol", rows.get(2)[1]);
+    }
+
+    @Test
+    void parquetFormatRoundTrip(@TempDir Path dir) throws Exception {
+        // Parquet 格式的 SSTable 块编解码(SSTableWriter.writeToBytes /
+        // SSTableReader 内存读)——默认存储格式即 parquet,是 LSM 的主路径。
+        MemTable mt = new MemTable(schema, 1024 * 1024);
+        mt.put(List.of(1), new RowValue(RowValue.INSERT, new Object[]{1, "alice"}));
+        mt.put(List.of(2), new RowValue(RowValue.INSERT, new Object[]{2, "bob"}));
+
+        Path sstFile = dir.resolve("sst-L0-000002.sst");
+        ParquetPartFormat format = new ParquetPartFormat();
+        SSTableWriter writer = new SSTableWriter(sstFile, 0, schema, format, allocator, 10);
+        assertEquals(2, writer.writeFromMemTable(mt));
+
+        SSTableReader reader = new SSTableReader(sstFile, schema, format, allocator);
+        assertEquals(2, reader.metadata().rowCount());
+        List<Object[]> rows = new ArrayList<>();
+        BatchIterator it = reader.scan();
+        while (it.hasNext()) {
+            VectorSchemaRoot batch = it.next();
+            for (int i = 0; i < batch.getRowCount(); i++) {
+                rows.add(new Object[]{
+                        batch.getVector(0).getObject(i),
+                        batch.getVector(1).getObject(i).toString()});
+            }
+        }
+        it.close();
+        reader.close();
+
+        assertEquals(2, rows.size());
+        assertEquals(1, rows.get(0)[0]);
+        assertEquals("alice", rows.get(0)[1]);
+        assertEquals(2, rows.get(1)[0]);
+        assertEquals("bob", rows.get(1)[1]);
     }
 
     @Test

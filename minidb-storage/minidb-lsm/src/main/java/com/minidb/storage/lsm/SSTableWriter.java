@@ -124,25 +124,19 @@ public class SSTableWriter {
     private BlockInfo writeBlock(FileChannel ch, List<Object> startKey,
                                   List<Object[]> rows) throws IOException {
         long offset = ch.position();
-        // 把 rows 转成 VectorSchemaRoot 然后用 PartFormat 编码
+        // 把 rows 转成 VectorSchemaRoot 然后用 PartFormat 编码为内存字节
         VectorSchemaRoot root = rowsToRoot(rows);
         try {
-            // 暂时写到一个临时文件，然后读回字节
-            Path tmp = Files.createTempFile("block", ".tmp");
-            try {
-                format.write(tmp, root);
-                byte[] blockBytes = Files.readAllBytes(tmp);
-                ByteBuffer buf = ByteBuffer.allocate(2 + 4 + blockBytes.length);
-                buf.putShort((short) rows.size());
-                buf.putInt(blockBytes.length);
-                buf.put(blockBytes);
-                buf.flip();
-                while (buf.hasRemaining()) ch.write(buf);
-                int size = 2 + 4 + blockBytes.length;
-                return new BlockInfo(startKey, offset, size);
-            } finally {
-                Files.deleteIfExists(tmp);
-            }
+            // 直接编码进字节数组,不落临时文件(format.writeToBytes 内存编码)
+            byte[] blockBytes = format.writeToBytes(root);
+            ByteBuffer buf = ByteBuffer.allocate(2 + 4 + blockBytes.length);
+            buf.putShort((short) rows.size());
+            buf.putInt(blockBytes.length);
+            buf.put(blockBytes);
+            buf.flip();
+            while (buf.hasRemaining()) ch.write(buf);
+            int size = 2 + 4 + blockBytes.length;
+            return new BlockInfo(startKey, offset, size);
         } finally {
             root.close();
         }

@@ -1,6 +1,7 @@
 package com.minidb.storage.parquet;
 
 import com.minidb.storage.common.PartFormat;
+import java.io.ByteArrayOutputStream;
 import java.io.EOFException;
 import java.io.IOException;
 import java.io.UncheckedIOException;
@@ -71,28 +72,45 @@ public class ParquetPartFormat implements PartFormat {
 
     @Override
     public void write(Path part, VectorSchemaRoot batch) {
-        MessageType parquetSchema = new SchemaConverter().fromArrow(batch.getSchema()).getParquetSchema();
-        SimpleGroupFactory groups = new SimpleGroupFactory(parquetSchema);
         try {
-            ExampleParquetWriter.Builder builder = ExampleParquetWriter.builder(new NioOutputFile(part))
-                    .withType(parquetSchema)
-                    .withCompressionCodec(CompressionCodecName.UNCOMPRESSED);
-            try (org.apache.parquet.hadoop.ParquetWriter<Group> writer = builder.build()) {
-                int rows = batch.getRowCount();
-                List<FieldVector> vectors = batch.getFieldVectors();
-                for (int r = 0; r < rows; r++) {
-                    Group group = groups.newGroup();
-                    for (int c = 0; c < vectors.size(); c++) {
-                        FieldVector vector = vectors.get(c);
-                        if (!vector.isNull(r)) {
-                            writeValue(group, c, r, vector);
-                        }
-                    }
-                    writer.write(group);
-                }
-            }
+            Files.createDirectories(part.getParent());
+            writeInto(new NioOutputFile(part), batch);
         } catch (IOException e) {
             throw new UncheckedIOException(e);
+        }
+    }
+
+    @Override
+    public byte[] writeToBytes(VectorSchemaRoot batch) {
+        ByteArrayOutputFile out = new ByteArrayOutputFile();
+        try {
+            writeInto(out, batch);
+        } catch (IOException e) {
+            throw new UncheckedIOException(e);
+        }
+        return out.toByteArray();
+    }
+
+    /** 把 batch 编码为 parquet 写入给定 OutputFile(文件或内存,见 Nio/ByteArray 实现)。 */
+    private static void writeInto(OutputFile outputFile, VectorSchemaRoot batch) throws IOException {
+        MessageType parquetSchema = new SchemaConverter().fromArrow(batch.getSchema()).getParquetSchema();
+        SimpleGroupFactory groups = new SimpleGroupFactory(parquetSchema);
+        ExampleParquetWriter.Builder builder = ExampleParquetWriter.builder(outputFile)
+                .withType(parquetSchema)
+                .withCompressionCodec(CompressionCodecName.UNCOMPRESSED);
+        try (org.apache.parquet.hadoop.ParquetWriter<Group> writer = builder.build()) {
+            int rows = batch.getRowCount();
+            List<FieldVector> vectors = batch.getFieldVectors();
+            for (int r = 0; r < rows; r++) {
+                Group group = groups.newGroup();
+                for (int c = 0; c < vectors.size(); c++) {
+                    FieldVector vector = vectors.get(c);
+                    if (!vector.isNull(r)) {
+                        writeValue(group, c, r, vector);
+                    }
+                }
+                writer.write(group);
+            }
         }
     }
 
@@ -105,62 +123,78 @@ public class ParquetPartFormat implements PartFormat {
     public VectorSchemaRoot read(Path part, Schema schema, BufferAllocator allocator,
                                    int[] projectedColumns) {
         try (ParquetFileReader reader = openReader(part)) {
-            MessageType parquetSchema = reader.getFooter().getFileMetaData().getSchema();
-            // 列裁剪:构建投影 schema 和 Parquet 列路径
-            Schema projSchema;
-            java.util.List<String> columnPaths;
-            if (projectedColumns == null || projectedColumns.length == schema.getFields().size()) {
-                projSchema = schema;
-                columnPaths = null; // 全量读
-            } else {
-                java.util.List<org.apache.arrow.vector.types.pojo.Field> projFields = new java.util.ArrayList<>();
-                columnPaths = new java.util.ArrayList<>();
-                for (int col : projectedColumns) {
-                    projFields.add(schema.getFields().get(col));
-                    columnPaths.add(schema.getFields().get(col).getName());
-                }
-                projSchema = new Schema(projFields, schema.getCustomMetadata());
-            }
-            MessageColumnIO columnIO;
-            if (columnPaths == null) {
-                columnIO = new ColumnIOFactory().getColumnIO(parquetSchema, parquetSchema);
-            } else {
-                java.util.List<org.apache.parquet.schema.Type> projParquetFields = new java.util.ArrayList<>();
-                for (String col : columnPaths) {
-                    projParquetFields.add(parquetSchema.getType(col));
-                }
-                MessageType projParquet = new MessageType(parquetSchema.getName(), projParquetFields);
-                columnIO = new ColumnIOFactory().getColumnIO(projParquet, parquetSchema);
-            }
-            VectorSchemaRoot root = VectorSchemaRoot.create(projSchema, allocator);
-            root.allocateNew();
-            int dst = 0;
-            PageReadStore pages;
-            java.util.List<FieldVector> vectors = root.getFieldVectors();
-            int outCols = vectors.size();
-            while ((pages = reader.readNextRowGroup()) != null) {
-                RecordReader<Group> recordReader =
-                        columnIO.getRecordReader(pages, new GroupRecordConverter(parquetSchema));
-                int rows = (int) pages.getRowCount();
-                for (int r = 0; r < rows; r++) {
-                    Group group = recordReader.read();
-                    for (int c = 0; c < outCols; c++) {
-                        int parquetCol = projectedColumns == null ? c : projectedColumns[c];
-                        // 列裁剪时 Group 索引是投影后的位置(c),不是原列索引(parquetCol)
-                        int groupCol = projectedColumns == null ? c : c;
-                        if (parquetCol < parquetSchema.getFieldCount()
-                                && group.getFieldRepetitionCount(groupCol) > 0) {
-                            readValue(vectors.get(c), dst + r, group, groupCol);
-                        }
-                    }
-                }
-                dst += rows;
-            }
-            root.setRowCount(dst);
-            return root;
+            return readAll(reader, schema, allocator, projectedColumns);
         } catch (IOException e) {
             throw new UncheckedIOException(e);
         }
+    }
+
+    @Override
+    public VectorSchemaRoot read(byte[] data, Schema schema, BufferAllocator allocator) {
+        try (ParquetFileReader reader = ParquetFileReader.open(
+                new ByteArrayInputFile(data), options())) {
+            return readAll(reader, schema, allocator, null);
+        } catch (IOException e) {
+            throw new UncheckedIOException(e);
+        }
+    }
+
+    /** 从已打开的 reader 读全部行组为一个 batch(列裁剪见 projectedColumns)。 */
+    private VectorSchemaRoot readAll(ParquetFileReader reader, Schema schema,
+                                     BufferAllocator allocator, int[] projectedColumns) throws IOException {
+        MessageType parquetSchema = reader.getFooter().getFileMetaData().getSchema();
+        // 列裁剪:构建投影 schema 和 Parquet 列路径
+        Schema projSchema;
+        java.util.List<String> columnPaths;
+        if (projectedColumns == null || projectedColumns.length == schema.getFields().size()) {
+            projSchema = schema;
+            columnPaths = null; // 全量读
+        } else {
+            java.util.List<org.apache.arrow.vector.types.pojo.Field> projFields = new java.util.ArrayList<>();
+            columnPaths = new java.util.ArrayList<>();
+            for (int col : projectedColumns) {
+                projFields.add(schema.getFields().get(col));
+                columnPaths.add(schema.getFields().get(col).getName());
+            }
+            projSchema = new Schema(projFields, schema.getCustomMetadata());
+        }
+        MessageColumnIO columnIO;
+        if (columnPaths == null) {
+            columnIO = new ColumnIOFactory().getColumnIO(parquetSchema, parquetSchema);
+        } else {
+            java.util.List<org.apache.parquet.schema.Type> projParquetFields = new java.util.ArrayList<>();
+            for (String col : columnPaths) {
+                projParquetFields.add(parquetSchema.getType(col));
+            }
+            MessageType projParquet = new MessageType(parquetSchema.getName(), projParquetFields);
+            columnIO = new ColumnIOFactory().getColumnIO(projParquet, parquetSchema);
+        }
+        VectorSchemaRoot root = VectorSchemaRoot.create(projSchema, allocator);
+        root.allocateNew();
+        int dst = 0;
+        PageReadStore pages;
+        java.util.List<FieldVector> vectors = root.getFieldVectors();
+        int outCols = vectors.size();
+        while ((pages = reader.readNextRowGroup()) != null) {
+            RecordReader<Group> recordReader =
+                    columnIO.getRecordReader(pages, new GroupRecordConverter(parquetSchema));
+            int rows = (int) pages.getRowCount();
+            for (int r = 0; r < rows; r++) {
+                Group group = recordReader.read();
+                for (int c = 0; c < outCols; c++) {
+                    int parquetCol = projectedColumns == null ? c : projectedColumns[c];
+                    // 列裁剪时 Group 索引是投影后的位置(c),不是原列索引(parquetCol)
+                    int groupCol = projectedColumns == null ? c : c;
+                    if (parquetCol < parquetSchema.getFieldCount()
+                            && group.getFieldRepetitionCount(groupCol) > 0) {
+                        readValue(vectors.get(c), dst + r, group, groupCol);
+                    }
+                }
+            }
+            dst += rows;
+        }
+        root.setRowCount(dst);
+        return root;
     }
 
     @Override
@@ -179,8 +213,11 @@ public class ParquetPartFormat implements PartFormat {
      * 重新拖回 hadoop-* 依赖。PlainParquetConfiguration 全程 Hadoop-free。
      */
     private static ParquetFileReader openReader(Path part) throws IOException {
-        ParquetReadOptions options = ParquetReadOptions.builder(new PlainParquetConfiguration()).build();
-        return ParquetFileReader.open(new NioInputFile(part), options);
+        return ParquetFileReader.open(new NioInputFile(part), options());
+    }
+
+    private static ParquetReadOptions options() {
+        return ParquetReadOptions.builder(new PlainParquetConfiguration()).build();
     }
 
     private static void writeValue(Group group, int col, int row, FieldVector vector) {
@@ -413,6 +450,156 @@ public class ParquetPartFormat implements PartFormat {
         @Override
         public void close() throws IOException {
             channel.close();
+        }
+    }
+
+    // ---- 内存版 InputFile/OutputFile:块级编解码不落盘(SSTable 块读写) ----
+
+    private static final class ByteArrayInputFile implements InputFile {
+        private final byte[] data;
+
+        ByteArrayInputFile(byte[] data) {
+            this.data = data;
+        }
+
+        @Override
+        public long getLength() {
+            return data.length;
+        }
+
+        @Override
+        public SeekableInputStream newStream() {
+            return new ByteArraySeekableInputStream(data);
+        }
+    }
+
+    private static final class ByteArraySeekableInputStream extends SeekableInputStream {
+        private final byte[] data;
+        private int pos;
+
+        ByteArraySeekableInputStream(byte[] data) {
+            this.data = data;
+        }
+
+        @Override
+        public long getPos() {
+            return pos;
+        }
+
+        @Override
+        public void seek(long newPos) {
+            this.pos = (int) newPos;
+        }
+
+        @Override
+        public int read() {
+            return pos < data.length ? data[pos++] & 0xFF : -1;
+        }
+
+        @Override
+        public int read(byte[] b, int off, int len) {
+            if (pos >= data.length) {
+                return -1;
+            }
+            int n = Math.min(len, data.length - pos);
+            System.arraycopy(data, pos, b, off, n);
+            pos += n;
+            return n;
+        }
+
+        @Override
+        public int read(ByteBuffer buf) {
+            int n = Math.min(buf.remaining(), data.length - pos);
+            if (n <= 0) {
+                return -1;
+            }
+            buf.put(data, pos, n);
+            pos += n;
+            return n;
+        }
+
+        @Override
+        public void readFully(byte[] b) {
+            readFully(b, 0, b.length);
+        }
+
+        @Override
+        public void readFully(byte[] b, int off, int len) {
+            if (pos + len > data.length) {
+                throw new IllegalStateException("readFully past end of in-memory data");
+            }
+            System.arraycopy(data, pos, b, off, len);
+            pos += len;
+        }
+
+        @Override
+        public void readFully(ByteBuffer buf) {
+            if (pos + buf.remaining() > data.length) {
+                throw new IllegalStateException("readFully past end of in-memory data");
+            }
+            buf.put(data, pos, buf.remaining());
+            pos += buf.remaining();
+        }
+
+        @Override
+        public void close() {
+            // 内存数据,无需释放
+        }
+    }
+
+    private static final class ByteArrayOutputFile implements OutputFile {
+        private final ByteArrayOutputStream buf = new ByteArrayOutputStream();
+
+        byte[] toByteArray() {
+            return buf.toByteArray();
+        }
+
+        @Override
+        public PositionOutputStream create(long blockSizeHint) {
+            return createOrOverwrite(blockSizeHint);
+        }
+
+        @Override
+        public PositionOutputStream createOrOverwrite(long blockSizeHint) {
+            return new ByteArrayPositionOutputStream(buf);
+        }
+
+        @Override
+        public boolean supportsBlockSize() {
+            return false;
+        }
+
+        @Override
+        public long defaultBlockSize() {
+            return 0;
+        }
+    }
+
+    private static final class ByteArrayPositionOutputStream extends PositionOutputStream {
+        private final ByteArrayOutputStream out;
+
+        ByteArrayPositionOutputStream(ByteArrayOutputStream out) {
+            this.out = out;
+        }
+
+        @Override
+        public long getPos() {
+            return out.size();
+        }
+
+        @Override
+        public void write(int b) {
+            out.write(b);
+        }
+
+        @Override
+        public void write(byte[] b, int off, int len) {
+            out.write(b, off, len);
+        }
+
+        @Override
+        public void close() {
+            // 不关闭底层缓冲(writeToBytes 调用方在 toByteArray 后统一处理)
         }
     }
 }

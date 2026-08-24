@@ -104,7 +104,17 @@ public class SSTableReader implements AutoCloseable {
     public BatchIterator scan() {
         return new BatchIterator() {
             int idx = 0;
+            // 文件句柄整个扫描只开一次,块间靠 position 定位(原实现每块重开文件)
+            final FileChannel channel;
             final List<VectorSchemaRoot> read = new ArrayList<>();
+
+            {
+                try {
+                    this.channel = FileChannel.open(file, StandardOpenOption.READ);
+                } catch (IOException e) {
+                    throw new UncheckedIOException(e);
+                }
+            }
 
             @Override
             public boolean hasNext() {
@@ -115,23 +125,18 @@ public class SSTableReader implements AutoCloseable {
             public VectorSchemaRoot next() {
                 BlockIndex bi = blockIndex.get(idx++);
                 try {
-                    FileChannel ch = FileChannel.open(file, StandardOpenOption.READ);
                     ByteBuffer header = ByteBuffer.allocate(6);
-                    ch.position(bi.offset);
-                    readFully(ch, header);
+                    channel.position(bi.offset);
+                    readFully(channel, header);
                     header.flip();
                     int rows = Short.toUnsignedInt(header.getShort());
                     int dataLen = header.getInt();
                     ByteBuffer data = ByteBuffer.allocate(dataLen);
-                    readFully(ch, data);
-                    ch.close();
+                    readFully(channel, data);
 
-                    // 写临时文件，用 PartFormat 读回
-                    Path tmp = Files.createTempFile("sstblock", ".tmp");
-                    Files.write(tmp, data.array());
-                    VectorSchemaRoot root = format.read(tmp,
+                    // 块字节直接内存解码,不落临时文件(format.read(byte[]) 内存读)
+                    VectorSchemaRoot root = format.read(data.array(),
                             ArrowTypes.arrowSchema(schema), allocator);
-                    Files.deleteIfExists(tmp);
                     read.add(root);
                     return root;
                 } catch (IOException e) {
@@ -141,6 +146,11 @@ public class SSTableReader implements AutoCloseable {
 
             @Override
             public void close() {
+                try {
+                    channel.close();
+                } catch (IOException e) {
+                    throw new UncheckedIOException(e);
+                }
                 for (VectorSchemaRoot batch : read) {
                     batch.close();
                 }

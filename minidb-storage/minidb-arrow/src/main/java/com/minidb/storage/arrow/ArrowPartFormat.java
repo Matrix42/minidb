@@ -1,10 +1,12 @@
 package com.minidb.storage.arrow;
 
 import com.minidb.storage.common.PartFormat;
+import java.io.ByteArrayOutputStream;
 import java.io.EOFException;
 import java.io.IOException;
 import java.io.UncheckedIOException;
 import java.nio.ByteBuffer;
+import java.nio.channels.Channels;
 import java.nio.channels.SeekableByteChannel;
 import java.nio.file.Files;
 import java.nio.file.Path;
@@ -17,6 +19,7 @@ import org.apache.arrow.vector.ipc.ArrowFileReader;
 import org.apache.arrow.vector.ipc.ArrowFileWriter;
 import org.apache.arrow.vector.ipc.message.ArrowBlock;
 import org.apache.arrow.vector.ipc.message.MessageSerializer;
+import org.apache.arrow.vector.util.ByteArrayReadableSeekableByteChannel;
 
 /** Arrow IPC 文件格式的 part 读写。 */
 public class ArrowPartFormat implements PartFormat {
@@ -74,6 +77,47 @@ public class ArrowPartFormat implements PartFormat {
                     for (int c = 0; c < outCols; c++) {
                         int srcCol = cols == null ? c : cols[c];
                         out.getVector(c).copyFromSafe(i, dst + i, src.getVector(srcCol));
+                    }
+                }
+                dst += batchRows;
+            }
+            out.setRowCount(dst);
+            return out;
+        } catch (IOException e) {
+            throw new UncheckedIOException(e);
+        }
+    }
+
+    @Override
+    public byte[] writeToBytes(VectorSchemaRoot batch) {
+        try {
+            ByteArrayOutputStream out = new ByteArrayOutputStream();
+            try (ArrowFileWriter writer = new ArrowFileWriter(batch, null,
+                    Channels.newChannel(out))) {
+                writer.start();
+                writer.writeBatch();
+                writer.end();
+            }
+            return out.toByteArray();
+        } catch (IOException e) {
+            throw new UncheckedIOException(e);
+        }
+    }
+
+    @Override
+    public VectorSchemaRoot read(byte[] data, org.apache.arrow.vector.types.pojo.Schema schema,
+                                 BufferAllocator allocator) {
+        try (SeekableByteChannel channel = new ByteArrayReadableSeekableByteChannel(data);
+             ArrowFileReader reader = new ArrowFileReader(channel, allocator)) {
+            VectorSchemaRoot src = reader.getVectorSchemaRoot();
+            VectorSchemaRoot out = VectorSchemaRoot.create(schema, allocator);
+            out.allocateNew();
+            int dst = 0;
+            while (reader.loadNextBatch()) {
+                int batchRows = src.getRowCount();
+                for (int i = 0; i < batchRows; i++) {
+                    for (int c = 0; c < src.getFieldVectors().size(); c++) {
+                        out.getVector(c).copyFromSafe(i, dst + i, src.getVector(c));
                     }
                 }
                 dst += batchRows;
