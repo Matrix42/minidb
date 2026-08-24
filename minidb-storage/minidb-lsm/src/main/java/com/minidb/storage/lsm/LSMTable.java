@@ -107,6 +107,12 @@ public class LSMTable implements TableHandle {
     }
 
     @Override
+    public BatchIterator scan(List<Object> rangeLo, List<Object> rangeHi) {
+        return new MergeIterator(memTable, sstManager, schema, format, allocator,
+                rangeLo, rangeHi).scan();
+    }
+
+    @Override
     public void writePart(VectorSchemaRoot batch, Operation op) {
         byte kind = switch (op) {
             case INSERT -> RowValue.INSERT;

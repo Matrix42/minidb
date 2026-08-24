@@ -203,6 +203,75 @@ class PointLookupTest {
         }
     }
 
+    @Test
+    void rangePredicateStillCorrect() {
+        executor.execute("CREATE TABLE t (id INTEGER NOT NULL PRIMARY KEY, name VARCHAR)");
+        executor.execute("INSERT INTO t VALUES (1, 'a'), (2, 'b'), (3, 'c'), (4, 'd')");
+        assertEquals(List.of("b", "c", "d"),
+                rows(executor, "SELECT name FROM t WHERE id > 1 ORDER BY id"));
+        assertEquals(List.of("a", "b", "c"),
+                rows(executor, "SELECT name FROM t WHERE id < 4 ORDER BY id"));
+        assertEquals(List.of("b", "c"),
+                rows(executor, "SELECT name FROM t WHERE id >= 2 AND id <= 3 ORDER BY id"));
+        assertEquals(List.of("b", "c", "d"),
+                rows(executor, "SELECT name FROM t WHERE 1 < id ORDER BY id")); // 反序字面量
+        assertEquals(List.of("b", "c"),
+                rows(executor, "SELECT name FROM t WHERE id BETWEEN 2 AND 3 ORDER BY id"));
+        // 范围 + 残留条件(非主键)
+        assertEquals(List.of("d"),
+                rows(executor, "SELECT name FROM t WHERE id > 2 AND name = 'd'"));
+        // 空范围
+        assertEquals(List.of(), rows(executor, "SELECT name FROM t WHERE id > 3 AND id < 2"));
+    }
+
+    @Test
+    void compositePkRangeOnPrefix() {
+        executor.execute("CREATE TABLE t (a INTEGER NOT NULL, b INTEGER NOT NULL, "
+                + "name VARCHAR, PRIMARY KEY (a, b))");
+        executor.execute("INSERT INTO t VALUES (1, 1, 'x'), (1, 2, 'y'), (2, 1, 'z'), (3, 1, 'w')");
+        // 前缀范围(a 有界)→ 裁剪
+        assertEquals(List.of("z", "w"),
+                rows(executor, "SELECT name FROM t WHERE a > 1 ORDER BY a"));
+        assertEquals(List.of("y"),
+                rows(executor, "SELECT name FROM t WHERE a = 1 AND b > 1"));
+        // 非前缀范围(b 无前缀单调)→ 回退扫描,结果仍正确
+        assertEquals(List.of("y"),
+                rows(executor, "SELECT name FROM t WHERE b > 1"));
+    }
+
+    @Test
+    void explainAnalyzeRangeReadsFewerBlocks() throws Exception {
+        // 复用多 block 表(小 memtable 阈值触发 flush):范围查询只读相交块。
+        Files.writeString(dataDir.resolve("config.yaml"), "lsm:\n  memtable-size-mb: 1\n");
+        MiniDbCatalog catalog2 = new MiniDbCatalog();
+        StorageManager storage2 = new StorageManager(catalog2, allocator, dataDir);
+        try {
+            QueryExecutor executor2 = new QueryExecutor(catalog2, storage2, allocator,
+                    new StatsManager(storage2));
+            executor2.execute("CREATE TABLE t (id INTEGER NOT NULL PRIMARY KEY, name VARCHAR)");
+            StringBuilder sb = new StringBuilder("INSERT INTO t VALUES ");
+            for (int i = 1; i <= 20000; i++) {
+                if (i > 1) sb.append(", ");
+                sb.append('(').append(i).append(", 'name-").append(i).append('-')
+                        .append("xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx')");
+            }
+            executor2.execute(sb.toString());
+            ExplainExecutor explain2 = new ExplainExecutor(new Planner(catalog2),
+                    new StatsManager(storage2), storage2, allocator);
+
+            int fullRange = scanBatches(explain2, "SELECT * FROM t WHERE id > 0");
+            int narrow = scanBatches(explain2, "SELECT * FROM t WHERE id BETWEEN 15000 AND 15010");
+            // batches 是 MergeIterator 按 4096 行/批的输出批数:全范围 20000 行
+            // → 5 批,窄范围 11 行 → 1 批(块裁剪让 IO 只读相交块,单元级见
+            // SSTableTest.rangeScanReadsOnlyIntersectingBlocks)。
+            assertEquals(1, narrow, "窄范围应只有 1 批,实际 " + narrow);
+            assertTrue(narrow < fullRange,
+                    "窄范围批数应少于全范围: " + narrow + " vs " + fullRange);
+        } finally {
+            storage2.close();
+        }
+    }
+
     private static int scanBatches(ExplainExecutor explain, String sql) {
         QueryResult r = explain.analyze(sql);
         VectorSchemaRoot root = ((QueryResult.Rows) r).data();

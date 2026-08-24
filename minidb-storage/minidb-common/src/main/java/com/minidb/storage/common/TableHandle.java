@@ -12,6 +12,14 @@ public interface TableHandle extends AutoCloseable {
     default BatchIterator scan(int[] projectedColumns) {
         return scan();
     }
+
+    /**
+     * 主键范围扫描:只返回主键在闭区间 [rangeLo, rangeHi] 内的行(元素 null = 该列无界)。
+     * 默认回退全量扫描;LSM 表覆写以利用文件 min/max 与块索引 startKey 裁剪。
+     */
+    default BatchIterator scan(List<Object> rangeLo, List<Object> rangeHi) {
+        return scan();
+    }
     void writePart(VectorSchemaRoot batch, Operation op);
     long rowCount();
     int partCount();

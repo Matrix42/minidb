@@ -18,15 +18,28 @@ public class MergeIterator {
     private final TableSchema schema;
     private final PartFormat format;
     private final BufferAllocator allocator;
+    // 主键范围裁剪:null = 无界。只读与 [rangeLo, rangeHi] 相交的文件/块
+    // (超集语义,行级过滤由调用方按原条件做)。
+    private final List<Object> rangeLo;
+    private final List<Object> rangeHi;
 
     public MergeIterator(MemTable memTable, SSTableManager sstManager,
                          TableSchema schema, PartFormat format,
                          BufferAllocator allocator) {
+        this(memTable, sstManager, schema, format, allocator, null, null);
+    }
+
+    public MergeIterator(MemTable memTable, SSTableManager sstManager,
+                         TableSchema schema, PartFormat format,
+                         BufferAllocator allocator,
+                         List<Object> rangeLo, List<Object> rangeHi) {
         this.memTable = memTable;
         this.sstManager = sstManager;
         this.schema = schema;
         this.format = format;
         this.allocator = allocator;
+        this.rangeLo = rangeLo;
+        this.rangeHi = rangeHi;
     }
 
     public BatchIterator scan() {
@@ -69,6 +82,10 @@ public class MergeIterator {
             // keySet 迭代序号更确定——CHM 的迭代序不保证升序，而 level 即优先级语义）。
             int idx = 1;
             for (SSTable sst : sstFiles) {
+                // 文件级裁剪:与查询范围不相交的文件直接跳过(块级裁剪在 reader 内)
+                if (!overlapsRange(sst)) {
+                    continue;
+                }
                 SSTableReader reader = new SSTableReader(sst.file(), schema, format, allocator);
                 readers.add(reader);
                 // 读该 SSTable 的所有行到一个 list（简化实现，后续可优化为流式）
@@ -217,9 +234,16 @@ public class MergeIterator {
             return sa.seq > sb.seq;
         }
 
+        /** 文件与查询范围 [rangeLo, rangeHi] 相交 ⟺ minKey <= hi && maxKey >= lo。 */
+        private boolean overlapsRange(SSTable sst) {
+            return SSTableReader.keyLte(sst.minKey(), rangeHi)
+                    && SSTableReader.keyGte(sst.maxKey(), rangeLo);
+        }
+
         private List<Map.Entry<List<Object>, RowValue>> materializeSST(SSTableReader reader) {
             List<Map.Entry<List<Object>, RowValue>> rows = new ArrayList<>();
-            BatchIterator it = reader.scan();
+            BatchIterator it = rangeLo == null && rangeHi == null
+                    ? reader.scan() : reader.scan(rangeLo, rangeHi);
             while (it.hasNext()) {
                 VectorSchemaRoot batch = it.next();
                 for (int i = 0; i < batch.getRowCount(); i++) {

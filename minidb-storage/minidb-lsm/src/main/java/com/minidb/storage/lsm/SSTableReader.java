@@ -102,8 +102,132 @@ public class SSTableReader implements AutoCloseable {
     }
 
     public BatchIterator scan() {
+        return scanWindow(0, blockIndex.size() - 1);
+    }
+
+    /**
+     * 范围扫描:只读与闭区间 [rangeLo, rangeHi] 相交的 block(块索引 startKey 二分裁剪)。
+     * 块内行不过滤(超集语义,调用方按原条件过滤);lo/hi 元素为 null 表示该列无界。
+     */
+    public BatchIterator scan(List<Object> rangeLo, List<Object> rangeHi) {
+        // 块 i 的 key 范围 = [startKey[i], startKey[i+1])(最后一块上界 +∞),
+        // 与 [lo, hi] 相交 ⟺ startKey[i] <= hi && (i 是最后一块 || startKey[i+1] > lo)。
+        int last = lastBlockIndex(rangeHi);
+        if (last < 0) {
+            return scanWindow(0, -1); // 空窗口
+        }
+        int first = firstBlockIndex(rangeLo);
+        return scanWindow(Math.min(first, last), last);
+    }
+
+    /** 最大块下标 last:startKey[last] <= hi;hi 无界或所有块都在 hi 前时为最后一块,所有块都在 hi 后时为 -1。 */
+    private int lastBlockIndex(List<Object> hi) {
+        int lo = 0;
+        int hiIdx = blockIndex.size();
+        while (lo < hiIdx) {
+            int mid = (lo + hiIdx) >>> 1;
+            if (keyLte(blockIndex.get(mid).startKey(), hi)) {
+                lo = mid + 1;
+            } else {
+                hiIdx = mid;
+            }
+        }
+        return lo - 1;
+    }
+
+    /** 第一个相交块下标:最小的 i 使 i 是最后一块或 startKey[i+1] > lo。 */
+    private int firstBlockIndex(List<Object> lo) {
+        // p = 最小 j ∈ [1, n] 使 startKey[j] > lo(最后一块之后视为 +∞);first = p - 1
+        int loIdx = 1;
+        int hiIdx = blockIndex.size();
+        while (loIdx < hiIdx) {
+            int mid = (loIdx + hiIdx) >>> 1;
+            if (keyGt(blockIndex.get(mid).startKey(), lo)) {
+                hiIdx = mid;
+            } else {
+                loIdx = mid + 1;
+            }
+        }
+        return loIdx - 1;
+    }
+
+    /** key <= hi;hi 为 null 或元素为 null(该列无上界)时恒成立。 */
+    static boolean keyLte(List<Object> key, List<Object> hi) {
+        if (hi == null) {
+            return true;
+        }
+        for (int i = 0; i < hi.size(); i++) {
+            Object b = hi.get(i);
+            if (b == null) {
+                return true;
+            }
+            int cmp = cmpElement(key.get(i), b);
+            if (cmp < 0) {
+                return true;
+            }
+            if (cmp > 0) {
+                return false;
+            }
+        }
+        return true;
+    }
+
+    /** key >= lo;lo 为 null 或元素为 null(该列无下界)时恒成立。 */
+    static boolean keyGte(List<Object> key, List<Object> lo) {
+        if (lo == null) {
+            return true;
+        }
+        for (int i = 0; i < lo.size(); i++) {
+            Object b = lo.get(i);
+            if (b == null) {
+                return true;
+            }
+            int cmp = cmpElement(key.get(i), b);
+            if (cmp > 0) {
+                return true;
+            }
+            if (cmp < 0) {
+                return false;
+            }
+        }
+        return true;
+    }
+
+    /** key > lo(严格);lo 为 null 或元素为 null 时恒成立。 */
+    static boolean keyGt(List<Object> key, List<Object> lo) {
+        if (lo == null) {
+            return true;
+        }
+        for (int i = 0; i < lo.size(); i++) {
+            Object b = lo.get(i);
+            if (b == null) {
+                return true;
+            }
+            int cmp = cmpElement(key.get(i), b);
+            if (cmp > 0) {
+                return true;
+            }
+            if (cmp < 0) {
+                return false;
+            }
+        }
+        return false; // key == lo
+    }
+
+    /** 与 {@code SSTable.CMP} 同语义:Number 按 long 值比较,其余按 raw Comparable。 */
+    private static int cmpElement(Object a, Object b) {
+        if (a instanceof Number an && b instanceof Number bn) {
+            return Long.compare(an.longValue(), bn.longValue());
+        }
+        @SuppressWarnings({"unchecked", "rawtypes"})
+        int cmp = ((Comparable) a).compareTo(b);
+        return cmp;
+    }
+
+    /** 只读 [first, last] 块区间的扫描迭代器(空窗口 last < first 时无输出)。 */
+    private BatchIterator scanWindow(int first, int last) {
         return new BatchIterator() {
-            int idx = 0;
+            int idx = first;
             // 文件句柄整个扫描只开一次,块间靠 position 定位(原实现每块重开文件)
             final FileChannel channel;
             final List<VectorSchemaRoot> read = new ArrayList<>();
@@ -118,7 +242,7 @@ public class SSTableReader implements AutoCloseable {
 
             @Override
             public boolean hasNext() {
-                return idx < blockIndex.size();
+                return idx <= last;
             }
 
             @Override

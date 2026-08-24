@@ -124,6 +124,12 @@ public class MiniDbScan extends TableScan implements MiniDbRel {
             if (lookup != null) {
                 return pointLookup(tableHandle, lookup, ctx);
             }
+            // 范围裁剪:WHERE pk > X AND pk < Y 只读相交的 SSTable 文件/块
+            // (超集语义,区间外行由 pushedFilter 逐行过滤兜底)。
+            RangeBounds range = RangeBounds.extract(pushedFilter, tableHandle.schema());
+            if (range != null) {
+                return applyPushdown(tableHandle.scan(range.lo, range.hi), ctx);
+            }
         }
         return applyPushdown(
                     projectedColumns != null
@@ -193,6 +199,31 @@ public class MiniDbScan extends TableScan implements MiniDbRel {
         }
         root.setRowCount(rows.size());
         return root;
+    }
+
+    /** AND 链拆成级联;其余节点原样。 */
+    private static void splitConjuncts(RexNode node, List<RexNode> out) {
+        if (node instanceof RexCall call && call.getKind() == SqlKind.AND) {
+            for (RexNode o : call.getOperands()) {
+                splitConjuncts(o, out);
+            }
+        } else {
+            out.add(node);
+        }
+    }
+
+    /** 整数型字面量取数值(INT→Integer、BIGINT→Long);非整数型返回 null(回退扫描)。 */
+    private static Object numericLiteralValue(RexLiteral lit) {
+        SqlTypeName tn = lit.getTypeName();
+        if (tn != SqlTypeName.TINYINT && tn != SqlTypeName.SMALLINT
+                && tn != SqlTypeName.INTEGER && tn != SqlTypeName.BIGINT) {
+            return null;
+        }
+        Object v = lit.getValueAs(Number.class);
+        if (v == null) {
+            return null;
+        }
+        return tn == SqlTypeName.BIGINT ? ((Number) v).longValue() : ((Number) v).intValue();
     }
 
     /**
@@ -476,20 +507,10 @@ public class MiniDbScan extends TableScan implements MiniDbRel {
             }
         }
 
-        /** AND 链拆成级联;其余节点原样。 */
-        private static void splitConjuncts(RexNode node, List<RexNode> out) {
-            if (node instanceof RexCall call && call.getKind() == SqlKind.AND) {
-                for (RexNode o : call.getOperands()) {
-                    splitConjuncts(o, out);
-                }
-            } else {
-                out.add(node);
-            }
-        }
-
         /**
          * 提取「单列绑定值集」:单等值、SEARCH 点集(IN)、同列等值 OR 链。
          * 含范围/多列 OR/非等值 → 返回 null(留给 residual)。
+         * (splitConjuncts/numericLiteralValue 与外层共用)。
          */
         private static BoundVals boundValues(RexNode node) {
             BoundEq eq = boundEquality(node);
@@ -558,20 +579,6 @@ public class MiniDbScan extends TableScan implements MiniDbRel {
             return value == null ? null : new BoundEq(ref.getIndex(), value);
         }
 
-        /** 整数型字面量取数值(INT→Integer、BIGINT→Long);非整数型返回 null(回退扫描)。 */
-        private static Object numericLiteralValue(RexLiteral lit) {
-            SqlTypeName tn = lit.getTypeName();
-            if (tn != SqlTypeName.TINYINT && tn != SqlTypeName.SMALLINT
-                    && tn != SqlTypeName.INTEGER && tn != SqlTypeName.BIGINT) {
-                return null;
-            }
-            Object v = lit.getValueAs(Number.class);
-            if (v == null) {
-                return null;
-            }
-            return tn == SqlTypeName.BIGINT ? ((Number) v).longValue() : ((Number) v).intValue();
-        }
-
         /** Sarg 点值 → Integer/Long;非数值返回 null。 */
         private static Object pointValue(Object point) {
             if (!(point instanceof Number n)) {
@@ -599,5 +606,153 @@ public class MiniDbScan extends TableScan implements MiniDbRel {
 
     /** 单列的绑定值集(等值/IN 点集/OR 链):列索引 + 候选值列表。 */
     private record BoundVals(int colIndex, List<Object> values) {
+    }
+
+    /**
+     * 主键范围裁剪:从下推 filter 提取主键序上的闭区间 [lo, hi](元素 null = 该列无界),
+     * 只读与区间相交的 SSTable 文件/块(超集语义:区间外行由原条件 residual 过滤,
+     * 正确性不依赖本裁剪)。约束按主键列顺序消费:每列取等值(优先,与范围并存时以
+     * 等值为准,范围由 residual 兜底)或下/上界的最大/最小值;遇到无约束列即停止
+     * (后续列的约束无法表示为前缀区间)。仅 INTEGER/BIGINT 主键(与点查同因:
+     * 块索引零填充编码只对 Integer/Long 保序)。
+     */
+    private static final class RangeBounds {
+        final List<Object> lo;
+        final List<Object> hi;
+
+        private RangeBounds(List<Object> lo, List<Object> hi) {
+            this.lo = lo;
+            this.hi = hi;
+        }
+
+        static RangeBounds extract(RexNode filter, TableSchema schema) {
+            List<String> pk = schema.primaryKey();
+            if (pk.isEmpty() || filter == null) {
+                return null;
+            }
+            for (String col : pk) {
+                ColumnType t = schema.column(col).type();
+                if (t != ColumnType.INTEGER && t != ColumnType.BIGINT) {
+                    return null;
+                }
+            }
+            List<RexNode> conjuncts = new ArrayList<>();
+            splitConjuncts(filter, conjuncts);
+            List<Object> lo = new ArrayList<>(java.util.Collections.nCopies(pk.size(), null));
+            List<Object> hi = new ArrayList<>(java.util.Collections.nCopies(pk.size(), null));
+            boolean anyBound = false;
+            for (int i = 0; i < pk.size(); i++) {
+                int colIdx = schema.columnIndex(pk.get(i));
+                Object lower = null;
+                Object upper = null;
+                // 等值优先:该列若有等值,范围约束并入 residual(与等值矛盾时由 residual 兜底)
+                for (RexNode c : conjuncts) {
+                    BoundCmp bc = boundComparison(c);
+                    if (bc != null && bc.colIndex == colIdx && bc.kind == SqlKind.EQUALS) {
+                        lower = upper = bc.value;
+                        break;
+                    }
+                }
+                if (lower == null) {
+                    for (RexNode c : conjuncts) {
+                        BoundCmp bc = boundComparison(c);
+                        if (bc == null || bc.colIndex != colIdx) {
+                            continue;
+                        }
+                        switch (bc.kind) {
+                            case GREATER_THAN -> lower = maxBound(lower, inc(bc.value));
+                            case GREATER_THAN_OR_EQUAL -> lower = maxBound(lower, bc.value);
+                            case LESS_THAN -> upper = minBound(upper, dec(bc.value));
+                            case LESS_THAN_OR_EQUAL -> upper = minBound(upper, bc.value);
+                            default -> {
+                            }
+                        }
+                    }
+                }
+                if (lower == null && upper == null) {
+                    break; // 该列无约束:后续列无法用于前缀区间裁剪
+                }
+                lo.set(i, lower);
+                hi.set(i, upper);
+                anyBound = true;
+            }
+            return anyBound ? new RangeBounds(lo, hi) : null;
+        }
+
+        /** 比较条件提取:`col OP literal`(支持反序,规范化为列在前)。返回 null 表示不可用。 */
+        private static BoundCmp boundComparison(RexNode node) {
+            if (!(node instanceof RexCall call)) {
+                return null;
+            }
+            SqlKind kind = call.getKind();
+            RexNode l = call.getOperands().get(0);
+            RexNode r = call.getOperands().get(1);
+            RexInputRef ref;
+            RexLiteral lit;
+            boolean reversed;
+            if (l instanceof RexInputRef a && r instanceof RexLiteral b) {
+                ref = a;
+                lit = b;
+                reversed = false;
+            } else if (l instanceof RexLiteral a && r instanceof RexInputRef b) {
+                ref = b;
+                lit = a;
+                reversed = true;
+            } else {
+                return null;
+            }
+            SqlKind k = switch (kind) {
+                case EQUALS -> SqlKind.EQUALS;
+                case GREATER_THAN -> reversed ? SqlKind.LESS_THAN : SqlKind.GREATER_THAN;
+                case GREATER_THAN_OR_EQUAL -> reversed
+                        ? SqlKind.LESS_THAN_OR_EQUAL : SqlKind.GREATER_THAN_OR_EQUAL;
+                case LESS_THAN -> reversed ? SqlKind.GREATER_THAN : SqlKind.LESS_THAN;
+                case LESS_THAN_OR_EQUAL -> reversed
+                        ? SqlKind.GREATER_THAN_OR_EQUAL : SqlKind.LESS_THAN_OR_EQUAL;
+                default -> null;
+            };
+            if (k == null) {
+                return null;
+            }
+            Object v = numericLiteralValue(lit);
+            if (v == null) {
+                return null;
+            }
+            return new BoundCmp(ref.getIndex(), k, v);
+        }
+
+        private static Object inc(Object v) {
+            return v instanceof Long l ? l + 1 : ((Integer) v) + 1;
+        }
+
+        private static Object dec(Object v) {
+            return v instanceof Long l ? l - 1 : ((Integer) v) - 1;
+        }
+
+        /** 下界取更严格(大)者;null 视为无约束。 */
+        private static Object maxBound(Object a, Object b) {
+            if (a == null) {
+                return b;
+            }
+            if (b == null) {
+                return a;
+            }
+            return ((Number) a).longValue() >= ((Number) b).longValue() ? a : b;
+        }
+
+        /** 上界取更严格(小)者;null 视为无约束。 */
+        private static Object minBound(Object a, Object b) {
+            if (a == null) {
+                return b;
+            }
+            if (b == null) {
+                return a;
+            }
+            return ((Number) a).longValue() <= ((Number) b).longValue() ? a : b;
+        }
+    }
+
+    /** 比较条件:列索引 + 规范化 kind + 数值。 */
+    private record BoundCmp(int colIndex, SqlKind kind, Object value) {
     }
 }

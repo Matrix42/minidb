@@ -113,6 +113,49 @@ class SSTableTest {
     }
 
     @Test
+    void rangeScanReadsOnlyIntersectingBlocks(@TempDir Path dir) throws Exception {
+        // 多块 SSTable:范围扫描(scan(lo, hi))只读与区间相交的块,逐块计数验证。
+        MemTable mt = new MemTable(schema, 1024 * 1024);
+        for (int i = 1; i <= 5000; i++) {
+            mt.put(List.of(i), new RowValue(RowValue.INSERT,
+                    new Object[]{i, "name-" + i + "-" + "x".repeat(60)}));
+        }
+        Path sstFile = dir.resolve("sst-L0-000003.sst");
+        SSTableWriter writer = new SSTableWriter(sstFile, 0, schema,
+                new ArrowPartFormat(), allocator, 10);
+        writer.writeFromMemTable(mt);
+
+        SSTableReader reader = new SSTableReader(sstFile, schema,
+                new ArrowPartFormat(), allocator);
+        try {
+            int blocks = countBlocks(reader.scan());
+            assertTrue(blocks >= 2, "expect multi-block SSTable, got " + blocks);
+
+            // 单点范围:只读包含该 key 的 1 块
+            assertEquals(1, countBlocks(reader.scan(List.of(2500), List.of(2500))));
+            // 窄范围:读 1-2 块(块内行是超集,行级过滤由调用方做)
+            assertTrue(countBlocks(reader.scan(List.of(2500), List.of(2600))) <= 2);
+            // 区间外的范围:0 块
+            assertEquals(0, countBlocks(reader.scan(List.of(-100), List.of(-50))));
+            // 无界上界(lo 有界,hi 全 null):末尾块也相交(最后一块上界 +∞)
+            assertEquals(blocks, countBlocks(reader.scan(List.of(1),
+                    java.util.Collections.singletonList(null))));
+        } finally {
+            reader.close();
+        }
+    }
+
+    private static int countBlocks(BatchIterator it) {
+        int n = 0;
+        while (it.hasNext()) {
+            it.next();
+            n++;
+        }
+        it.close();
+        return n;
+    }
+
+    @Test
     void bloomFilterRejectsMissingKey(@TempDir Path dir) throws Exception {
         MemTable mt = new MemTable(schema, 1024 * 1024);
         mt.put(List.of(1), new RowValue(RowValue.INSERT, new Object[]{1, "a"}));
