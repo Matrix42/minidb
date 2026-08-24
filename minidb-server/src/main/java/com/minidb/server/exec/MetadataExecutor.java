@@ -208,9 +208,13 @@ public class MetadataExecutor {
             }
             bufLen.setSafe(i, 0);
             if (isIntegerType(r.column().type())) numPrecRadix.setSafe(i, 10);
-            nullable.setSafe(i, 1); // columnNullable
+            // 真实可空性:NOT NULL(含主键列,TableSchema 强制)报 columnNoNulls=0 /
+            // IS_NULLABLE="NO",其余列 columnNullable=1 / "YES"。
+            boolean colNullable = Boolean.TRUE.equals(r.column().nullable());
+            nullable.setSafe(i, colNullable ? 1 : 0);
             ordinal.setSafe(i, r.ordinal());
-            isNullable.setSafe(i, "YES".getBytes(java.nio.charset.StandardCharsets.UTF_8));
+            isNullable.setSafe(i, (colNullable ? "YES" : "NO")
+                    .getBytes(java.nio.charset.StandardCharsets.UTF_8));
             isAutoInc.setSafe(i, "NO".getBytes(java.nio.charset.StandardCharsets.UTF_8));
             isGenCol.setSafe(i, "NO".getBytes(java.nio.charset.StandardCharsets.UTF_8));
         }

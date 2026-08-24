@@ -113,4 +113,51 @@ class ConstraintTest {
         assertEquals(ImmutableBitSet.of(1), keys.get(1)); // 唯一 name
         assertTrue(statistic.isKey(ImmutableBitSet.of(0, 2))); // 含主键的列集也是唯一键
     }
+
+    @Test
+    void primaryKeyImpliesNotNull() {
+        // 主键列未显式写 NOT NULL 也强制不可空(SQL 标准)。
+        executor.execute("CREATE TABLE t (id INTEGER PRIMARY KEY, name VARCHAR)");
+        TableSchema schema = catalog.getTable("public", "t");
+        assertEquals(false, schema.column("id").nullable());
+        assertEquals(true, schema.column("name").nullable());
+        executor.execute("INSERT INTO t VALUES (1, 'a')");
+        assertThrows(Exception.class,
+                () -> executor.execute("INSERT INTO t VALUES (NULL, 'x')"));
+    }
+
+    @Test
+    void alterAddPrimaryKeyMakesNotNull() {
+        // 列定义时可空,ADD PRIMARY KEY 后主键列变为 NOT NULL 并拒绝 null。
+        executor.execute("CREATE TABLE t (id INTEGER, name VARCHAR)");
+        executor.execute("ALTER TABLE t ADD PRIMARY KEY (id)");
+        TableSchema schema = catalog.getTable("public", "t");
+        assertEquals(false, schema.column("id").nullable());
+        executor.execute("INSERT INTO t VALUES (1, 'a')");
+        assertThrows(Exception.class,
+                () -> executor.execute("INSERT INTO t VALUES (NULL, 'x')"));
+    }
+
+    @Test
+    void compositePrimaryKeyImpliesNotNull() {
+        executor.execute("CREATE TABLE t (a INTEGER, b INTEGER, PRIMARY KEY (a, b))");
+        TableSchema schema = catalog.getTable("public", "t");
+        assertEquals(false, schema.column("a").nullable());
+        assertEquals(false, schema.column("b").nullable());
+        // 任一主键列为 null 都被拒。
+        assertThrows(Exception.class,
+                () -> executor.execute("INSERT INTO t VALUES (NULL, 1)"));
+        assertThrows(Exception.class,
+                () -> executor.execute("INSERT INTO t VALUES (1, NULL)"));
+    }
+
+    @Test
+    void uniqueConstraintStillAllowsNull() {
+        // 唯一约束不受影响:仍允许多个 NULL(与主键不同)。
+        executor.execute("CREATE TABLE t (id INTEGER UNIQUE, name VARCHAR)");
+        TableSchema schema = catalog.getTable("public", "t");
+        assertEquals(true, schema.column("id").nullable());
+        executor.execute("INSERT INTO t VALUES (NULL, 'a')");
+        executor.execute("INSERT INTO t VALUES (NULL, 'b')");
+    }
 }
