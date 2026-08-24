@@ -681,7 +681,8 @@ public class MiniDbScan extends TableScan implements MiniDbRel {
 
         /** 比较条件提取:`col OP literal`(支持反序,规范化为列在前)。返回 null 表示不可用。 */
         private static BoundCmp boundComparison(RexNode node) {
-            if (!(node instanceof RexCall call)) {
+            if (!(node instanceof RexCall call) || call.getOperands().size() != 2) {
+                // 一元/多参 call(IS NULL、NOT、CAST 等)不是范围比较
                 return null;
             }
             SqlKind kind = call.getKind();

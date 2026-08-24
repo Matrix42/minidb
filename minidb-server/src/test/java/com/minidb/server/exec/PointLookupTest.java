@@ -225,6 +225,35 @@ class PointLookupTest {
     }
 
     @Test
+    void correlatedSubqueryFilterDoesNotBreakRangeExtraction() {
+        // TPC-DS query6 模式:item 相关子查询解相关后 filter 含一元 call
+        // (IS NULL/NOT 等),范围裁剪提取必须忽略它们而不是越界
+        // (回归:RangeBounds.boundComparison 曾对一元 call 取 operands[1] 越界)。
+        executor.execute("CREATE TABLE item (i_item_sk BIGINT NOT NULL PRIMARY KEY, "
+                + "i_category VARCHAR, i_current_price DECIMAL(7,2))");
+        executor.execute("INSERT INTO item VALUES "
+                + "(1, 'A', 10.0), (2, 'A', 20.0), (3, 'B', 5.0), (4, 'B', 100.0)");
+        // A 类 avg=15 → 阈值 18; B 类 avg=52.5 → 阈值 63:命中 2 和 4
+        assertEquals(List.of("2", "4"),
+                rows(executor, "SELECT i_item_sk FROM item i WHERE i.i_current_price > "
+                        + "1.2 * (SELECT avg(j.i_current_price) FROM item j "
+                        + "WHERE j.i_category = i.i_category)"));
+    }
+
+    @Test
+    void scalarSubqueryOnDateDim() {
+        // TPC-DS query6 的另一半:date_dim 标量子查询做月序列等值。
+        executor.execute("CREATE TABLE date_dim (d_date_sk BIGINT NOT NULL PRIMARY KEY, "
+                + "d_month_seq INTEGER, d_year INTEGER, d_moy INTEGER)");
+        executor.execute("INSERT INTO date_dim VALUES "
+                + "(1, 100, 2000, 1), (2, 100, 2000, 2), (3, 200, 2001, 1), (4, 300, 2001, 2)");
+        assertEquals(List.of("2"),
+                rows(executor, "SELECT count(*) FROM date_dim d WHERE d.d_month_seq = "
+                        + "(SELECT distinct d_month_seq FROM date_dim WHERE d_year = 2000 "
+                        + "AND d_moy = 1)"));
+    }
+
+    @Test
     void compositePkRangeOnPrefix() {
         executor.execute("CREATE TABLE t (a INTEGER NOT NULL, b INTEGER NOT NULL, "
                 + "name VARCHAR, PRIMARY KEY (a, b))");
