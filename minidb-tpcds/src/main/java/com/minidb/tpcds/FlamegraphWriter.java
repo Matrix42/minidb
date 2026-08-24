@@ -113,8 +113,8 @@ public class FlamegraphWriter {
                            border-radius: 4px; font-size: 12px; pointer-events: none; }
                 </style>
                 <script src="https://cdn.jsdelivr.net/npm/d3@7"></script>
-                <script src="https://cdn.jsdelivr.net/npm/d3-flame-graph@4"></script>
-                <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/d3-flame-graph@4/dist/d3-flamegraph.css">
+                <script src="https://cdn.jsdelivr.net/npm/d3-flame-graph@4.1.3/dist/d3-flamegraph.min.js"></script>
+                <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/d3-flame-graph@4.1.3/dist/d3-flamegraph.css">
                 </head>
                 <body>
                 <div id="header">
@@ -146,7 +146,7 @@ public class FlamegraphWriter {
                   }
                 }
 
-                const flamegraph = d3.flamegraph()
+                const fg = flamegraph()
                   .width(window.innerWidth - 16)
                   .cellHeight(18)
                   .transitionDuration(500)
@@ -155,17 +155,17 @@ public class FlamegraphWriter {
                   .selfValue(false)
                   .onClick(d => { search(d.data.name); return true; });
 
-                d3.select("#chart").datum(root).call(flamegraph);
+                d3.select("#chart").datum(root).call(fg);
 
                 window.addEventListener("resize", () => {
-                  flamegraph.width(window.innerWidth - 16);
-                  d3.select("#chart").call(flamegraph);
+                  fg.width(window.innerWidth - 16);
+                  d3.select("#chart").call(fg);
                 });
 
                 function search(term) {
                   const lower = term.toLowerCase();
-                  flamegraph.search(lower);
-                  d3.select("#chart").call(flamegraph);
+                  fg.search(lower);
+                  d3.select("#chart").call(fg);
                 }
                 </script>
                 </body>
