@@ -124,12 +124,27 @@ public class FlamegraphWriter {
                 <input id="search" type="text" placeholder="Search methods..." oninput="search(this.value)">
                 <div id="chart"></div>
                 <script>
-                const data = `%s`;
-                const lines = data.trim().split("\\n").filter(l => l);
-                const stackData = lines.map(line => {
+                // 将 folded stack 格式转换为 d3-flame-graph 需要的层级树
+                const raw = `%s`;
+                const root = { name: "root", value: 0, children: [] };
+                const lines = raw.trim().split("\\n").filter(l => l);
+                for (const line of lines) {
                   const lastSpace = line.lastIndexOf(" ");
-                  return { name: line.substring(0, lastSpace), value: +line.substring(lastSpace + 1) };
-                });
+                  const stack = line.substring(0, lastSpace);
+                  const count = +line.substring(lastSpace + 1);
+                  const frames = stack.split(";");
+                  let node = root;
+                  node.value += count;
+                  for (const frame of frames) {
+                    let child = node.children.find(c => c.name === frame);
+                    if (!child) {
+                      child = { name: frame, value: 0, children: [] };
+                      node.children.push(child);
+                    }
+                    child.value += count;
+                    node = child;
+                  }
+                }
 
                 const flamegraph = d3.flamegraph()
                   .width(window.innerWidth - 16)
@@ -140,7 +155,7 @@ public class FlamegraphWriter {
                   .selfValue(false)
                   .onClick(d => { search(d.data.name); return true; });
 
-                d3.select("#chart").datum(stackData).call(flamegraph);
+                d3.select("#chart").datum(root).call(flamegraph);
 
                 window.addEventListener("resize", () => {
                   flamegraph.width(window.innerWidth - 16);
