@@ -38,17 +38,21 @@ public class TpcdsBenchmark {
                 Path dataDir = Path.of(opts.getOrDefault("data-dir", "./data"));
                 Path output = Path.of(opts.getOrDefault("output", "./results/run.json"));
                 String name = opts.getOrDefault("name", null);
-                // --timeout <ms>:单条查询超时,超时记 FAIL 跳过。默认 120000(2分钟),0=不限。
                 long timeoutMs = Long.parseLong(opts.getOrDefault("timeout", "120000"));
+                Path flamegraphOutput = opts.containsKey("flamegraph")
+                        ? Path.of(opts.get("flamegraph"))
+                        : null;
                 TpcdsTemplateParser parser = new TpcdsTemplateParser();
                 Map<String, String> queries = opts.containsKey("query-dir")
                         ? parser.parseAll(Path.of(opts.get("query-dir")), scale)
                         : parser.parseBundled(scale);
                 TpcdsBenchmarkRunner runner = new TpcdsBenchmarkRunner();
                 if (opts.containsKey("direct")) {
-                    runner.runDirect(queries, dataDir, output, scale, name, timeoutMs);
+                    runner.runDirect(queries, dataDir, output, scale, name, timeoutMs,
+                            flamegraphOutput);
                 } else {
-                    runner.run(queries, dataDir, output, scale, name, timeoutMs);
+                    runner.run(queries, dataDir, output, scale, name, timeoutMs,
+                            flamegraphOutput);
                 }
             }
             case "compare" -> {
@@ -108,7 +112,7 @@ public class TpcdsBenchmark {
         System.out.println("""
                 用法:
                   generate --scale 0.1 --data-dir ./data
-                  run      --data-dir ./data [--direct] [--query-dir <dir>] [--name <name>] [--timeout <ms>] --scale 0.1 --output ./results/run.json
+                  run      --data-dir ./data [--direct] [--query-dir <dir>] [--name <name>] [--timeout <ms>] [--flamegraph <output.html>] --scale 0.1 --output ./results/run.json
                   compare  file1.json [file2.json ...] --output ./results/report.html
                 """);
     }

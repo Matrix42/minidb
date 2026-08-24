@@ -18,6 +18,7 @@ import java.util.ArrayList;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
+import jdk.jfr.Recording;
 import org.apache.arrow.memory.BufferAllocator;
 import org.apache.arrow.memory.RootAllocator;
 
@@ -32,11 +33,14 @@ public class TpcdsBenchmarkRunner {
     }
 
     public void run(Map<String, String> queries, Path dataDir, Path outputJson, double scale,
-                    String name, long perQueryTimeoutMs)
+                    String name, long perQueryTimeoutMs, Path flamegraphOutput)
             throws Exception {
         List<QueryResult> results = new ArrayList<>();
         MiniDbServer server = new MiniDbServer();
         server.start(0, dataDir);
+
+        Recording jfrRecording = startJfrIfNeeded(flamegraphOutput);
+
         try (Connection c = DriverManager.getConnection("jdbc:minidb://127.0.0.1:" + server.port() + "?timeout=0");
              Statement s = c.createStatement()) {
             int total = queries.size();
@@ -60,12 +64,11 @@ public class TpcdsBenchmarkRunner {
             try {
                 server.close();
             } catch (Exception e) {
-                // 查询执行可能残留未释放的 Arrow 批(MiniDbServer 既有行为),close 时
-                // 触发 allocator 泄漏检测。基准测试不因此中断,记录警告后继续写结果。
                 System.err.println("server close warning: " + e.getMessage());
             }
         }
 
+        stopJfrAndWriteFlamegraph(jfrRecording, flamegraphOutput);
         writeReport(results, outputJson, scale, name);
     }
 
@@ -76,10 +79,11 @@ public class TpcdsBenchmarkRunner {
      * @param perQueryTimeoutMs 单条查询超时(ms),0 表示不限。超时的查询记 success=false 跳过。
      */
     public void runDirect(Map<String, String> queries, Path dataDir, Path outputJson, double scale,
-                          String name, long perQueryTimeoutMs)
+                          String name, long perQueryTimeoutMs, Path flamegraphOutput)
             throws Exception {
         List<QueryResult> results = new ArrayList<>();
         MiniDbCatalog catalog = new MiniDbCatalog();
+        Recording jfrRecording = startJfrIfNeeded(flamegraphOutput);
         try (BufferAllocator allocator = new RootAllocator()) {
             StorageManager storage = new StorageManager(catalog, allocator, dataDir);
             storage.loadAll();
@@ -102,6 +106,7 @@ public class TpcdsBenchmarkRunner {
             }
             storage.close();
         }
+        stopJfrAndWriteFlamegraph(jfrRecording, flamegraphOutput);
         writeReport(results, outputJson, scale, name);
     }
 
@@ -201,5 +206,43 @@ public class TpcdsBenchmarkRunner {
 
     private static long elapsedMs(long startNanos) {
         return (System.nanoTime() - startNanos) / 1_000_000;
+    }
+
+    private static Recording startJfrIfNeeded(Path flamegraphOutput) {
+        if (flamegraphOutput == null) {
+            return null;
+        }
+        Recording recording = new Recording();
+        recording.setSettings(Map.of(
+                "jdk.ExecutionSample#enabled", "true",
+                "jdk.ExecutionSample#period", "10 ms"
+        ));
+        recording.setName("tpcds-benchmark");
+        recording.start();
+        return recording;
+    }
+
+    private static void stopJfrAndWriteFlamegraph(Recording recording, Path flamegraphOutput)
+            throws IOException {
+        if (recording == null || flamegraphOutput == null) {
+            return;
+        }
+        recording.stop();
+        try {
+            Path jfrFile = Files.createTempFile("tpcds-jfr-", ".jfr");
+            try {
+                recording.dump(jfrFile);
+                new FlamegraphWriter().write(jfrFile, flamegraphOutput);
+                System.out.println("火焰图已写入: " + flamegraphOutput.toAbsolutePath());
+            } finally {
+                try {
+                    Files.deleteIfExists(jfrFile);
+                } catch (IOException ignored) {
+                    // 清理临时文件失败,不影响主流程
+                }
+            }
+        } finally {
+            recording.close();
+        }
     }
 }
