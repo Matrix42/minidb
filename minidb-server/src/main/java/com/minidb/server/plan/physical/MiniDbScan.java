@@ -36,6 +36,8 @@ import org.apache.calcite.rex.RexShuttle;
 import org.apache.calcite.sql.SqlKind;
 import org.apache.calcite.sql.fun.SqlStdOperatorTable;
 import org.apache.calcite.sql.type.SqlTypeName;
+import org.apache.calcite.util.Sarg;
+import com.google.common.collect.Range;
 
 public class MiniDbScan extends TableScan implements MiniDbRel {
 
@@ -113,8 +115,9 @@ public class MiniDbScan extends TableScan implements MiniDbRel {
             // promoted table like [minidb, t] — resolve via current schema
             tableHandle = ctx.getTable(qualified.get(n - 1));
         }
-        // 主键等值点查:WHERE pk = literal(全部主键列绑定)时走 LSM 的
-        // Bloom + getByKey,避免全表扫描 + 逐行求值(TPC-DS 维度点查主路径)。
+        // 主键等值点查:WHERE pk = literal / pk IN (...) / pk = v1 OR pk = v2
+        // (全部主键列绑定)时走 LSM 的 Bloom + getByKey,避免全表扫描 + 逐行
+        // 求值(TPC-DS 维度点查主路径)。
         if (pushedFilter != null) {
             PointLookup lookup = PointLookup.extract(pushedFilter, tableHandle.schema(),
                     getCluster().getRexBuilder());
@@ -130,19 +133,26 @@ public class MiniDbScan extends TableScan implements MiniDbRel {
     }
 
     /**
-     * 主键点查:getByKey 命中返回单行,残留条件(非主键等值)在单行上求值,
-     * 再按投影列裁剪。批所有权沿链传递:root → (filtered) → (projected) → 最终批,
-     * 每步换批就关掉旧批,最终批交给 singleBatch 持有。
+     * 主键点查:对每个候选键 getByKey,命中的行收集进一个批,残留条件
+     * (非主键绑定)在整批上求值,再按投影列裁剪。批所有权沿链传递:
+     * root → (filtered) → (projected) → 最终批,每步换批就关掉旧批,
+     * 最终批交给 singleBatch 持有。
      */
     private BatchIterator pointLookup(TableHandle table, PointLookup lookup, ExecContext ctx) {
-        RowValue rv = table.getByKey(lookup.key);
-        if (rv == null || rv.kind() != RowValue.INSERT) {
+        List<Object[]> matched = new ArrayList<>();
+        for (List<Object> key : lookup.keys) {
+            RowValue rv = table.getByKey(key);
+            if (rv != null && rv.kind() == RowValue.INSERT) {
+                matched.add(rv.values());
+            }
+        }
+        if (matched.isEmpty()) {
             return BatchIterator.interruptible(BatchIterator.empty());
         }
-        VectorSchemaRoot owned = rowToRoot(rv.values(), table.schema(), ctx);
+        VectorSchemaRoot owned = rowsToRoot(matched, table.schema(), ctx);
         VectorSchemaRoot out = null;
         try {
-            // 残留条件在单行全列批上求值(applyFilter:null→原批,全保留→原批,无匹配→null)
+            // 残留条件在单批上求值(applyFilter:null→原批,全保留→原批,无匹配→null)
             VectorSchemaRoot filtered = applyFilter(owned, lookup.residual, ctx);
             if (filtered == null) {
                 return BatchIterator.interruptible(BatchIterator.empty());
@@ -168,14 +178,20 @@ public class MiniDbScan extends TableScan implements MiniDbRel {
         }
     }
 
-    /** 单行 Object[] → 全列 VectorSchemaRoot(表 schema,残留条件/投影按原列索引)。 */
-    private static VectorSchemaRoot rowToRoot(Object[] values, TableSchema schema, ExecContext ctx) {
+    /** 行集 → 全列 VectorSchemaRoot(表 schema,残留条件/投影按原列索引)。 */
+    private static VectorSchemaRoot rowsToRoot(List<Object[]> rows, TableSchema schema,
+                                               ExecContext ctx) {
         VectorSchemaRoot root = VectorSchemaRoot.create(
                 ArrowTypes.arrowSchema(schema), ctx.allocator());
         root.allocateNew();
-        root.setRowCount(1);
-        SSTableWriter.writeRow(root, 0, values, schema);
-        root.setRowCount(1);
+        if (!rows.isEmpty()) {
+            // 先 setValueCount 保证有效性缓冲区已分配(writeRow 前)
+            root.setRowCount(rows.size());
+        }
+        for (int i = 0; i < rows.size(); i++) {
+            SSTableWriter.writeRow(root, i, rows.get(i), schema);
+        }
+        root.setRowCount(rows.size());
         return root;
     }
 
@@ -380,20 +396,27 @@ public class MiniDbScan extends TableScan implements MiniDbRel {
     /**
      * 从下推 filter 提取主键点查。仅当:
      * <ul>
-     *   <li>每个主键列恰有一条 AND 级联的 `col = literal` 等值(顺序任意,列位置无关);</li>
+     *   <li>每个主键列都被 AND 级联的绑定条件覆盖:单等值 `col = literal`、
+     *       IN 点集 `col SEARCH {v1,v2,...}`、或同列等值 OR 链(顺序任意,字面量
+     *       在左/右均可);</li>
      *   <li>主键列类型为 INTEGER/BIGINT——LSM 的零填充十进制 key 编码只对
      *       Integer/Long 往返保类型,其余类型(如 VARCHAR 的 Text key)比较会错;</li>
-     *   <li>主键列未被重复绑定(如 `id=2 AND id=3`,重复条件保留为 residual 避免丢语义)。</li>
+     *   <li>候选键数(各列值集合的笛卡尔积)不超过 {@link #MAX_POINT_LOOKUP_KEYS}——
+     *       防多列 IN 的候选爆炸(超阈值回退扫描,正确性不受影响);</li>
+     *   <li>主键列未被重复绑定(如 `id=1 AND id=2`,重复条件保留为 residual 避免丢语义)。</li>
      * </ul>
-     * 其余条件保留为 {@link #residual},在命中的单行上求值。返回 null 表示不可点查
+     * 其余条件保留为 {@link #residual},在命中的行上求值。返回 null 表示不可点查
      * (回退全表扫描 + 逐行过滤)。
      */
     private static final class PointLookup {
-        final List<Object> key;
+        /** 候选主键(各列候选值的笛卡尔积);空或超阈值时不点查。 */
+        static final int MAX_POINT_LOOKUP_KEYS = 256;
+
+        final List<List<Object>> keys;
         final RexNode residual;
 
-        private PointLookup(List<Object> key, RexNode residual) {
-            this.key = key;
+        private PointLookup(List<List<Object>> keys, RexNode residual) {
+            this.keys = keys;
             this.residual = residual;
         }
 
@@ -410,27 +433,47 @@ public class MiniDbScan extends TableScan implements MiniDbRel {
             }
             List<RexNode> conjuncts = new ArrayList<>();
             splitConjuncts(filter, conjuncts);
-            Map<Integer, Object> keyByCol = new java.util.HashMap<>();
+            Map<Integer, List<Object>> valuesByCol = new java.util.HashMap<>();
             List<RexNode> residual = new ArrayList<>();
             for (RexNode c : conjuncts) {
-                BoundEq eq = boundEquality(c);
-                if (eq != null && pk.stream().anyMatch(p -> schema.columnIndex(p) == eq.colIndex)) {
-                    if (keyByCol.putIfAbsent(eq.colIndex, eq.value) != null) {
-                        // 主键列重复等值(矛盾条件):保留为 residual,不能丢
+                BoundVals bv = boundValues(c);
+                if (bv != null && pk.stream().anyMatch(p -> schema.columnIndex(p) == bv.colIndex)) {
+                    if (valuesByCol.putIfAbsent(bv.colIndex, bv.values) != null) {
+                        // 主键列重复绑定(矛盾条件如 id=1 AND id=2):保留为 residual,不能丢
                         residual.add(c);
                     }
                 } else {
                     residual.add(c);
                 }
             }
-            if (keyByCol.size() != pk.size()) {
+            if (valuesByCol.size() != pk.size()) {
                 return null; // 主键未完全绑定,不是点查
             }
-            List<Object> key = new ArrayList<>(pk.size());
-            for (String col : pk) {
-                key.add(keyByCol.get(schema.columnIndex(col)));
+            List<List<Object>> keys = new ArrayList<>();
+            cartesianKeys(valuesByCol, schema, 0, new ArrayList<>(), keys);
+            if (keys.isEmpty() || keys.size() > MAX_POINT_LOOKUP_KEYS) {
+                return null;
             }
-            return new PointLookup(key, andOf(residual, rexBuilder));
+            return new PointLookup(keys, andOf(residual, rexBuilder));
+        }
+
+        /** 按 PK 列顺序对各列候选值做笛卡尔积,超阈值剪枝(由调用方判定回退)。 */
+        private static void cartesianKeys(Map<Integer, List<Object>> valuesByCol,
+                                          TableSchema schema, int pkPos, List<Object> prefix,
+                                          List<List<Object>> out) {
+            if (out.size() > MAX_POINT_LOOKUP_KEYS) {
+                return;
+            }
+            List<String> pk = schema.primaryKey();
+            if (pkPos == pk.size()) {
+                out.add(List.copyOf(prefix));
+                return;
+            }
+            for (Object v : valuesByCol.get(schema.columnIndex(pk.get(pkPos)))) {
+                prefix.add(v);
+                cartesianKeys(valuesByCol, schema, pkPos + 1, prefix, out);
+                prefix.remove(prefix.size() - 1);
+            }
         }
 
         /** AND 链拆成级联;其余节点原样。 */
@@ -442,6 +485,55 @@ public class MiniDbScan extends TableScan implements MiniDbRel {
             } else {
                 out.add(node);
             }
+        }
+
+        /**
+         * 提取「单列绑定值集」:单等值、SEARCH 点集(IN)、同列等值 OR 链。
+         * 含范围/多列 OR/非等值 → 返回 null(留给 residual)。
+         */
+        private static BoundVals boundValues(RexNode node) {
+            BoundEq eq = boundEquality(node);
+            if (eq != null) {
+                return new BoundVals(eq.colIndex, List.of(eq.value));
+            }
+            if (node instanceof RexCall call && call.getKind() == SqlKind.SEARCH) {
+                RexNode l = call.getOperands().get(0);
+                RexNode r = call.getOperands().get(1);
+                if (l instanceof RexInputRef ref && r instanceof RexLiteral lit) {
+                    Sarg<?> sarg = lit.getValueAs(Sarg.class);
+                    if (sarg != null && sarg.isPoints()) {
+                        List<Object> values = new ArrayList<>();
+                        for (Range<?> range : sarg.rangeSet.asRanges()) {
+                            Object v = pointValue(range.lowerEndpoint());
+                            if (v == null) {
+                                return null; // 非数值点(字符串等)→ 回退扫描
+                            }
+                            values.add(v);
+                        }
+                        return values.isEmpty() ? null : new BoundVals(ref.getIndex(), values);
+                    }
+                }
+                return null;
+            }
+            if (node instanceof RexCall call && call.getKind() == SqlKind.OR) {
+                // 同列等值 OR 链:col = v1 OR col = v2 ...;多列 OR 或含非等值 → 不可提取
+                List<Object> values = new ArrayList<>();
+                Integer colIndex = null;
+                for (RexNode o : call.getOperands()) {
+                    BoundEq e = boundEquality(o);
+                    if (e == null) {
+                        return null;
+                    }
+                    if (colIndex == null) {
+                        colIndex = e.colIndex;
+                    } else if (colIndex != e.colIndex) {
+                        return null;
+                    }
+                    values.add(e.value);
+                }
+                return colIndex == null ? null : new BoundVals(colIndex, values);
+            }
+            return null;
         }
 
         /** 若条件是 `col = literal` 或 `literal = col`(整数型字面量),返回绑定;否则 null。 */
@@ -480,6 +572,14 @@ public class MiniDbScan extends TableScan implements MiniDbRel {
             return tn == SqlTypeName.BIGINT ? ((Number) v).longValue() : ((Number) v).intValue();
         }
 
+        /** Sarg 点值 → Integer/Long;非数值返回 null。 */
+        private static Object pointValue(Object point) {
+            if (!(point instanceof Number n)) {
+                return null;
+            }
+            return n instanceof Long ? n.longValue() : n.intValue();
+        }
+
         /** 残余条件合成 AND(0 条→null,1 条→原样)。 */
         private static RexNode andOf(List<RexNode> conjuncts, RexBuilder rexBuilder) {
             if (conjuncts.isEmpty()) {
@@ -495,5 +595,9 @@ public class MiniDbScan extends TableScan implements MiniDbRel {
 
     /** {@code col = literal} 的绑定结果:列索引 + 数值。 */
     private record BoundEq(int colIndex, Object value) {
+    }
+
+    /** 单列的绑定值集(等值/IN 点集/OR 链):列索引 + 候选值列表。 */
+    private record BoundVals(int colIndex, List<Object> values) {
     }
 }

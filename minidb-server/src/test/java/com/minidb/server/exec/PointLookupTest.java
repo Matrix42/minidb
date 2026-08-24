@@ -107,12 +107,59 @@ class PointLookupTest {
     @Test
     void nonPkAndRangeFallBackToScan() {
         executor.execute("CREATE TABLE t (id INTEGER NOT NULL PRIMARY KEY, name VARCHAR)");
-        executor.execute("INSERT INTO t VALUES (1, 'a'), (2, 'b'), (3, 'c')");
+        executor.execute("INSERT INTO t VALUES (1, 'a'), (2, 'b'), (3, 'c') ");
         // 非主键列等值 / 范围 / 非等值:不点查,结果正确
         assertEquals(List.of("b"), rows(executor, "SELECT name FROM t WHERE name = 'b'"));
         assertEquals(List.of("b", "c"), rows(executor, "SELECT name FROM t WHERE id > 1 ORDER BY id"));
         assertEquals(List.of("a", "b"), rows(executor, "SELECT name FROM t WHERE id <= 2 ORDER BY id"));
         assertEquals(List.of("a", "c"), rows(executor, "SELECT name FROM t WHERE id <> 2 ORDER BY id"));
+    }
+
+    @Test
+    void inListPointLookup() {
+        executor.execute("CREATE TABLE t (id INTEGER NOT NULL PRIMARY KEY, name VARCHAR)");
+        executor.execute("INSERT INTO t VALUES (1, 'a'), (2, 'b'), (3, 'c') ");
+        assertEquals(List.of("a", "c"),
+                rows(executor, "SELECT name FROM t WHERE id IN (1, 3) ORDER BY id"));
+        assertEquals(List.of(), rows(executor, "SELECT name FROM t WHERE id IN (999, 1000)"));
+        // 点查 + 投影 + 残留条件
+        assertEquals(List.of("1|a", "3|c"),
+                rows(executor, "SELECT id, name FROM t WHERE id IN (1, 3) ORDER BY id"));
+        assertEquals(List.of("b"),
+                rows(executor, "SELECT name FROM t WHERE id IN (1, 2) AND name = 'b'"));
+    }
+
+    @Test
+    void orEqualityChainPointLookup() {
+        executor.execute("CREATE TABLE t (id INTEGER NOT NULL PRIMARY KEY, name VARCHAR)");
+        executor.execute("INSERT INTO t VALUES (1, 'a'), (2, 'b'), (3, 'c') ");
+        // 同列等值 OR 链(Calcite 可能简化成 SEARCH,两条路径都要支持)
+        assertEquals(List.of("a", "c"),
+                rows(executor, "SELECT name FROM t WHERE id = 1 OR id = 3 ORDER BY id"));
+        // 多列 OR(不可提取)→ 回退扫描,结果正确
+        assertEquals(List.of("a", "c"),
+                rows(executor, "SELECT name FROM t WHERE id = 1 OR name = 'c' ORDER BY id"));
+    }
+
+    @Test
+    void multiColumnInCrossProduct() {
+        executor.execute("CREATE TABLE t (a INTEGER NOT NULL, b INTEGER NOT NULL, "
+                + "name VARCHAR, PRIMARY KEY (a, b))");
+        executor.execute("INSERT INTO t VALUES (1, 1, 'x'), (1, 2, 'y'), (2, 1, 'z')");
+        // 单列 IN + 另一列等值 → 候选键笛卡尔积
+        assertEquals(List.of("x", "z"),
+                rows(executor, "SELECT name FROM t WHERE a IN (1, 2) AND b = 1 ORDER BY a"));
+        // 双列 IN → 候选键笛卡尔积(4 键,未超阈值),命中全部 3 行
+        assertEquals(List.of("x", "z", "y"),
+                rows(executor, "SELECT name FROM t WHERE a IN (1, 2) AND b IN (1, 2) ORDER BY b"));
+    }
+
+    @Test
+    void bigintInListPointLookup() {
+        executor.execute("CREATE TABLE t (sk BIGINT NOT NULL PRIMARY KEY, name VARCHAR)");
+        executor.execute("INSERT INTO t VALUES (2450810, 'x'), (2450811, 'y'), (2450812, 'z')");
+        assertEquals(List.of("x", "z"),
+                rows(executor, "SELECT name FROM t WHERE sk IN (2450810, 2450812) ORDER BY sk"));
     }
 
     @Test
@@ -146,8 +193,10 @@ class PointLookupTest {
                     new StatsManager(storage2), storage2, allocator);
 
             int pointBatches = scanBatches(explain2, "SELECT * FROM t WHERE id = 15000");
+            int inBatches = scanBatches(explain2, "SELECT * FROM t WHERE id IN (15000, 15001)");
             int rangeBatches = scanBatches(explain2, "SELECT * FROM t WHERE id > 100");
             assertEquals(1, pointBatches, "点查应只读 1 个 block");
+            assertEquals(1, inBatches, "IN 多值点查应只读 1 个 block");
             assertTrue(rangeBatches > 1, "范围扫描应读多个 block,实际 " + rangeBatches);
         } finally {
             storage2.close();
