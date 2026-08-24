@@ -226,7 +226,9 @@ public class ParquetPartFormat implements PartFormat {
         } else if (vector instanceof Float8Vector v) {
             v.setSafe(row, group.getDouble(col, 0));
         } else if (vector instanceof VarCharVector v) {
-            v.setSafe(row, group.getString(col, 0).getBytes(StandardCharsets.UTF_8));
+            // 直接用 getBinary 取 UTF-8 字节,跳过 getString 的
+            // Binary→String→byte[] 往返解码(火焰图热点 ~6.8%)
+            v.setSafe(row, group.getBinary(col, 0).getBytes());
         } else if (vector instanceof BitVector v) {
             v.setSafe(row, group.getBoolean(col, 0) ? 1 : 0);
         } else if (vector instanceof DateDayVector v) {
