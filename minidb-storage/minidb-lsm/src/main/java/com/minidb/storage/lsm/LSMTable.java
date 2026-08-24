@@ -141,7 +141,8 @@ public class LSMTable implements TableHandle {
         }
     }
 
-    /** 查找主键对应的行（用于约束校验）。返回 null 表示不存在或被删除。 */
+    /** 查找主键对应的行（用于约束校验与扫描点查）。返回 null 表示不存在或被删除。 */
+    @Override
     public RowValue getByKey(List<Object> key) {
         RowValue rv = memTable.get(key);
         if (rv != null) {
