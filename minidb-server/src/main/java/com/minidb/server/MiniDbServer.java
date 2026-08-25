@@ -16,7 +16,10 @@ import io.netty.channel.EventLoopGroup;
 import io.netty.channel.nio.NioEventLoopGroup;
 import io.netty.channel.socket.SocketChannel;
 import io.netty.channel.socket.nio.NioServerSocketChannel;
+import java.io.IOException;
+import java.io.UncheckedIOException;
 import java.net.InetSocketAddress;
+import java.nio.file.Files;
 import java.nio.file.Path;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
@@ -91,6 +94,7 @@ public class MiniDbServer implements AutoCloseable {
         int port = -1;
         Path dataDir = Path.of("data");
         Path confDir = Path.of("conf");
+        Path pidFile = null;
         for (int i = 0; i < args.length; i++) {
             if ("--port".equals(args[i])) {
                 port = Integer.parseInt(args[++i]);
@@ -98,6 +102,8 @@ public class MiniDbServer implements AutoCloseable {
                 dataDir = Path.of(args[++i]);
             } else if ("--conf".equals(args[i])) {
                 confDir = Path.of(args[++i]);
+            } else if ("--pid-file".equals(args[i])) {
+                pidFile = Path.of(args[++i]);
             }
         }
         MiniDbConfig config = MiniDbConfig.load(confDir);
@@ -108,9 +114,24 @@ public class MiniDbServer implements AutoCloseable {
         MiniDbServer server = new MiniDbServer();
         server.start(port, dataDir, confDir);
         LOG.info("MiniDB listening on port {}", server.port());
+        if (pidFile != null) {
+            try {
+                Files.writeString(pidFile, String.valueOf(ProcessHandle.current().pid()));
+            } catch (IOException e) {
+                throw new UncheckedIOException("failed to write pid file: " + pidFile, e);
+            }
+        }
+        Path pidFileFinal = pidFile;
         Runtime.getRuntime().addShutdownHook(new Thread(() -> {
             LOG.info("MiniDB shutting down");
             server.close();
+            if (pidFileFinal != null) {
+                try {
+                    Files.deleteIfExists(pidFileFinal);
+                } catch (IOException e) {
+                    LOG.warn("failed to delete pid file: {}", pidFileFinal, e);
+                }
+            }
         }));
         Thread.currentThread().join();
     }
