@@ -93,16 +93,15 @@
       <plugin>
         <groupId>org.codehaus.mojo</groupId>
         <artifactId>exec-maven-plugin</artifactId>
-        <version>3.1.0</version>
+        <version>3.2.0</version>
         <configuration>
-          <executable>${env.JAVA_HOME}/bin/java</executable>
+          <jvmArgs>
+            <jvmArg>--add-opens=java.base/java.nio=ALL-UNNAMED</jvmArg>
+            <jvmArg>--add-opens=java.base/jdk.internal.misc=ALL-UNNAMED</jvmArg>
+            <jvmArg>--add-opens=java.base/sun.nio.ch=ALL-UNNAMED</jvmArg>
+          </jvmArgs>
+          <mainClass>com.minidb.server.MiniDbServer</mainClass>
           <arguments>
-            <argument>--add-opens=java.base/java.nio=ALL-UNNAMED</argument>
-            <argument>--add-opens=java.base/jdk.internal.misc=ALL-UNNAMED</argument>
-            <argument>--add-opens=java.base/sun.nio.ch=ALL-UNNAMED</argument>
-            <argument>-classpath</argument>
-            <classpath/>
-            <argument>com.minidb.server.MiniDbServer</argument>
             <argument>--port</argument>
             <argument>8899</argument>
           </arguments>
