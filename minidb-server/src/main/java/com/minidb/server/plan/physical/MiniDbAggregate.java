@@ -67,40 +67,52 @@ public class MiniDbAggregate extends Aggregate implements MiniDbRel {
                 return singleRowCount(table.rowCount(), ctx);
             }
         }
-        BatchIterator input = ((MiniDbRel) getInput()).execute(ctx);
+        // B1:先物化全部输入到单 root,再用零装箱 ColumnKey 分组。
+        // 物化省去逐批的 argVector 拷贝(参数列直接引用物化 root 的向量);
+        // ColumnKey 列式 hash/equals 替代 List<Object> 每行每 key 列装箱。
+        VectorSchemaRoot input = RowVectors.materializeToRoot(getInput(), ctx);
         List<AggregateCall> calls = getAggCallList();
         RelDataType inputRowType = getInput().getRowType();
         // ROLLUP/GROUPING SETS 展开为多个 groupSet:每个 groupSet 独立分组聚合,最后合并。
         // 单 groupSet(普通 GROUP BY)时 getGroupSets() 只含一个。
         List<ImmutableBitSet> groupSets = getGroupSets();
-        List<Map<List<Object>, GroupState>> groupMaps = new ArrayList<>();
+        List<Map<ColumnKey, GroupState>> groupMaps = new ArrayList<>();
         List<List<AccumulatorFactory>> factoriesPerSet = new ArrayList<>();
-        for (ImmutableBitSet gs : groupSets) {
+        // 每行的 ColumnKey 复用同一 int[] 列索引(ColumnKey 构造不拷贝 cols)
+        int[][] groupColsPerSet = new int[groupSets.size()][];
+        for (int g = 0; g < groupSets.size(); g++) {
+            ImmutableBitSet gs = groupSets.get(g);
+            groupColsPerSet[g] = gs.toArray();
             List<AccumulatorFactory> factories = new ArrayList<>();
             for (AggregateCall call : calls) {
                 factories.add(factoryFor(call, inputRowType, gs));
             }
             factoriesPerSet.add(factories);
-            Map<List<Object>, GroupState> m = new LinkedHashMap<>();
+            Map<ColumnKey, GroupState> m = new LinkedHashMap<>();
             if (gs.isEmpty()) {
-                m.put(List.of(), new GroupState(factories));
+                // 无 GROUP BY:预置唯一空组(空输入也输出一行,COUNT=0 其余 NULL)
+                m.put(new ColumnKey(input, 0, new int[0]), new GroupState(factories));
             }
             groupMaps.add(m);
         }
         List<ValueVector> args = new ArrayList<>();
-        while (input.hasNext()) {
-            ExecContext.checkInterrupted();
-            VectorSchemaRoot batch = input.next();
-            args.clear();
+        try {
             for (AggregateCall call : calls) {
-                args.add(argVector(call, batch, ctx));
+                args.add(argVector(call, input, ctx));
             }
-            for (int row = 0; row < batch.getRowCount(); row++) {
+            int rows = input.getRowCount();
+            for (int row = 0; row < rows; row++) {
+                ExecContext.checkInterrupted();
                 for (int g = 0; g < groupSets.size(); g++) {
-                    List<Object> key = groupKey(batch, groupSets.get(g), row);
-                    List<AccumulatorFactory> facs = factoriesPerSet.get(g);
-                    GroupState st = groupMaps.get(g).computeIfAbsent(key,
-                            k -> new GroupState(facs));
+                    Map<ColumnKey, GroupState> m = groupMaps.get(g);
+                    GroupState st;
+                    if (groupSets.get(g).isEmpty()) {
+                        st = m.values().iterator().next(); // 唯一空组,免 map 查找
+                    } else {
+                        ColumnKey key = new ColumnKey(input, row, groupColsPerSet[g]);
+                        List<AccumulatorFactory> facs = factoriesPerSet.get(g);
+                        st = m.computeIfAbsent(key, k -> new GroupState(facs));
+                    }
                     for (int i = 0; i < calls.size(); i++) {
                         st.accs.get(i).add(args.get(i), row);
                     }
@@ -111,37 +123,41 @@ public class MiniDbAggregate extends Aggregate implements MiniDbRel {
                     v.close();
                 }
             }
-        }
-        input.close();
-        boolean empty = true;
-        for (Map<List<Object>, GroupState> m : groupMaps) {
-            if (!m.isEmpty()) {
-                empty = false;
-                break;
+            // 分组完成后输出。input 不能提前 close——ColumnKey 引用物化 root
+            // 读键值(buildOutput 从 ck.root()/ck.row() 列式拷贝),root 必须活到
+            // buildOutput 结束(旧 List<Object> 键是值快照,无此约束)。
+            boolean empty = true;
+            for (Map<ColumnKey, GroupState> m : groupMaps) {
+                if (!m.isEmpty()) {
+                    empty = false;
+                    break;
+                }
             }
-        }
-        if (empty) {
-            return BatchIterator.interruptible(BatchIterator.empty());
-        }
-        VectorSchemaRoot out = buildOutput(groupMaps, groupSets, ctx);
-        boolean[] done = {false};
-        return BatchIterator.interruptible(new BatchIterator() {
-            @Override
-            public boolean hasNext() {
-                return !done[0];
+            if (empty) {
+                return BatchIterator.interruptible(BatchIterator.empty());
             }
+            VectorSchemaRoot out = buildOutput(groupMaps, groupSets, ctx);
+            boolean[] done = {false};
+            return BatchIterator.interruptible(new BatchIterator() {
+                @Override
+                public boolean hasNext() {
+                    return !done[0];
+                }
 
-            @Override
-            public VectorSchemaRoot next() {
-                done[0] = true;
-                return out;
-            }
+                @Override
+                public VectorSchemaRoot next() {
+                    done[0] = true;
+                    return out;
+                }
 
-            @Override
-            public void close() {
-                out.close();
-            }
-        });
+                @Override
+                public void close() {
+                    out.close();
+                }
+            });
+        } finally {
+            input.close();
+        }
     }
 
     /** COUNT(*):COUNT 聚合、无 DISTINCT、无参数。 */
@@ -207,22 +223,11 @@ public class MiniDbAggregate extends Aggregate implements MiniDbRel {
         return null; // COUNT(*)
     }
 
-    private List<Object> groupKey(VectorSchemaRoot batch, ImmutableBitSet groupSet, int row) {
-        if (groupSet.isEmpty()) {
-            return List.of();
-        }
-        List<Object> key = new ArrayList<>(groupSet.cardinality());
-        for (Integer idx : groupSet) {
-            key.add(RowVectors.readObject(batch.getVector(idx), row));
-        }
-        return key;
-    }
-
-    private VectorSchemaRoot buildOutput(List<Map<List<Object>, GroupState>> groupMaps,
+    private VectorSchemaRoot buildOutput(List<Map<ColumnKey, GroupState>> groupMaps,
                                          List<ImmutableBitSet> groupSets, ExecContext ctx) {
         int groupCount = getGroupCount();
         int total = 0;
-        for (Map<List<Object>, GroupState> m : groupMaps) {
+        for (Map<ColumnKey, GroupState> m : groupMaps) {
             total += m.size();
         }
         List<FieldVector> vectors = new ArrayList<>();
@@ -263,17 +268,18 @@ public class MiniDbAggregate extends Aggregate implements MiniDbRel {
             int row = 0;
             for (int g = 0; g < groupSets.size(); g++) {
                 ImmutableBitSet gs = groupSets.get(g);
-                for (Map.Entry<List<Object>, GroupState> e : groupMaps.get(g).entrySet()) {
-                    List<Object> key = e.getKey();
+                for (Map.Entry<ColumnKey, GroupState> e : groupMaps.get(g).entrySet()) {
+                    ColumnKey ck = e.getKey();
                     // 分组列:按完整 groupSet 的 set 位顺序写输出列。子集 groupSet(ROLLUP)
                     // 中不在子集的列写 null。不能用「子集 gs 的 set 位按序递增 outCol」——
                     // 子集 {53} 只有 i_category,但它是输出列 3(完整 groupSet 的第 4 位),
                     // 递增 outCol 会把它写到列 0(i_product_name 位置)。
+                    // 键值列式拷贝:物化 root 的列 i、行 ck.row()(ColumnKey 零装箱)。
                     int outCol = 0;
-                    int keyIdx = 0;
                     for (Integer i : getGroupSet()) {
                         if (gs.get(i)) {
-                            RowVectors.writeObject(vectors.get(outCol), row, key.get(keyIdx++));
+                            RowCopier.copyRow(ck.root().getVector(i), ck.row(),
+                                    vectors.get(outCol), row);
                         } else {
                             vectors.get(outCol).setNull(row);
                         }
