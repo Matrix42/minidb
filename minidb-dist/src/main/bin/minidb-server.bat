@@ -1,6 +1,6 @@
 @echo off
-rem MiniDB 服务端启动脚本(Windows)。linux/macOS 用 minidb-server。
-rem 用法:minidb-server.bat [start|stop|status]
+rem MiniDB server launcher (Windows). Use minidb-server on linux/macOS.
+rem Usage: minidb-server.bat [start|stop|status]
 setlocal enabledelayedexpansion
 
 set "BIN_DIR=%~dp0"
@@ -11,9 +11,8 @@ if defined JAVA_HOME (
 ) else (
   set "JAVA=java"
 )
-where "%JAVA%" >nul 2>nul
-if errorlevel 1 (
-  echo 错误:未找到 java。请设置 JAVA_HOME 或加入 PATH。
+if not exist "%JAVA%" (
+  echo ERROR: java not found. Set JAVA_HOME or add to PATH.
   exit /b 1
 )
 
@@ -26,7 +25,7 @@ set "LOG_OUT=%MINIDB_HOME%\logs\minidb.out"
 set "CMD=%1"
 shift
 
-set "JAVA_OPTS=--add-opens=java.base/java.nio=ALL-UNNAMED --add-opens=java.base/jdk.internal.misc=ALL-UNNAMED --add-opens=java.base/sun.nio.ch=ALL-UNNAMED -Dlog4j2.configurationFile=%MINIDB_CONF_DIR%\log4j2.properties"
+set "JAVA_OPTS=--add-opens=java.base/java.nio=ALL-UNNAMED --add-opens=java.base/jdk.internal.misc=ALL-UNNAMED --add-opens=java.base/sun.nio.ch=ALL-UNNAMED -Dlog4j2.configurationFile=conf\log4j2.properties"
 
 set "ARGS=--data "%MINIDB_DATA_DIR%" --conf "%MINIDB_CONF_DIR%""
 if defined MINIDB_PORT set "ARGS=%ARGS% --port %MINIDB_PORT%"
@@ -36,8 +35,9 @@ if "%CMD%"=="stop"  goto :do_stop
 if "%CMD%"=="status" goto :do_status
 
 :foreground
+  rem No args = foreground (debug); use start/stop/status or env vars
   cd /d "%MINIDB_HOME%"
-  "%JAVA%" %MINIDB_JAVA_OPTS% %JAVA_OPTS% -cp "libs\*" com.minidb.server.MiniDbServer %ARGS%
+  "%JAVA%" %MINIDB_JAVA_OPTS% %JAVA_OPTS% -cp "libs\*" com.minidb.server.MiniDbServer %ARGS% %*
   goto :eof
 
 :do_status
@@ -57,11 +57,11 @@ if "%CMD%"=="status" goto :do_status
 
 :do_stop
   if not exist "%PID_FILE%" (
-    echo MiniDB 未运行(无 pid 文件^)
+    echo MiniDB not running (no pid file^)
     exit /b 1
   )
   set /p PID=<"%PID_FILE%"
-  echo 正在停止 MiniDB (pid !PID!^)...
+  echo Stopping MiniDB (pid !PID!^)...
   taskkill /PID !PID! 2>nul
   set WAITED=0
   :wait_stop
@@ -72,22 +72,22 @@ if "%CMD%"=="status" goto :do_status
       goto :stopped
     )
     if !WAITED! geq 30 (
-      echo 优雅停止超时,强制终止
+      echo Graceful stop timeout, force killing
       taskkill /F /PID !PID! 2>nul
       del "%PID_FILE%" 2>nul
       goto :stopped
     )
-    timeout /t 1 /nobreak >nul
+    ping -n 2 127.0.0.1 >nul
     set /a WAITED+=1
     goto :wait_stop
   :stopped
-  echo MiniDB 已停止
+  echo MiniDB stopped
   goto :eof
 
 :do_start
   call :do_status >nul 2>nul
   if not errorlevel 1 (
-    echo MiniDB 已在运行中
+    echo MiniDB already running
     exit /b 1
   )
   if not exist "%MINIDB_HOME%\logs" mkdir "%MINIDB_HOME%\logs"
@@ -96,10 +96,10 @@ if "%CMD%"=="status" goto :do_status
   set WAITED=0
   :wait_pid
     if exist "%PID_FILE%" goto :pid_ready
-    timeout /t 1 /nobreak >nul
+    ping -n 2 127.0.0.1 >nul
     set /a WAITED+=1
     if !WAITED! lss 10 goto :wait_pid
-    echo MiniDB 启动失败(pid 文件未出现^),查看日志: %LOG_OUT%
+    echo MiniDB start failed (pid file not created^), check log: %LOG_OUT%
     exit /b 1
   :pid_ready
   set /p PID=<"%PID_FILE%"

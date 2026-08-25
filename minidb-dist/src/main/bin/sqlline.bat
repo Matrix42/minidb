@@ -10,9 +10,8 @@ if defined JAVA_HOME (
 ) else (
   set "JAVA=java"
 )
-where "%JAVA%" >nul 2>nul
-if errorlevel 1 (
-  echo 错误:未找到 java。请设置 JAVA_HOME 或加入 PATH。
+if not exist "%JAVA%" (
+  echo ERROR: java not found. Set JAVA_HOME or add to PATH.
   exit /b 1
 )
 

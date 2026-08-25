@@ -96,9 +96,7 @@ do_start() {
     sleep 1
     waited=$((waited + 1))
   done
-  if kill -0 "$BG_PID" 2>/dev/null; then
-    echo "MiniDB started (pid $BG_PID)"
-  else
+  if ! kill -0 "$BG_PID" 2>/dev/null; then
     echo "MiniDB 启动失败,查看日志: $LOG_OUT" >&2
     rm -f "$PID_FILE"
     return 1
@@ -112,6 +110,14 @@ do_start() {
     sleep 1
     waited=$((waited + 1))
   done
+  if (exec 3<>/dev/tcp/localhost/"$PORT") 2>/dev/null; then
+    echo "MiniDB started (pid $BG_PID)"
+  else
+    echo "MiniDB 启动失败(端口未就绪),查看日志: $LOG_OUT" >&2
+    kill "$BG_PID" 2>/dev/null
+    rm -f "$PID_FILE"
+    return 1
+  fi
 }
 
 CMD="${1:-}"
@@ -143,6 +149,6 @@ case "$CMD" in
       -cp "libs/*" \
       com.minidb.server.MiniDbServer \
       --data "$DATA_DIR" --conf "$CONF_DIR" \
-      "${PORT_ARG[@]}"
+      "${PORT_ARG[@]}" "$@"
     ;;
 esac

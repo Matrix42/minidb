@@ -114,13 +114,6 @@ public class MiniDbServer implements AutoCloseable {
         MiniDbServer server = new MiniDbServer();
         server.start(port, dataDir, confDir);
         LOG.info("MiniDB listening on port {}", server.port());
-        if (pidFile != null) {
-            try {
-                Files.writeString(pidFile, String.valueOf(ProcessHandle.current().pid()));
-            } catch (IOException e) {
-                throw new UncheckedIOException("failed to write pid file: " + pidFile, e);
-            }
-        }
         Path pidFileFinal = pidFile;
         Runtime.getRuntime().addShutdownHook(new Thread(() -> {
             LOG.info("MiniDB shutting down");
@@ -133,6 +126,13 @@ public class MiniDbServer implements AutoCloseable {
                 }
             }
         }));
+        if (pidFile != null) {
+            try {
+                Files.writeString(pidFile, String.valueOf(ProcessHandle.current().pid()));
+            } catch (IOException e) {
+                throw new UncheckedIOException("failed to write pid file: " + pidFile, e);
+            }
+        }
         Thread.currentThread().join();
     }
 

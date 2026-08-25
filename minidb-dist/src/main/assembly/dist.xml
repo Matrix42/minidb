@@ -24,11 +24,26 @@
       <directory>${project.build.directory}/staging/tools</directory>
       <outputDirectory>tools</outputDirectory>
     </fileSet>
-    <!-- 脚本按原样拷贝;sh 保留执行位 -->
+    <!-- 脚本:sh 用 LF + 执行位,bat 用 CRLF -->
     <fileSet>
       <directory>src/main/bin</directory>
       <outputDirectory>bin</outputDirectory>
+      <includes>
+        <include>*</include>
+      </includes>
+      <excludes>
+        <exclude>*.bat</exclude>
+      </excludes>
       <fileMode>0755</fileMode>
+      <lineEnding>unix</lineEnding>
+    </fileSet>
+    <fileSet>
+      <directory>src/main/bin</directory>
+      <outputDirectory>bin</outputDirectory>
+      <includes>
+        <include>*.bat</include>
+      </includes>
+      <lineEnding>windows</lineEnding>
     </fileSet>
     <fileSet>
       <directory>src/main/conf</directory>
