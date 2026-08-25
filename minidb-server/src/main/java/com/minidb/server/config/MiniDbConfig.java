@@ -23,6 +23,8 @@ import java.util.Map;
  *   wal-fsync: false
  *   background-interval-ms: 1000
  *   bloom-bits-per-key: 10
+ * server:
+ *   query-threads: 0
  * </pre>
  */
 public final class MiniDbConfig {
@@ -37,6 +39,9 @@ public final class MiniDbConfig {
     public static final long DEFAULT_LSM_BACKGROUND_INTERVAL_MS = 1000;
     public static final int DEFAULT_LSM_BLOOM_BITS_PER_KEY = 10;
 
+    /** 查询线程池大小:0 = 自动(可用处理器数)。 */
+    public static final int DEFAULT_SERVER_QUERY_THREADS = 0;
+
     private static final ObjectMapper YAML = new ObjectMapper(new YAMLFactory());
 
     private final long compactionTargetSizeBytes;
@@ -48,10 +53,12 @@ public final class MiniDbConfig {
     private final boolean lsmWalFsync;
     private final long lsmBackgroundIntervalMs;
     private final int lsmBloomBitsPerKey;
+    private final int serverQueryThreads;
 
     private MiniDbConfig(long compactionTargetSizeBytes, int compactionAutoPartThreshold,
                          long lsmMemtableSizeBytes, int lsmL0FileLimit, int lsmLevelSizeMultiplier,
-                         boolean lsmWalFsync, long lsmBackgroundIntervalMs, int lsmBloomBitsPerKey) {
+                         boolean lsmWalFsync, long lsmBackgroundIntervalMs, int lsmBloomBitsPerKey,
+                         int serverQueryThreads) {
         this.compactionTargetSizeBytes = compactionTargetSizeBytes;
         this.compactionAutoPartThreshold = compactionAutoPartThreshold;
         this.lsmMemtableSizeBytes = lsmMemtableSizeBytes;
@@ -60,6 +67,7 @@ public final class MiniDbConfig {
         this.lsmWalFsync = lsmWalFsync;
         this.lsmBackgroundIntervalMs = lsmBackgroundIntervalMs;
         this.lsmBloomBitsPerKey = lsmBloomBitsPerKey;
+        this.serverQueryThreads = serverQueryThreads;
     }
 
     public long compactionTargetSizeBytes() {
@@ -94,6 +102,11 @@ public final class MiniDbConfig {
         return lsmBloomBitsPerKey;
     }
 
+    /** 查询线程池大小:0 = 自动(可用处理器数)。 */
+    public int serverQueryThreads() {
+        return serverQueryThreads;
+    }
+
     public static MiniDbConfig load(Path dataDir) {
         long targetBytes = DEFAULT_COMPACTION_TARGET_SIZE_BYTES;
         int autoThreshold = DEFAULT_COMPACTION_AUTO_PART_THRESHOLD;
@@ -103,6 +116,7 @@ public final class MiniDbConfig {
         boolean lsmFsync = DEFAULT_LSM_WAL_FSYNC;
         long lsmInterval = DEFAULT_LSM_BACKGROUND_INTERVAL_MS;
         int lsmBloom = DEFAULT_LSM_BLOOM_BITS_PER_KEY;
+        int queryThreads = DEFAULT_SERVER_QUERY_THREADS;
         Path file = dataDir.resolve("config.yaml");
         if (Files.exists(file)) {
             Map<String, Object> root = readYaml(file);
@@ -140,9 +154,14 @@ public final class MiniDbConfig {
             if (bloom != null && bloom > 0) {
                 lsmBloom = bloom;
             }
+            Map<String, Object> server = asMap(root.get("server"));
+            Integer qt = asInt(server == null ? null : server.get("query-threads"));
+            if (qt != null && qt >= 0) {
+                queryThreads = qt;
+            }
         }
         return new MiniDbConfig(targetBytes, autoThreshold,
-                lsmMemtable, lsmL0, lsmMultiplier, lsmFsync, lsmInterval, lsmBloom);
+                lsmMemtable, lsmL0, lsmMultiplier, lsmFsync, lsmInterval, lsmBloom, queryThreads);
     }
 
     private static Map<String, Object> readYaml(Path file) {

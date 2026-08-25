@@ -46,7 +46,12 @@ public class MiniDbServer implements AutoCloseable {
 
         boss = new NioEventLoopGroup(1);
         workers = new NioEventLoopGroup();
-        queryPool = Executors.newCachedThreadPool();
+        // 固定大小查询池:cached 池在并发查询下线程无上限,高连接数 × 并发查询会线程爆炸;
+        // 单机 OLTP 固定池更稳——大小取配置 server.query-threads(0=自动=可用核数),
+        // 超额查询在队列排队,线程数封顶。
+        int queryThreads = storage.config().serverQueryThreads();
+        queryPool = Executors.newFixedThreadPool(
+                queryThreads > 0 ? queryThreads : defaultQueryThreads());
         ServerBootstrap bootstrap = new ServerBootstrap()
                 .group(boss, workers)
                 .channel(NioServerSocketChannel.class)
@@ -64,6 +69,15 @@ public class MiniDbServer implements AutoCloseable {
 
     public int port() {
         return ((InetSocketAddress) channel.localAddress()).getPort();
+    }
+
+    /** 查询线程池(测试用:验证固定大小与封顶行为)。 */
+    ExecutorService queryPool() {
+        return queryPool;
+    }
+
+    private static int defaultQueryThreads() {
+        return Math.max(1, Runtime.getRuntime().availableProcessors());
     }
 
     @Override

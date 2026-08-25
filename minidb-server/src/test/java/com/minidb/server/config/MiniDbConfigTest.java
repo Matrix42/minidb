@@ -33,4 +33,16 @@ class MiniDbConfigTest {
         assertEquals(32L * 1024 * 1024, config.compactionTargetSizeBytes());
         assertEquals(16, config.compactionAutoPartThreshold());
     }
+
+    @Test
+    void queryThreadsDefaultsToAuto(@TempDir Path dir) {
+        assertEquals(0, MiniDbConfig.load(dir).serverQueryThreads());
+    }
+
+    @Test
+    void loadsServerQueryThreads(@TempDir Path dir) throws Exception {
+        Files.writeString(dir.resolve("config.yaml"),
+                "server:\n  query-threads: 4\n");
+        assertEquals(4, MiniDbConfig.load(dir).serverQueryThreads());
+    }
 }
