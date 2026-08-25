@@ -119,6 +119,6 @@ public class MessageEncoder extends MessageToByteEncoder<Message> {
     }
 
     private static byte[] bytes(String s) {
-        return s == null ? new byte[0] : s.getBytes(java.nio.charset.StandardCharsets.UTF_8);
+        return s == null ? new byte[0] : s.getBytes(StandardCharsets.UTF_8);
     }
 }

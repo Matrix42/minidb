@@ -1,9 +1,10 @@
 package com.minidb.server.exec;
-
 import com.minidb.server.exec.functions.Kernels;
 import java.math.BigDecimal;
 import java.nio.charset.StandardCharsets;
 import java.util.List;
+import org.apache.arrow.memory.BufferAllocator;
+import org.apache.arrow.vector.BaseFixedWidthVector;
 import org.apache.arrow.vector.BigIntVector;
 import org.apache.arrow.vector.BitVector;
 import org.apache.arrow.vector.DateDayVector;
@@ -21,12 +22,13 @@ import org.apache.arrow.vector.VarCharVector;
 import org.apache.arrow.vector.VectorSchemaRoot;
 import org.apache.arrow.vector.util.Text;
 
+
 public final class RowCopier {
 
     private RowCopier() {
     }
 
-    public static FieldVector copyVector(FieldVector src, org.apache.arrow.memory.BufferAllocator allocator) {
+    public static FieldVector copyVector(FieldVector src, BufferAllocator allocator) {
         FieldVector dst = src.getField().createVector(allocator);
         dst.setInitialCapacity(src.getValueCount());
         dst.allocateNew();
@@ -154,8 +156,8 @@ public final class RowCopier {
         if (src.getMinorType() != dst.getMinorType()) {
             return false;
         }
-        return src instanceof org.apache.arrow.vector.BaseFixedWidthVector
-                && dst instanceof org.apache.arrow.vector.BaseFixedWidthVector
+        return src instanceof BaseFixedWidthVector
+                && dst instanceof BaseFixedWidthVector
                 && !(src instanceof DecimalVector);
     }
 

@@ -107,16 +107,16 @@ class CodecTest {
     void fragmentedFramesReassemble() {
         EmbeddedChannel enc = new EmbeddedChannel(new MessageEncoder());
         enc.writeOutbound(new Message.ExecuteRequest(1L, "SELECT 1"));
-        io.netty.buffer.ByteBuf full = enc.readOutbound();
+        ByteBuf full = enc.readOutbound();
         byte[] bytes = new byte[full.readableBytes()];
         full.readBytes(bytes);
         full.release();
         enc.finishAndReleaseAll();
 
         EmbeddedChannel dec = new EmbeddedChannel(new MessageDecoder());
-        dec.writeInbound(io.netty.buffer.Unpooled.wrappedBuffer(bytes, 0, 5));
+        dec.writeInbound(Unpooled.wrappedBuffer(bytes, 0, 5));
         assertNull(dec.readInbound());
-        dec.writeInbound(io.netty.buffer.Unpooled.wrappedBuffer(bytes, 5, bytes.length - 5));
+        dec.writeInbound(Unpooled.wrappedBuffer(bytes, 5, bytes.length - 5));
         Message.ExecuteRequest out = dec.readInbound();
         assertEquals("SELECT 1", out.sql());
         dec.finishAndReleaseAll();

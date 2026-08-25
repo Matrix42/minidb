@@ -1,5 +1,4 @@
 package com.minidb.storage.lsm;
-
 import com.minidb.storage.common.*;
 import java.io.*;
 import java.nio.ByteBuffer;
@@ -9,9 +8,11 @@ import java.nio.file.Files;
 import java.nio.file.Path;
 import java.nio.file.StandardOpenOption;
 import java.util.ArrayList;
+import java.util.Arrays;
 import java.util.List;
 import org.apache.arrow.memory.BufferAllocator;
 import org.apache.arrow.vector.VectorSchemaRoot;
+
 
 public class SSTableReader implements AutoCloseable {
     private static final byte[] MAGIC = "LSMTBL".getBytes(StandardCharsets.UTF_8);
@@ -45,7 +46,7 @@ public class SSTableReader implements AutoCloseable {
             footerBuf.flip();
             byte[] magic = new byte[6];
             footerBuf.get(magic);
-            if (!java.util.Arrays.equals(magic, MAGIC)) {
+            if (!Arrays.equals(magic, MAGIC)) {
                 throw new IllegalArgumentException("not a valid SSTable: " + file);
             }
             int level = footerBuf.get();

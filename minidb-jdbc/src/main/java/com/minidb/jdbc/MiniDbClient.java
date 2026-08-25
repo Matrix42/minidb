@@ -1,5 +1,4 @@
 package com.minidb.jdbc;
-
 import com.minidb.protocol.Message;
 import com.minidb.protocol.MessageDecoder;
 import com.minidb.protocol.MessageEncoder;
@@ -24,6 +23,7 @@ import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.ExecutionException;
 import java.util.concurrent.TimeUnit;
+import java.util.concurrent.TimeoutException;
 import java.util.concurrent.atomic.AtomicLong;
 import org.apache.arrow.memory.BufferAllocator;
 import org.apache.arrow.memory.RootAllocator;
@@ -35,6 +35,7 @@ import org.apache.arrow.vector.ipc.ReadChannel;
 import org.apache.arrow.vector.ipc.message.ArrowRecordBatch;
 import org.apache.arrow.vector.ipc.message.MessageSerializer;
 import org.apache.arrow.vector.types.pojo.Schema;
+
 
 public class MiniDbClient implements AutoCloseable {
 
@@ -129,7 +130,7 @@ public class MiniDbClient implements AutoCloseable {
         } catch (InterruptedException e) {
             Thread.currentThread().interrupt();
             throw new SQLException("interrupted during connect", e);
-        } catch (java.util.concurrent.TimeoutException e) {
+        } catch (TimeoutException e) {
             channel.close();
             throw new SQLException("handshake timeout", e);
         } catch (ExecutionException e) {
@@ -284,7 +285,7 @@ public class MiniDbClient implements AutoCloseable {
         } catch (InterruptedException e) {
             Thread.currentThread().interrupt();
             throw new SQLException("interrupted", e);
-        } catch (java.util.concurrent.TimeoutException e) {
+        } catch (TimeoutException e) {
             throw new SQLException("timeout waiting for server response");
         } catch (ExecutionException e) {
             Throwable cause = e.getCause();
@@ -302,7 +303,7 @@ public class MiniDbClient implements AutoCloseable {
             reader.loadNextBatch();
             VectorSchemaRoot source = reader.getVectorSchemaRoot();
             VectorSchemaRoot copy = VectorSchemaRoot.create(source.getSchema(), allocator);
-            org.apache.arrow.vector.ipc.message.ArrowRecordBatch recordBatch =
+            ArrowRecordBatch recordBatch =
                     new VectorUnloader(source).getRecordBatch();
             new VectorLoader(copy).load(recordBatch);
             recordBatch.close();

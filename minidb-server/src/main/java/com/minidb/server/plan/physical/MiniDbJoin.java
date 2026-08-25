@@ -1,13 +1,13 @@
 package com.minidb.server.plan.physical;
-
-import com.minidb.storage.common.ArrowTypes;
-import com.minidb.storage.common.BatchIterator;
 import com.minidb.server.exec.ExecContext;
 import com.minidb.server.exec.RowCopier;
 import com.minidb.server.exec.ValueComparators;
+import com.minidb.storage.common.ArrowTypes;
+import com.minidb.storage.common.BatchIterator;
 import java.util.ArrayList;
 import java.util.Comparator;
 import java.util.List;
+import java.util.NoSuchElementException;
 import java.util.Set;
 import org.apache.arrow.vector.FieldVector;
 import org.apache.arrow.vector.ValueVector;
@@ -22,6 +22,7 @@ import org.apache.calcite.rel.core.JoinInfo;
 import org.apache.calcite.rel.core.JoinRelType;
 import org.apache.calcite.rel.type.RelDataTypeField;
 import org.apache.calcite.rex.RexNode;
+
 
 /**
  * Join base class. Subclasses implement one strategy (MiniDbHashJoin,
@@ -122,7 +123,7 @@ public abstract class MiniDbJoin extends Join implements MiniDbRel {
         @Override
         public VectorSchemaRoot next() {
             if (!hasNext()) {
-                throw new java.util.NoSuchElementException();
+                throw new NoSuchElementException();
             }
             VectorSchemaRoot out = current;
             current = null;

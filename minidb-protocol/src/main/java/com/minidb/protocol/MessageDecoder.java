@@ -134,6 +134,6 @@ public class MessageDecoder extends ByteToMessageDecoder {
         if (len == 0) return "";
         byte[] b = new byte[len];
         in.readBytes(b);
-        return new String(b, java.nio.charset.StandardCharsets.UTF_8);
+        return new String(b, StandardCharsets.UTF_8);
     }
 }

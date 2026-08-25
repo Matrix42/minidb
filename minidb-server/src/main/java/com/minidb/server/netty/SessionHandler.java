@@ -267,7 +267,7 @@ public class SessionHandler extends SimpleChannelInboundHandler<Message> {
     }
 
     private void handleMetadata(ChannelHandlerContext ctx, long requestId,
-                                java.util.function.Supplier<VectorSchemaRoot> supplier) {
+                                Supplier<VectorSchemaRoot> supplier) {
         long start = System.nanoTime();
         try {
             VectorSchemaRoot root = supplier.get();

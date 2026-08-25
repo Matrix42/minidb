@@ -1,8 +1,8 @@
 package com.minidb.storage.lsm;
-
 import com.minidb.storage.common.*;
 import java.io.IOException;
 import java.io.UncheckedIOException;
+import java.math.BigDecimal;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.util.ArrayList;
@@ -10,6 +10,7 @@ import java.util.List;
 import java.util.Map;
 import org.apache.arrow.memory.BufferAllocator;
 import org.apache.arrow.vector.VectorSchemaRoot;
+
 
 public class LSMTable implements TableHandle {
 
@@ -475,7 +476,7 @@ public class LSMTable implements TableHandle {
             case BIGINT -> Long.parseLong(s);
             case REAL, FLOAT -> Float.parseFloat(s);
             case DOUBLE -> Double.parseDouble(s);
-            case DECIMAL, NUMERIC -> new java.math.BigDecimal(s);
+            case DECIMAL, NUMERIC -> new BigDecimal(s);
             case BOOLEAN -> Boolean.parseBoolean(s);
             case DATE -> SSTableWriter.parseDate(s);
             case TIME -> SSTableWriter.parseTime(s);

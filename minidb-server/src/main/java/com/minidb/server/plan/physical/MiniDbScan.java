@@ -1,11 +1,11 @@
 package com.minidb.server.plan.physical;
-
+import com.google.common.collect.Range;
 import com.minidb.server.catalog.InformationSchemaCatalog;
-import com.minidb.storage.common.ArrowTypes;
-import com.minidb.storage.common.BatchIterator;
 import com.minidb.server.exec.ExecContext;
 import com.minidb.server.exec.InformationSchema;
 import com.minidb.server.exec.RowCopier;
+import com.minidb.storage.common.ArrowTypes;
+import com.minidb.storage.common.BatchIterator;
 import com.minidb.storage.common.ColumnType;
 import com.minidb.storage.common.RowValue;
 import com.minidb.storage.common.TableHandle;
@@ -13,7 +13,10 @@ import com.minidb.storage.common.TableSchema;
 import com.minidb.storage.lsm.SSTableWriter;
 import java.util.ArrayDeque;
 import java.util.ArrayList;
+import java.util.Arrays;
+import java.util.Collections;
 import java.util.Deque;
+import java.util.HashMap;
 import java.util.Iterator;
 import java.util.List;
 import java.util.Map;
@@ -37,7 +40,7 @@ import org.apache.calcite.sql.SqlKind;
 import org.apache.calcite.sql.fun.SqlStdOperatorTable;
 import org.apache.calcite.sql.type.SqlTypeName;
 import org.apache.calcite.util.Sarg;
-import com.google.common.collect.Range;
+
 
 public class MiniDbScan extends TableScan implements MiniDbRel {
 
@@ -69,7 +72,7 @@ public class MiniDbScan extends TableScan implements MiniDbRel {
             pw.item("filter", pushedFilter);
         }
         if (projectedColumns != null) {
-            pw.item("cols", java.util.Arrays.toString(projectedColumns));
+            pw.item("cols", Arrays.toString(projectedColumns));
         }
         return pw;
     }
@@ -339,7 +342,7 @@ public class MiniDbScan extends TableScan implements MiniDbRel {
         if (projectedColumns == null) {
             return batch;
         }
-        List<FieldVector> outVectors = new java.util.ArrayList<>(projectedColumns.length);
+        List<FieldVector> outVectors = new ArrayList<>(projectedColumns.length);
         for (int col : projectedColumns) {
             outVectors.add(batch.getVector(col).getField().createVector(ctx.allocator()));
         }
@@ -367,7 +370,7 @@ public class MiniDbScan extends TableScan implements MiniDbRel {
         int maxCol = 0;
         for (int c : projectedColumns) maxCol = Math.max(maxCol, c);
         int[] inverse = new int[maxCol + 1];
-        java.util.Arrays.fill(inverse, -1);
+        Arrays.fill(inverse, -1);
         for (int i = 0; i < projectedColumns.length; i++) {
             inverse[projectedColumns[i]] = i;
         }
@@ -469,7 +472,7 @@ public class MiniDbScan extends TableScan implements MiniDbRel {
             }
             List<RexNode> conjuncts = new ArrayList<>();
             splitConjuncts(filter, conjuncts);
-            Map<Integer, List<Object>> valuesByCol = new java.util.HashMap<>();
+            Map<Integer, List<Object>> valuesByCol = new HashMap<>();
             List<RexNode> residual = new ArrayList<>();
             for (RexNode c : conjuncts) {
                 BoundVals bv = boundValues(c);
@@ -643,8 +646,8 @@ public class MiniDbScan extends TableScan implements MiniDbRel {
             }
             List<RexNode> conjuncts = new ArrayList<>();
             splitConjuncts(filter, conjuncts);
-            List<Object> lo = new ArrayList<>(java.util.Collections.nCopies(pk.size(), null));
-            List<Object> hi = new ArrayList<>(java.util.Collections.nCopies(pk.size(), null));
+            List<Object> lo = new ArrayList<>(Collections.nCopies(pk.size(), null));
+            List<Object> hi = new ArrayList<>(Collections.nCopies(pk.size(), null));
             boolean anyBound = false;
             for (int i = 0; i < pk.size(); i++) {
                 int colIdx = schema.columnIndex(pk.get(i));

@@ -1,4 +1,5 @@
 package com.minidb.protocol;
+import io.netty.buffer.ByteBuf;
 
 public interface Message {
 
@@ -33,12 +34,12 @@ public interface Message {
         }
     }
 
-    record ArrowBatch(long requestId, boolean lastBatch, io.netty.buffer.ByteBuf data) implements Message {
+    record ArrowBatch(long requestId, boolean lastBatch, ByteBuf data) implements Message {
     }
 
     /** 分页续批:仅 IPC record-batch message(无 magic/schema/EOS),schema 在首批发过,按 cursorId 复用。 */
     record ArrowContinuation(long requestId, long cursorId, boolean lastBatch,
-                             io.netty.buffer.ByteBuf data) implements Message {
+                             ByteBuf data) implements Message {
     }
 
     record UpdateCount(long requestId, long count) implements Message {

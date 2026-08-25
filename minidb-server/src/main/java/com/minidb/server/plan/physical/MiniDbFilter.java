@@ -1,10 +1,10 @@
 package com.minidb.server.plan.physical;
-
-import com.minidb.storage.common.BatchIterator;
 import com.minidb.server.exec.ExecContext;
 import com.minidb.server.exec.RowCopier;
+import com.minidb.storage.common.BatchIterator;
 import java.util.ArrayDeque;
 import java.util.Deque;
+import java.util.List;
 import org.apache.arrow.vector.BitVector;
 import org.apache.arrow.vector.FieldVector;
 import org.apache.arrow.vector.ValueVector;
@@ -15,11 +15,12 @@ import org.apache.calcite.rel.RelNode;
 import org.apache.calcite.rel.core.Filter;
 import org.apache.calcite.rex.RexNode;
 
+
 public class MiniDbFilter extends Filter implements MiniDbRel {
 
     public MiniDbFilter(RelOptCluster cluster, RelTraitSet traitSet,
                         RelNode input, RexNode condition) {
-        super(cluster, traitSet, java.util.List.of(), input, condition);
+        super(cluster, traitSet, List.of(), input, condition);
     }
 
     @Override

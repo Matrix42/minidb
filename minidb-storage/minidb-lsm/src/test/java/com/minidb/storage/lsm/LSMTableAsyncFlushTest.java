@@ -1,6 +1,4 @@
 package com.minidb.storage.lsm;
-
-import static org.junit.jupiter.api.Assertions.*;
 import com.minidb.storage.arrow.ArrowPartFormat;
 import com.minidb.storage.common.*;
 import java.nio.file.Files;
@@ -8,9 +6,14 @@ import java.nio.file.Path;
 import java.util.ArrayList;
 import java.util.List;
 import org.apache.arrow.memory.RootAllocator;
+import org.apache.arrow.vector.IntVector;
+import org.apache.arrow.vector.VarCharVector;
 import org.apache.arrow.vector.VectorSchemaRoot;
+import org.apache.arrow.vector.util.Text;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
+import static org.junit.jupiter.api.Assertions.*;
+
 
 /**
  * 双缓冲 flush(A6):写路径满表 swap 出、后台异步落盘。验证:
@@ -130,8 +133,8 @@ class LSMTableAsyncFlushTest {
         root.setRowCount(n);
         for (int i = 0; i < n; i++) {
             int id = start + i;
-            ((org.apache.arrow.vector.IntVector) root.getVector(0)).setSafe(i, id);
-            ((org.apache.arrow.vector.VarCharVector) root.getVector(1)).setSafe(i, ("v" + id).getBytes());
+            ((IntVector) root.getVector(0)).setSafe(i, id);
+            ((VarCharVector) root.getVector(1)).setSafe(i, ("v" + id).getBytes());
         }
         table.writePart(root, TableHandle.Operation.INSERT);
         root.close();
@@ -146,7 +149,7 @@ class LSMTableAsyncFlushTest {
                 Object[] row = new Object[batch.getFieldVectors().size()];
                 for (int c = 0; c < row.length; c++) {
                     Object val = batch.getVector(c).getObject(i);
-                    if (val instanceof org.apache.arrow.vector.util.Text) {
+                    if (val instanceof Text) {
                         val = val.toString();
                     }
                     row[c] = val;

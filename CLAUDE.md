@@ -38,6 +38,7 @@ MiniDB 是一个基于 Apache Calcite(解析/规划)+ Apache Arrow(列式存储)
 6. **现有 7 个物理算子文件(`MiniDbScan`/`Filter`/`Project`/`Sort`/`Values`/`Modify`/`Aggregate`)和 `minidb-protocol` 模块尽量不改**——它们是稳定核心,扩展应通过新模块(参考 EXPLAIN 用 `ExplainExecutor` + `Instrumenter` 外挂的方式,零侵入算子)。规则类在 `rule/physical` 包(逻辑优化规则在 `rule/logical`)。
 7. **用中文回复用户**(代码/标识符/路径保持原文)。
 8. **不要偷懒,优先做对而不是做快**。当「干净、可扩展」的改法可行时,不要用局部特判/硬编码糊过去——特判会在调用点留 wart、破坏统一性、堵死后续同类扩展。判据:如果「把这个特判复制第二遍」会让你想把它下沉成框架能力,那第一次就不该特判。反例(已修):`CURRENT_DATE`/`CURRENT_TIMESTAMP` 最初在 `RexInterpreter.evalCall` 按算子特判,正确做法是让 `Function.evaluate` 支持 0 参函数,再把它们当普通函数注册进 `BuiltInFunctions`。
+9. **类名尽量不用全限定名(FQN)**,用 import + 简单名——除非不得已(如两个同名类需要同时引用)。FQN 让代码噪音大、重构时更难改;import 由 IDE/编译器管理,加一个 import 的成本远低于读代码时被一长串包名打断。写新代码/改旧代码时若顺手见到 FQN 就一并替换(替换后 import 全用上,无 unused 风险,编译兜底)。注释里提及类名不算(那是文档,不需要 import)。
 
 ## 架构与关键类
 

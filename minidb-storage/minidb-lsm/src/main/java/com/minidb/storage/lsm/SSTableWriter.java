@@ -1,18 +1,36 @@
 package com.minidb.storage.lsm;
-
 import com.minidb.storage.common.*;
 import java.io.*;
+import java.math.BigDecimal;
 import java.nio.ByteBuffer;
 import java.nio.channels.FileChannel;
 import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.nio.file.StandardOpenOption;
+import java.time.LocalDate;
+import java.time.LocalDateTime;
+import java.time.ZoneOffset;
 import java.util.ArrayList;
+import java.util.Iterator;
 import java.util.List;
 import java.util.Map;
 import org.apache.arrow.memory.BufferAllocator;
+import org.apache.arrow.vector.BigIntVector;
+import org.apache.arrow.vector.BitVector;
+import org.apache.arrow.vector.DateDayVector;
+import org.apache.arrow.vector.DecimalVector;
+import org.apache.arrow.vector.FieldVector;
+import org.apache.arrow.vector.Float4Vector;
+import org.apache.arrow.vector.Float8Vector;
+import org.apache.arrow.vector.IntVector;
+import org.apache.arrow.vector.SmallIntVector;
+import org.apache.arrow.vector.TimeMilliVector;
+import org.apache.arrow.vector.TimeStampMilliVector;
+import org.apache.arrow.vector.VarBinaryVector;
+import org.apache.arrow.vector.VarCharVector;
 import org.apache.arrow.vector.VectorSchemaRoot;
+
 
 public class SSTableWriter {
     private static final int BLOCK_SIZE = 64 * 1024; // 64KB
@@ -42,7 +60,7 @@ public class SSTableWriter {
     }
 
     public long writeFromIterator(
-            java.util.Iterator<Map.Entry<List<Object>, RowValue>> iterator, int totalRows) {
+            Iterator<Map.Entry<List<Object>, RowValue>> iterator, int totalRows) {
         BloomFilter bloom = new BloomFilter(bloomBitsPerKey, Math.max(1, totalRows));
         List<Object> minKey = null;
         List<Object> maxKey = null;
@@ -173,35 +191,35 @@ public class SSTableWriter {
 
     @SuppressWarnings("unchecked")
     public static void setVectorValue(
-            org.apache.arrow.vector.FieldVector vector, int row, Object val, ColumnType type) {
+            FieldVector vector, int row, Object val, ColumnType type) {
         switch (type) {
             case SMALLINT:
-                ((org.apache.arrow.vector.SmallIntVector) vector).setSafe(row, ((Number) val).shortValue());
+                ((SmallIntVector) vector).setSafe(row, ((Number) val).shortValue());
                 break;
             case INTEGER:
-                ((org.apache.arrow.vector.IntVector) vector).setSafe(row, ((Number) val).intValue());
+                ((IntVector) vector).setSafe(row, ((Number) val).intValue());
                 break;
             case BIGINT:
-                ((org.apache.arrow.vector.BigIntVector) vector).setSafe(row, ((Number) val).longValue());
+                ((BigIntVector) vector).setSafe(row, ((Number) val).longValue());
                 break;
             case REAL:
             case FLOAT:
-                ((org.apache.arrow.vector.Float4Vector) vector).setSafe(row, ((Number) val).floatValue());
+                ((Float4Vector) vector).setSafe(row, ((Number) val).floatValue());
                 break;
             case DOUBLE:
-                ((org.apache.arrow.vector.Float8Vector) vector).setSafe(row, ((Number) val).doubleValue());
+                ((Float8Vector) vector).setSafe(row, ((Number) val).doubleValue());
                 break;
             case DECIMAL:
             case NUMERIC:
                 // Arrow DecimalVector 需要 BigDecimal 或特定 scale 的 long/int
-                if (val instanceof java.math.BigDecimal bd) {
-                    ((org.apache.arrow.vector.DecimalVector) vector).setSafe(row, bd);
+                if (val instanceof BigDecimal bd) {
+                    ((DecimalVector) vector).setSafe(row, bd);
                 } else if (val instanceof Number num) {
-                    ((org.apache.arrow.vector.DecimalVector) vector).setSafe(row,
-                            java.math.BigDecimal.valueOf(num.doubleValue()));
+                    ((DecimalVector) vector).setSafe(row,
+                            BigDecimal.valueOf(num.doubleValue()));
                 } else {
-                    ((org.apache.arrow.vector.DecimalVector) vector).setSafe(row,
-                            new java.math.BigDecimal(val.toString()));
+                    ((DecimalVector) vector).setSafe(row,
+                            new BigDecimal(val.toString()));
                 }
                 break;
             case VARCHAR:
@@ -209,54 +227,54 @@ public class SSTableWriter {
             case NCHAR:
             case NVARCHAR:
                 byte[] bytes = val.toString().getBytes(StandardCharsets.UTF_8);
-                ((org.apache.arrow.vector.VarCharVector) vector).setSafe(row, bytes);
+                ((VarCharVector) vector).setSafe(row, bytes);
                 break;
             case BOOLEAN:
                 if (val instanceof Boolean b) {
-                    ((org.apache.arrow.vector.BitVector) vector).setSafe(row, b ? 1 : 0);
+                    ((BitVector) vector).setSafe(row, b ? 1 : 0);
                 } else if (val instanceof Number num) {
-                    ((org.apache.arrow.vector.BitVector) vector).setSafe(row, num.intValue() != 0 ? 1 : 0);
+                    ((BitVector) vector).setSafe(row, num.intValue() != 0 ? 1 : 0);
                 } else {
-                    ((org.apache.arrow.vector.BitVector) vector).setSafe(row,
+                    ((BitVector) vector).setSafe(row,
                             Boolean.parseBoolean(val.toString()) ? 1 : 0);
                 }
                 break;
             case DATE:
                 if (val instanceof Integer days) {
-                    ((org.apache.arrow.vector.DateDayVector) vector).setSafe(row, days);
+                    ((DateDayVector) vector).setSafe(row, days);
                 } else if (val instanceof Number num) {
-                    ((org.apache.arrow.vector.DateDayVector) vector).setSafe(row, num.intValue());
+                    ((DateDayVector) vector).setSafe(row, num.intValue());
                 } else {
-                    ((org.apache.arrow.vector.DateDayVector) vector).setSafe(row,
+                    ((DateDayVector) vector).setSafe(row,
                             parseDate(val.toString()));
                 }
                 break;
             case TIME:
                 if (val instanceof Integer millis) {
-                    ((org.apache.arrow.vector.TimeMilliVector) vector).setSafe(row, millis);
+                    ((TimeMilliVector) vector).setSafe(row, millis);
                 } else if (val instanceof Number num) {
-                    ((org.apache.arrow.vector.TimeMilliVector) vector).setSafe(row, num.intValue());
+                    ((TimeMilliVector) vector).setSafe(row, num.intValue());
                 } else {
-                    ((org.apache.arrow.vector.TimeMilliVector) vector).setSafe(row,
+                    ((TimeMilliVector) vector).setSafe(row,
                             parseTime(val.toString()));
                 }
                 break;
             case TIMESTAMP:
                 if (val instanceof Long millis) {
-                    ((org.apache.arrow.vector.TimeStampMilliVector) vector).setSafe(row, millis);
+                    ((TimeStampMilliVector) vector).setSafe(row, millis);
                 } else if (val instanceof Number num) {
-                    ((org.apache.arrow.vector.TimeStampMilliVector) vector).setSafe(row, num.longValue());
+                    ((TimeStampMilliVector) vector).setSafe(row, num.longValue());
                 } else {
-                    ((org.apache.arrow.vector.TimeStampMilliVector) vector).setSafe(row,
+                    ((TimeStampMilliVector) vector).setSafe(row,
                             parseTimestamp(val.toString()));
                 }
                 break;
             case BINARY:
             case VARBINARY:
                 if (val instanceof byte[] b) {
-                    ((org.apache.arrow.vector.VarBinaryVector) vector).setSafe(row, b);
+                    ((VarBinaryVector) vector).setSafe(row, b);
                 } else {
-                    ((org.apache.arrow.vector.VarBinaryVector) vector).setSafe(row,
+                    ((VarBinaryVector) vector).setSafe(row,
                             val.toString().getBytes(StandardCharsets.UTF_8));
                 }
                 break;
@@ -339,7 +357,7 @@ public class SSTableWriter {
         } catch (NumberFormatException e) {
             // 提取日期部分：去掉可能的 "T..." 后缀
             String datePart = s.contains("T") ? s.substring(0, s.indexOf('T')) : s;
-            return (int) java.time.LocalDate.parse(datePart).toEpochDay();
+            return (int) LocalDate.parse(datePart).toEpochDay();
         }
     }
 
@@ -362,8 +380,8 @@ public class SSTableWriter {
         try {
             return Long.parseLong(s);
         } catch (NumberFormatException e) {
-            return java.time.LocalDateTime.parse(s)
-                    .atZone(java.time.ZoneOffset.UTC).toInstant().toEpochMilli();
+            return LocalDateTime.parse(s)
+                    .atZone(ZoneOffset.UTC).toInstant().toEpochMilli();
         }
     }
 }

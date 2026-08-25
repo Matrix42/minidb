@@ -1,14 +1,15 @@
 package com.minidb.storage.lsm;
-
-import static org.junit.jupiter.api.Assertions.*;
 import com.minidb.storage.arrow.ArrowPartFormat;
 import com.minidb.storage.common.*;
 import java.nio.file.Path;
 import java.util.*;
 import org.apache.arrow.memory.RootAllocator;
 import org.apache.arrow.vector.VectorSchemaRoot;
+import org.apache.arrow.vector.util.Text;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
+import static org.junit.jupiter.api.Assertions.*;
+
 
 class MergeIteratorTest {
     private final TableSchema schema = new TableSchema("public", "t",
@@ -133,7 +134,7 @@ class MergeIteratorTest {
                 for (int c = 0; c < row.length; c++) {
                     Object val = batch.getVector(c).getObject(i);
                     // Arrow VarCharVector.getObject 返回 Text，转为 String
-                    if (val instanceof org.apache.arrow.vector.util.Text) {
+                    if (val instanceof Text) {
                         val = val.toString();
                     }
                     row[c] = val;
