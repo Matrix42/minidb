@@ -13,6 +13,7 @@ import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.nio.file.StandardOpenOption;
+import java.util.ArrayList;
 import java.util.List;
 import org.apache.arrow.memory.BufferAllocator;
 import org.apache.arrow.vector.BigIntVector;
@@ -30,6 +31,7 @@ import org.apache.arrow.vector.VarBinaryVector;
 import org.apache.arrow.vector.VarCharVector;
 import org.apache.arrow.vector.VectorSchemaRoot;
 import org.apache.arrow.vector.types.pojo.ArrowType;
+import org.apache.arrow.vector.types.pojo.Field;
 import org.apache.arrow.vector.types.pojo.Schema;
 import org.apache.parquet.ParquetReadOptions;
 import org.apache.parquet.arrow.schema.SchemaConverter;
@@ -39,6 +41,7 @@ import org.apache.parquet.example.data.Group;
 import org.apache.parquet.example.data.simple.SimpleGroupFactory;
 import org.apache.parquet.example.data.simple.convert.GroupRecordConverter;
 import org.apache.parquet.hadoop.ParquetFileReader;
+import org.apache.parquet.hadoop.ParquetWriter;
 import org.apache.parquet.hadoop.example.ExampleParquetWriter;
 import org.apache.parquet.hadoop.metadata.CompressionCodecName;
 import org.apache.parquet.io.ColumnIOFactory;
@@ -98,7 +101,7 @@ public class ParquetPartFormat implements PartFormat {
         ExampleParquetWriter.Builder builder = ExampleParquetWriter.builder(outputFile)
                 .withType(parquetSchema)
                 .withCompressionCodec(CompressionCodecName.UNCOMPRESSED);
-        try (org.apache.parquet.hadoop.ParquetWriter<Group> writer = builder.build()) {
+        try (ParquetWriter<Group> writer = builder.build()) {
             int rows = batch.getRowCount();
             List<FieldVector> vectors = batch.getFieldVectors();
             for (int r = 0; r < rows; r++) {
@@ -145,13 +148,13 @@ public class ParquetPartFormat implements PartFormat {
         MessageType parquetSchema = reader.getFooter().getFileMetaData().getSchema();
         // 列裁剪:构建投影 schema 和 Parquet 列路径
         Schema projSchema;
-        java.util.List<String> columnPaths;
+        List<String> columnPaths;
         if (projectedColumns == null || projectedColumns.length == schema.getFields().size()) {
             projSchema = schema;
             columnPaths = null; // 全量读
         } else {
-            java.util.List<org.apache.arrow.vector.types.pojo.Field> projFields = new java.util.ArrayList<>();
-            columnPaths = new java.util.ArrayList<>();
+            List<Field> projFields = new ArrayList<>();
+            columnPaths = new ArrayList<>();
             for (int col : projectedColumns) {
                 projFields.add(schema.getFields().get(col));
                 columnPaths.add(schema.getFields().get(col).getName());
@@ -159,25 +162,30 @@ public class ParquetPartFormat implements PartFormat {
             projSchema = new Schema(projFields, schema.getCustomMetadata());
         }
         MessageColumnIO columnIO;
+        // 投影分支的 Group 结构 schema(SimpleGroup 按此组织列序,必须与投影列一致)
+        MessageType groupSchema = parquetSchema;
         if (columnPaths == null) {
             columnIO = new ColumnIOFactory().getColumnIO(parquetSchema, parquetSchema);
         } else {
-            java.util.List<org.apache.parquet.schema.Type> projParquetFields = new java.util.ArrayList<>();
+            List<Type> projParquetFields = new ArrayList<>();
             for (String col : columnPaths) {
                 projParquetFields.add(parquetSchema.getType(col));
             }
             MessageType projParquet = new MessageType(parquetSchema.getName(), projParquetFields);
             columnIO = new ColumnIOFactory().getColumnIO(projParquet, parquetSchema);
+            groupSchema = projParquet;
         }
         VectorSchemaRoot root = VectorSchemaRoot.create(projSchema, allocator);
         root.allocateNew();
         int dst = 0;
         PageReadStore pages;
-        java.util.List<FieldVector> vectors = root.getFieldVectors();
+        List<FieldVector> vectors = root.getFieldVectors();
         int outCols = vectors.size();
+        // record 的 SimpleGroup 结构必须与列裁剪后的 schema 一致(投影分支用 projParquet),
+        // 否则列按原 schema 组织、投影位置错位(预存 bug,被 Planner 列裁剪激活)。
         while ((pages = reader.readNextRowGroup()) != null) {
             RecordReader<Group> recordReader =
-                    columnIO.getRecordReader(pages, new GroupRecordConverter(parquetSchema));
+                    columnIO.getRecordReader(pages, new GroupRecordConverter(groupSchema));
             int rows = (int) pages.getRowCount();
             for (int r = 0; r < rows; r++) {
                 Group group = recordReader.read();

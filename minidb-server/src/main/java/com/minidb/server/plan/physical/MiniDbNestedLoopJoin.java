@@ -61,8 +61,10 @@ public class MiniDbNestedLoopJoin extends MiniDbJoin {
     public Join copy(RelTraitSet traitSet, RexNode conditionExpr,
                      RelNode left, RelNode right, JoinRelType joinType,
                      boolean semiJoinDone) {
-        return new MiniDbNestedLoopJoin(getCluster(), traitSet, left, right,
+        MiniDbNestedLoopJoin newJoin = new MiniDbNestedLoopJoin(getCluster(), traitSet, left, right,
                 conditionExpr, joinType);
+        copyProjectionTo(newJoin);
+        return newJoin;
     }
 
     @Override

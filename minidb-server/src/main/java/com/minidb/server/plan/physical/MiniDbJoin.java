@@ -20,6 +20,8 @@ import org.apache.calcite.rel.RelNode;
 import org.apache.calcite.rel.core.Join;
 import org.apache.calcite.rel.core.JoinInfo;
 import org.apache.calcite.rel.core.JoinRelType;
+import org.apache.calcite.rel.type.RelDataType;
+import org.apache.calcite.rel.type.RelDataTypeFactory;
 import org.apache.calcite.rel.type.RelDataTypeField;
 import org.apache.calcite.rex.RexNode;
 
@@ -38,10 +40,49 @@ public abstract class MiniDbJoin extends Join implements MiniDbRel {
     /** 输出批次行数:与存储层 MAX_BATCH_ROWS 对齐,流式产批控制内存峰值。 */
     private static final int OUTPUT_BATCH = 4096;
 
+    // 输出列投影(Planner 列裁剪设置):null = 全列输出;否则 = 输出列在裁剪后 join 输出中的索引。
+    // join 内部(条件/键)仍用全列,仅 buildOutput 按投影列输出并收窄 rowType。
+    // copy 必须保留(投影是节点语义的一部分),否则重建的 join 输出全列、上层引用错位。
+    private int[] outputProjection;
+    private List<Integer> projectionRowTypeCols; // rowType 收窄用的原输出列索引
+    private RelDataType fullRowType; // 投影前的完整 rowType(copy 重建投影 rowType 用)
+
     protected MiniDbJoin(RelOptCluster cluster, RelTraitSet traitSet,
                          RelNode left, RelNode right, RexNode condition,
                          JoinRelType joinType) {
         super(cluster, traitSet, left, right, condition, Set.of(), joinType);
+    }
+
+    /**
+     * 设置输出列投影(Planner 列裁剪用);同时把 rowType 收窄为投影列子集,上层引用一致。
+     * projectedCols 是 buildOutput 用的 newJoin 输出索引;rowTypeCols 是 rowType 用的
+     * 原输出索引(两者不同:buildOutput 在裁剪后的左右向量上定位,rowType 在原始 rowType
+     * 上取字段)。
+     */
+    public void setOutputProjection(int[] projectedCols, List<Integer> rowTypeCols,
+                                    RelDataTypeFactory typeFactory, RelDataType fullRowType) {
+        this.outputProjection = projectedCols;
+        this.projectionRowTypeCols = rowTypeCols;
+        this.fullRowType = fullRowType;
+        RelDataTypeFactory.Builder builder = typeFactory.builder();
+        for (int c : rowTypeCols) {
+            RelDataTypeField field = fullRowType.getFieldList().get(c);
+            builder.add(field.getName(), field.getType());
+        }
+        this.rowType = builder.build();
+    }
+
+    /** 输出列投影(Planner 列裁剪);null = 全列。 */
+    public int[] outputProjection() {
+        return outputProjection;
+    }
+
+    /** copy 时保留投影(copy 重建后恢复 rowType 收窄)。 */
+    protected void copyProjectionTo(MiniDbJoin target) {
+        if (outputProjection != null) {
+            target.setOutputProjection(outputProjection, projectionRowTypeCols,
+                    getCluster().getTypeFactory(), fullRowType);
+        }
     }
 
     @Override
@@ -233,27 +274,32 @@ public abstract class MiniDbJoin extends Join implements MiniDbRel {
     private VectorSchemaRoot buildOutput(VectorSchemaRoot left, VectorSchemaRoot right,
                                          int[] leftRows, int[] rightRows, int n, ExecContext ctx) {
         List<FieldVector> vectors = new ArrayList<>();
+        int leftCols = leftColumnCount();
+        int total = n;
+        // 输出列选择:null = 全列;否则按 outputProjection(原输出索引,左列在前)选列。
         // 用实际物化向量 schema(而非 plan rowType):子节点(Aggregate)可能在 buildOutput
         // 里提升了 DECIMAL scale,plan rowType 仍是原 scale,会导致输出截断。
-        for (FieldVector v : left.getFieldVectors()) {
-            vectors.add(v.getField().createVector(ctx.allocator()));
+        int[] outCols = outputProjection;
+        int outCount = outCols == null ? left.getFieldVectors().size() + right.getFieldVectors().size()
+                : outCols.length;
+        for (int i = 0; i < outCount; i++) {
+            int orig = outCols == null ? i : outCols[i];
+            FieldVector src = orig < leftCols ? left.getVector(orig)
+                    : right.getVector(orig - leftCols);
+            vectors.add(src.getField().createVector(ctx.allocator()));
         }
-        for (FieldVector v : right.getFieldVectors()) {
-            vectors.add(v.getField().createVector(ctx.allocator()));
-        }
-        int total = n;
         for (FieldVector v : vectors) {
             v.setInitialCapacity(total);
             v.allocateNew();
         }
-        int leftCols = leftColumnCount();
-        int rightCols = rightColumnCount();
-        for (int c = 0; c < leftCols; c++) {
-            RowCopier.copyRowsByIndex(left.getVector(c), leftRows, 0, vectors.get(c), 0, total);
-        }
-        for (int c = 0; c < rightCols; c++) {
-            RowCopier.copyRowsByIndex(right.getVector(c), rightRows, 0,
-                    vectors.get(leftCols + c), 0, total);
+        for (int i = 0; i < outCount; i++) {
+            int orig = outCols == null ? i : outCols[i];
+            if (orig < leftCols) {
+                RowCopier.copyRowsByIndex(left.getVector(orig), leftRows, 0, vectors.get(i), 0, total);
+            } else {
+                RowCopier.copyRowsByIndex(right.getVector(orig - leftCols), rightRows, 0,
+                        vectors.get(i), 0, total);
+            }
         }
         for (FieldVector v : vectors) {
             v.setValueCount(total);

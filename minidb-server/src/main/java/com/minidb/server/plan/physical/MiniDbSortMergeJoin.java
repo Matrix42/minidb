@@ -67,8 +67,10 @@ public class MiniDbSortMergeJoin extends MiniDbJoin {
     public Join copy(RelTraitSet traitSet, RexNode conditionExpr,
                      RelNode left, RelNode right, JoinRelType joinType,
                      boolean semiJoinDone) {
-        return new MiniDbSortMergeJoin(getCluster(), traitSet, left, right,
+        MiniDbSortMergeJoin newJoin = new MiniDbSortMergeJoin(getCluster(), traitSet, left, right,
                 conditionExpr, joinType);
+        copyProjectionTo(newJoin);
+        return newJoin;
     }
 
     @Override

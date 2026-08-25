@@ -30,6 +30,9 @@ import org.apache.calcite.plan.RelTraitSet;
 import org.apache.calcite.rel.RelNode;
 import org.apache.calcite.rel.RelWriter;
 import org.apache.calcite.rel.core.TableScan;
+import org.apache.calcite.rel.type.RelDataType;
+import org.apache.calcite.rel.type.RelDataTypeFactory;
+import org.apache.calcite.rel.type.RelDataTypeField;
 import org.apache.calcite.rex.RexBuilder;
 import org.apache.calcite.rex.RexCall;
 import org.apache.calcite.rex.RexInputRef;
@@ -58,6 +61,35 @@ public class MiniDbScan extends TableScan implements MiniDbRel {
         super(cluster, traitSet, List.of(), table);
         this.projectedColumns = projectedColumns;
         this.pushedFilter = pushedFilter;
+        if (projectedColumns != null && !isIdentityProjection(projectedColumns,
+                table.getRowType().getFieldCount())) {
+            // 投影后 rowType = 投影列子集:上层算子的表达式/行类型分析按 rowType 取列,
+            // 若 rowType 仍是全表列,投影列非前缀时索引错位(列裁剪的 Planners pass 会触发)。
+            this.rowType = subsetRowType(cluster.getTypeFactory(), table.getRowType(),
+                    projectedColumns);
+        }
+    }
+
+    private static boolean isIdentityProjection(int[] projectedColumns, int fieldCount) {
+        if (projectedColumns.length != fieldCount) {
+            return false;
+        }
+        for (int i = 0; i < fieldCount; i++) {
+            if (projectedColumns[i] != i) {
+                return false;
+            }
+        }
+        return true;
+    }
+
+    private static RelDataType subsetRowType(RelDataTypeFactory typeFactory,
+                                             RelDataType full, int[] projectedColumns) {
+        RelDataTypeFactory.Builder builder = typeFactory.builder();
+        for (int p : projectedColumns) {
+            RelDataTypeField field = full.getFieldList().get(p);
+            builder.add(field.getName(), field.getType());
+        }
+        return builder.build();
     }
 
     /** 是否有下推优化(列裁剪 或 谓词下推)。 */

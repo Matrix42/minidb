@@ -49,8 +49,10 @@ public class MiniDbHashJoin extends MiniDbJoin {
     public Join copy(RelTraitSet traitSet, RexNode conditionExpr,
                      RelNode left, RelNode right, JoinRelType joinType,
                      boolean semiJoinDone) {
-        return new MiniDbHashJoin(getCluster(), traitSet, left, right,
+        MiniDbHashJoin newJoin = new MiniDbHashJoin(getCluster(), traitSet, left, right,
                 conditionExpr, joinType);
+        copyProjectionTo(newJoin);
+        return newJoin;
     }
 
     @Override

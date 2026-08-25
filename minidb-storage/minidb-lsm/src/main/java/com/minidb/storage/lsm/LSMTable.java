@@ -9,6 +9,7 @@ import java.util.ArrayList;
 import java.util.List;
 import java.util.Map;
 import org.apache.arrow.memory.BufferAllocator;
+import org.apache.arrow.vector.FieldVector;
 import org.apache.arrow.vector.VectorSchemaRoot;
 
 
@@ -132,6 +133,61 @@ public class LSMTable implements TableHandle {
     public BatchIterator scan(List<Object> rangeLo, List<Object> rangeHi) {
         return new MergeIterator(memTablesSnapshot(), sstManager, schema, format, allocator,
                 rangeLo, rangeHi).scan();
+    }
+
+    @Override
+    public BatchIterator scan(int[] projectedColumns) {
+        // LSM 是内存 merge,没有文件读时投影——按列拷贝包装(与 SimpleTable 的
+        // 存储层投影行为一致,MiniDbScan 据此把 filter 重映射到投影位置)。
+        return projectColumns(scan(), projectedColumns);
+    }
+
+    /** 按列投影包装迭代器:每批把所选列的 buffer 零拷贝转移(transfer)到新 root。
+     *  源批被转移的列 buffer 变空,close 由 source 迭代器统一处理。 */
+    private BatchIterator projectColumns(BatchIterator source, int[] cols) {
+        if (cols == null) {
+            return source;
+        }
+        return new BatchIterator() {
+            private VectorSchemaRoot pending;
+            private final List<VectorSchemaRoot> emitted = new ArrayList<>();
+
+            @Override
+            public boolean hasNext() {
+                while (pending == null && source.hasNext()) {
+                    VectorSchemaRoot src = source.next();
+                    List<FieldVector> vectors = new ArrayList<>();
+                    for (int c : cols) {
+                        FieldVector srcV = src.getVector(c);
+                        FieldVector dstV = srcV.getField().createVector(allocator);
+                        dstV.allocateNew();
+                        // 零拷贝转移 buffer(所有权归 dstV;srcV 变空,src root close 无害)
+                        srcV.makeTransferPair(dstV).transfer();
+                        vectors.add(dstV);
+                    }
+                    VectorSchemaRoot out = VectorSchemaRoot.of(vectors.toArray(new FieldVector[0]));
+                    emitted.add(out);
+                    pending = out;
+                }
+                return pending != null;
+            }
+
+            @Override
+            public VectorSchemaRoot next() {
+                VectorSchemaRoot out = pending;
+                pending = null;
+                return out;
+            }
+
+            @Override
+            public void close() {
+                source.close();
+                for (VectorSchemaRoot r : emitted) {
+                    r.close();
+                }
+                emitted.clear();
+            }
+        };
     }
 
     @Override
