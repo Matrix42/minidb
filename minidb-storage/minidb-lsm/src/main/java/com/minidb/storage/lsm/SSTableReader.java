@@ -61,8 +61,8 @@ public class SSTableReader implements AutoCloseable {
             long bloomOffset = footerBuf.getLong();
             ch.close();
 
-            List<Object> minKey = decodeKey(minKeyBytes);
-            List<Object> maxKey = decodeKey(maxKeyBytes);
+            List<Object> minKey = decodeKey(minKeyBytes, schema);
+            List<Object> maxKey = decodeKey(maxKeyBytes, schema);
 
             // Read bloom filter
             ch = FileChannel.open(file, StandardOpenOption.READ);
@@ -87,7 +87,7 @@ public class SSTableReader implements AutoCloseable {
                 idxBuf.get(kBytes);
                 long offset = idxBuf.getLong();
                 int size = idxBuf.getInt();
-                blockIndex.add(new BlockIndex(decodeKey(kBytes), offset, size));
+                blockIndex.add(new BlockIndex(decodeKey(kBytes, schema), offset, size));
             }
             ch.close();
 
@@ -294,34 +294,32 @@ public class SSTableReader implements AutoCloseable {
         }
     }
 
-    /** 解码 key 字节数组,零填充整数还原为 Integer,其余为 String。 */
-    static List<Object> decodeKey(byte[] keyBytes) {
-        String s = new String(keyBytes, StandardCharsets.UTF_8);
-        String[] parts = s.split("\0", -1);
-        List<Object> key = new ArrayList<>(parts.length);
-        for (String part : parts) {
-            key.add(decodeKeyValue(part));
+    /**
+     * 解码 key 字节数组(encodeKey 的逆):按主键列类型逐列读回。
+     * 整数读翻转符号位后还原,其余列读长度前缀 + UTF-8 字符串。
+     */
+    static List<Object> decodeKey(byte[] keyBytes, TableSchema schema) {
+        List<Object> key = new ArrayList<>();
+        try {
+            DataInputStream dis = new DataInputStream(new ByteArrayInputStream(keyBytes));
+            for (String pkCol : schema.primaryKey()) {
+                ColumnType t = schema.columns().get(schema.columnIndex(pkCol)).type();
+                switch (t) {
+                    case SMALLINT -> key.add((short) (dis.readShort() ^ 0x8000));
+                    case INTEGER -> key.add(dis.readInt() ^ 0x8000_0000);
+                    case BIGINT -> key.add(dis.readLong() ^ 0x8000_0000_0000_0000L);
+                    default -> {
+                        // 其余列(含 DATE/TIMESTAMP 的 LocalDate/LocalDateTime 值)走长度前缀 + UTF-8
+                        byte[] bytes = new byte[dis.readInt()];
+                        dis.readFully(bytes);
+                        key.add(new String(bytes, StandardCharsets.UTF_8));
+                    }
+                }
+            }
+        } catch (IOException e) {
+            throw new UncheckedIOException(e);
         }
         return key;
-    }
-
-    /** 单个 key 值的解码:尝试解析整数(兼容零填充),否则保留字符串。
-     *  encodeKey 对 Integer/Long 都零填充到 20 位,这里先试 int 再试 long。 */
-    static Object decodeKeyValue(String part) {
-        try {
-            return Integer.parseInt(part);
-        } catch (NumberFormatException e) {
-            try {
-                long v = Long.parseLong(part);
-                // 值在 int 范围内返回 Integer,否则返回 Long
-                if (v >= Integer.MIN_VALUE && v <= Integer.MAX_VALUE) {
-                    return (int) v;
-                }
-                return v;
-            } catch (NumberFormatException e2) {
-                return part;
-            }
-        }
     }
 
     private record BlockIndex(List<Object> startKey, long offset, int size) {}

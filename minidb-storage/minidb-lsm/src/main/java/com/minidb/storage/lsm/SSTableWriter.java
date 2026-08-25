@@ -299,26 +299,35 @@ public class SSTableWriter {
         while (footer.hasRemaining()) ch.write(footer);
     }
 
-    /** 将 key 编码为字节数组(用于索引和 bloom filter)。
-     *  整数 key 零填充到 20 位,保证字典序与数值序一致。 */
+    /**
+     * 将 key 编码为字节数组(用于索引和 bloom filter)。
+     * 二进制定长/前缀编码,字节字典序 = 数值/字符串序:
+     * 整数符号位翻转后大端(负数 < 正数,整数间保序),字符串用 4 字节长度前缀 + UTF-8
+     * (长度前缀保证前缀关系下短串恒小,同长比字节)。decodeKey 按主键列类型逐列读回,
+     * 无类型 tag、无分隔符。
+     */
     static byte[] encodeKey(List<Object> key) {
-        StringBuilder sb = new StringBuilder();
-        for (int i = 0; i < key.size(); i++) {
-            if (i > 0) sb.append('\0');
-            sb.append(encodeKeyValue(key.get(i)));
+        ByteArrayOutputStream bos = new ByteArrayOutputStream(key.size() * 8);
+        DataOutputStream dos = new DataOutputStream(bos);
+        try {
+            for (Object k : key) {
+                if (k instanceof Integer i) {
+                    dos.writeInt(i ^ 0x8000_0000); // 符号位翻转,保序
+                } else if (k instanceof Long l) {
+                    dos.writeLong(l ^ 0x8000_0000_0000_0000L);
+                } else if (k instanceof Short s) {
+                    dos.writeShort(s ^ 0x8000);
+                } else {
+                    // null / String / Text 等:长度前缀 + UTF-8(主键非空,writePart 已把 null 替换为空串)
+                    byte[] bytes = k == null ? new byte[0] : k.toString().getBytes(StandardCharsets.UTF_8);
+                    dos.writeInt(bytes.length);
+                    dos.write(bytes);
+                }
+            }
+        } catch (IOException e) {
+            throw new UncheckedIOException(e);
         }
-        return sb.toString().getBytes(StandardCharsets.UTF_8);
-    }
-
-    /** 单个 key 值的编码:整数零填充,其余 toString。 */
-    static String encodeKeyValue(Object k) {
-        if (k instanceof Integer) {
-            return String.format("%020d", (Integer) k);
-        }
-        if (k instanceof Long) {
-            return String.format("%020d", (Long) k);
-        }
-        return k.toString();
+        return bos.toByteArray();
     }
 
     private record BlockInfo(List<Object> startKey, long offset, int size) {}

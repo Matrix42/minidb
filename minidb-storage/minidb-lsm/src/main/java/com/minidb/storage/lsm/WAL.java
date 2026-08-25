@@ -252,20 +252,21 @@ public class WAL implements AutoCloseable {
         ByteArrayOutputStream bos = new ByteArrayOutputStream();
         DataOutputStream dos = new DataOutputStream(bos);
         dos.writeByte(value.kind());
-        // Key
+        // Key:类型自描述二进制(tag + 定长/长度前缀),恢复时直接还原 Integer/Long/String,
+        // 消除「toString → UTF-8 → 重新 parse」三趟,且不会把数字字符串 key 误当整数。
         dos.writeShort(key.size());
         for (Object k : key) {
             byte[] kBytes = encodeKeyValue(k);
             dos.writeInt(kBytes.length);
             dos.write(kBytes);
         }
-        // Values
+        // Values:字符串中间格式(与旧格式一致,恢复时按列类型转换)
         if (value.values() == null) {
             dos.writeShort(0);
         } else {
             dos.writeShort(value.values().length);
             for (Object v : value.values()) {
-                byte[] vBytes = encodeKeyValue(v);
+                byte[] vBytes = encodeValueString(v);
                 dos.writeInt(vBytes.length);
                 dos.write(vBytes);
             }
@@ -292,16 +293,65 @@ public class WAL implements AutoCloseable {
                 int len = buf.getInt();
                 byte[] vBytes = new byte[len];
                 buf.get(vBytes);
-                values[i] = decodeKeyValue(vBytes);
+                values[i] = decodeValueString(vBytes);
             }
         }
         return new Entry(key, new RowValue(kind, values));
     }
 
-    private byte[] encodeKeyValue(Object obj) {
-        if (obj == null) return new byte[] { 0 }; // sentinel: 0x00 = null
-        // 用字符串中间格式（与 MemTable 的 key 一致）
-        String s = obj.toString();
+    /** 单个 key 值编码:类型 tag + 数据,定长整数(4/8/2 字节),字符串长度前缀。 */
+    private static byte[] encodeKeyValue(Object k) {
+        ByteArrayOutputStream bos = new ByteArrayOutputStream(12);
+        DataOutputStream dos = new DataOutputStream(bos);
+        try {
+            if (k == null) {
+                dos.writeByte(0);
+            } else if (k instanceof Integer i) {
+                dos.writeByte(1);
+                dos.writeInt(i);
+            } else if (k instanceof Long l) {
+                dos.writeByte(2);
+                dos.writeLong(l);
+            } else if (k instanceof Short s) {
+                dos.writeByte(3);
+                dos.writeShort(s);
+            } else {
+                dos.writeByte(4);
+                byte[] utf8 = k.toString().getBytes(StandardCharsets.UTF_8);
+                dos.writeInt(utf8.length);
+                dos.write(utf8);
+            }
+            dos.flush();
+        } catch (IOException e) {
+            throw new UncheckedIOException(e);
+        }
+        return bos.toByteArray();
+    }
+
+    /** 单个 key 值解码(encodeKeyValue 的逆):按 tag 还原类型。 */
+    private static Object decodeKeyValue(byte[] bytes) {
+        try {
+            DataInputStream dis = new DataInputStream(new ByteArrayInputStream(bytes));
+            return switch (dis.readByte()) {
+                case 0 -> null;
+                case 1 -> dis.readInt();
+                case 2 -> dis.readLong();
+                case 3 -> dis.readShort();
+                default -> {
+                    byte[] utf8 = new byte[dis.readInt()];
+                    dis.readFully(utf8);
+                    yield new String(utf8, StandardCharsets.UTF_8);
+                }
+            };
+        } catch (IOException e) {
+            throw new UncheckedIOException(e);
+        }
+    }
+
+    /** 单个 value 编码:字符串中间格式(与旧格式一致)。 */
+    private static byte[] encodeValueString(Object v) {
+        if (v == null) return new byte[] { 0 }; // sentinel: 0x00 = null
+        String s = v.toString();
         byte[] utf8 = s.getBytes(StandardCharsets.UTF_8);
         byte[] result = new byte[1 + utf8.length];
         result[0] = 1; // sentinel: 0x01 = non-null string
@@ -309,7 +359,8 @@ public class WAL implements AutoCloseable {
         return result;
     }
 
-    private Object decodeKeyValue(byte[] bytes) {
+    /** 单个 value 解码(字符串中间格式)。 */
+    private static Object decodeValueString(byte[] bytes) {
         if (bytes.length == 0) return ""; // 向后兼容旧格式（无 sentinel 的空字符串）
         if (bytes[0] == 0) return null; // sentinel: null
         // bytes[0] == 1: non-null string; 也兼容旧格式（无 sentinel 前缀）

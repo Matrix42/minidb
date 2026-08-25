@@ -24,7 +24,7 @@ class WALTest {
         WAL wal2 = new WAL(walFile, schema);
         List<WAL.Entry> entries = wal2.recover();
         assertEquals(2, entries.size());
-        assertEquals("1", entries.get(0).key().get(0));
+        assertEquals(1, entries.get(0).key().get(0)); // 二进制编码保类型:Integer 而非 String
         assertEquals(RowValue.INSERT, entries.get(0).value().kind());
         assertEquals("a", entries.get(0).value().values()[1]);
         wal2.close();
@@ -84,9 +84,9 @@ class WALTest {
         WAL wal2 = new WAL(walFile, schema);
         List<WAL.Entry> entries = wal2.recover();
         assertEquals(3, entries.size());
-        assertEquals("1", entries.get(0).key().get(0));
-        assertEquals("2", entries.get(1).key().get(0));
-        assertEquals("3", entries.get(2).key().get(0));
+        assertEquals(1, entries.get(0).key().get(0));
+        assertEquals(2, entries.get(1).key().get(0));
+        assertEquals(3, entries.get(2).key().get(0));
         wal2.close();
 
         // drop 后不再恢复该段
@@ -94,8 +94,8 @@ class WALTest {
         WAL wal3 = new WAL(walFile, schema);
         List<WAL.Entry> afterDrop = wal3.recover();
         assertEquals(2, afterDrop.size());
-        assertEquals("2", afterDrop.get(0).key().get(0));
-        assertEquals("3", afterDrop.get(1).key().get(0));
+        assertEquals(2, afterDrop.get(0).key().get(0));
+        assertEquals(3, afterDrop.get(1).key().get(0));
         wal3.close();
     }
 

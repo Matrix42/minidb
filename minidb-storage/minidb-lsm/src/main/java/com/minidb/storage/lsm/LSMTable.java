@@ -96,11 +96,9 @@ public class LSMTable implements TableHandle {
         if (!walEntries.isEmpty()) {
             // WAL 有数据 = 上次 crash 前 MemTable 没 flush
             for (WAL.Entry entry : walEntries) {
-                // WAL key 统一为 String，需解析为 Integer/Long/String 以匹配 MemTable 的 raw Comparable 比较器
-                List<Object> key = new ArrayList<>();
-                for (Object k : entry.key()) {
-                    key.add(SSTableReader.decodeKeyValue(k.toString()));
-                }
+                // WAL key 二进制类型自描述,恢复时已是 Integer/Long/String 原类型
+                // (无需 toString + 重新 parse 三趟)
+                List<Object> key = new ArrayList<>(entry.key());
                 // WAL values 也是 String，需按列类型转换
                 RowValue rv = entry.value();
                 if (rv.values() != null) {
@@ -267,8 +265,7 @@ public class LSMTable implements TableHandle {
             }
         }
         // 查 SSTable：先 Bloom filter，再 key range，再读
-        // SSTableWriter.encodeKey 对整数零填充以保证字典序与数值序一致，
-        // 与 flushMemTable 中归一化后的 key 编码一致
+        // 与 flush 时 encodeKey 的二进制保序编码一致(整数定长 + 符号位翻转)
         byte[] encodedKey = SSTableWriter.encodeKey(key);
         for (int level : sstManager.allLevels()) {
             for (SSTable sst : sstManager.levelFiles(level)) {
