@@ -88,6 +88,41 @@ class MergeIteratorTest {
         assertTrue(rows.isEmpty());
     }
 
+    @Test
+    void multiBatchSstStreamsAcrossBlocks(@TempDir Path dir) throws Exception {
+        // 10000 行超过单 block 容量 → SstSource 流式换批;验证换批后 key 槽复用
+        // (lastKey 拷贝)与 values 数组独立性,以及跨批的 key 覆盖仍正确。
+        MemTable oldMt = new MemTable(schema, 1024 * 1024);
+        int n = 10_000;
+        for (int i = 0; i < n; i++) {
+            oldMt.put(List.of(i), new RowValue(RowValue.INSERT, new Object[]{i, "v" + i}));
+        }
+        Path sstFile = dir.resolve("sst-L0-000001.sst");
+        SSTableWriter writer = new SSTableWriter(sstFile, 0, schema,
+                new ArrowPartFormat(), allocator, 10);
+        writer.writeFromMemTable(oldMt);
+
+        SSTableManager mgr = new SSTableManager();
+        SSTableReader reader = new SSTableReader(sstFile, schema,
+                new ArrowPartFormat(), allocator);
+        SSTable sst = reader.metadata();
+        reader.close();
+        mgr.addLevel0(new SSTable(sstFile, 0, sst.seq(), sst.minKey(), sst.maxKey(),
+                sst.rowCount(), sst.bloom()));
+
+        // MemTable 覆盖文件中间某 key,验证流式合并跨批正确
+        MemTable mt = new MemTable(schema, 1024 * 1024);
+        mt.put(List.of(5000), new RowValue(RowValue.UPDATE, new Object[]{5000, "overridden"}));
+
+        MergeIterator mi = new MergeIterator(mt, mgr, schema,
+                new ArrowPartFormat(), allocator);
+        List<Object[]> rows = collect(mi);
+        assertEquals(n, rows.size());
+        assertEquals("v0", rows.get(0)[1]);
+        assertEquals("overridden", rows.get(5000)[1], "跨批的 key 覆盖应正确");
+        assertEquals("v9999", rows.get(n - 1)[1]);
+    }
+
     private List<Object[]> collect(MergeIterator mi) {
         List<Object[]> rows = new ArrayList<>();
         BatchIterator it = mi.scan();

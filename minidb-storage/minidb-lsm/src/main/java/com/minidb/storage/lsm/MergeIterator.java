@@ -49,10 +49,10 @@ public class MergeIterator {
     private class MergeScanIterator implements BatchIterator {
         // 源在构造时固定（1 个 MemTable + 每 SSTable 文件 1 个），之后不变。
         // 堆用裸 int[] 存「源下标」，比较时直接对源当前行的 key 判序——
-        // 相比 PriorityQueue<SourceEntry>：不装箱、每消费一行只做一次根替换下滤
+        // 相比 PriorityQueue<Source>：不装箱、每消费一行只做一次根替换下滤
         // （poll 下滤 + offer 上滤各一次 → 一次下滤）、初始化一次性 heapify 而非
-        // 逐次 siftUp、SourceSlot 跨行复用无每行对象分配。
-        private final SourceSlot[] sources;
+        // 逐次 siftUp、源槽跨行复用无每行对象分配。
+        private final Source[] sources;
         private final int[] heap;
         private int heapSize = 0;
 
@@ -72,11 +72,11 @@ public class MergeIterator {
             // 优先级：MemTable=0, L0=1, L1=2, L2=3...
             // 数字越小优先级越高；key 相同时优先级高的先出堆。
             List<SSTable> sstFiles = sstManager.allSSTables();
-            sources = new SourceSlot[sstFiles.size() + 1];
+            sources = new Source[sstFiles.size() + 1];
             heap = new int[sources.length];
 
             // MemTable source (priority 0)
-            sources[0] = newSource(memTable.iterator(), 0, Long.MAX_VALUE);
+            sources[0] = new MemTableSource(memTable.iterator());
 
             // SSTable sources。priority 直接用 sst.level()+1（比按 allLevels() 的
             // keySet 迭代序号更确定——CHM 的迭代序不保证升序，而 level 即优先级语义）。
@@ -88,19 +88,17 @@ public class MergeIterator {
                 }
                 SSTableReader reader = new SSTableReader(sst.file(), schema, format, allocator);
                 readers.add(reader);
-                // 读该 SSTable 的所有行到一个 list（简化实现，后续可优化为流式）
-                List<Map.Entry<List<Object>, RowValue>> sstRows = materializeSST(reader);
-                sources[idx++] = newSource(sstRows.iterator(), sst.level() + 1, sst.seq());
+                // 流式源:不物化整个文件,按需从 reader 拉批——每源常驻当前一批,
+                // 内存 O(批大小 × 文件数) 而非 O(文件总行数)。
+                BatchIterator it = rangeLo == null && rangeHi == null
+                        ? reader.scan() : reader.scan(rangeLo, rangeHi);
+                sources[idx++] = new SstSource(it, schema, sst.level() + 1, sst.seq());
             }
 
             // 每个源读首行入堆，再一次性自底向上 heapify（O(N)）——替代逐次 offer
             // 的 siftUp。之后每消费一行只对根做一次下滤（O(log N)），无上滤。
             for (int i = 0; i < idx; i++) {
-                SourceSlot s = sources[i];
-                if (s.iter.hasNext()) {
-                    Map.Entry<List<Object>, RowValue> e = s.iter.next();
-                    s.key = e.getKey();
-                    s.value = e.getValue();
+                if (sources[i].nextRow()) {
                     heap[heapSize++] = i;
                 }
             }
@@ -132,12 +130,17 @@ public class MergeIterator {
 
         @Override
         public void close() {
-            // 关闭所有已发出的 batch + 未发出的当前批 + SSTable reader。
+            // 关闭所有已发出的 batch + 未发出的当前批 + 各源的流式迭代器。
             for (VectorSchemaRoot batch : emitted) {
                 batch.close();
             }
             emitted.clear();
             // currentBatch 已在 emitted 中(若发过),避免 double close。
+            for (Source s : sources) {
+                if (s != null) {
+                    s.close();
+                }
+            }
             for (SSTableReader reader : readers) {
                 reader.close();
             }
@@ -147,19 +150,21 @@ public class MergeIterator {
             List<Object> lastKey = null;
             while (heapSize > 0 && batchRows.size() < 4096) {
                 int src = heap[0]; // 根 = 全局最小（主键升序 → 优先级升序 → seq 降序）
-                SourceSlot s = sources[src];
+                Source s = sources[src];
                 // 同一个 key 只取第一个（优先级最高的），使用 SSTable.compareKeys
-                if (lastKey != null && SSTable.compareKeys(s.key, lastKey) == 0) {
+                if (lastKey != null && SSTable.compareKeys(s.key(), lastKey) == 0) {
                     advanceSource(src);
                     continue;
                 }
-                lastKey = s.key;
+                // 拷贝 lastKey:源 key 槽跨行复用(nextRow 会 clear 同一对象),
+                // 堆外比较必须持有独立副本。
+                lastKey = new ArrayList<>(s.key());
                 // DELETE tombstone：跳过
-                if (s.value.kind() == RowValue.DELETE) {
+                if (s.kind() == RowValue.DELETE) {
                     advanceSource(src);
                     continue;
                 }
-                batchRows.add(s.value.values());
+                batchRows.add(s.values());
                 advanceSource(src);
             }
             if (heapSize == 0) {
@@ -176,11 +181,8 @@ public class MergeIterator {
          * </ul>
          */
         private void advanceSource(int src) {
-            SourceSlot s = sources[src];
-            if (s.iter.hasNext()) {
-                Map.Entry<List<Object>, RowValue> e = s.iter.next();
-                s.key = e.getKey();
-                s.value = e.getValue();
+            Source s = sources[src];
+            if (s.nextRow()) {
                 siftDown(0);
             } else {
                 heapSize--;
@@ -189,13 +191,6 @@ public class MergeIterator {
                     siftDown(0);
                 }
             }
-        }
-
-        private static SourceSlot newSource(
-                Iterator<Map.Entry<List<Object>, RowValue>> iter, int priority, long seq) {
-            SourceSlot s = new SourceSlot(priority, seq);
-            s.iter = iter;
-            return s;
         }
 
         /** 自底向上建堆：对最后一个非叶节点起逐个下滤。 */
@@ -226,9 +221,9 @@ public class MergeIterator {
 
         /** 源 a 是否应排在源 b 之前：主键升序，同键优先级升序，同优先级 seq 降序。 */
         private boolean less(int a, int b) {
-            SourceSlot sa = sources[a];
-            SourceSlot sb = sources[b];
-            int cmp = SSTable.compareKeys(sa.key, sb.key);
+            Source sa = sources[a];
+            Source sb = sources[b];
+            int cmp = SSTable.compareKeys(sa.key(), sb.key());
             if (cmp != 0) return cmp < 0;
             if (sa.priority != sb.priority) return sa.priority < sb.priority;
             return sa.seq > sb.seq;
@@ -238,28 +233,6 @@ public class MergeIterator {
         private boolean overlapsRange(SSTable sst) {
             return SSTableReader.keyLte(sst.minKey(), rangeHi)
                     && SSTableReader.keyGte(sst.maxKey(), rangeLo);
-        }
-
-        private List<Map.Entry<List<Object>, RowValue>> materializeSST(SSTableReader reader) {
-            List<Map.Entry<List<Object>, RowValue>> rows = new ArrayList<>();
-            BatchIterator it = rangeLo == null && rangeHi == null
-                    ? reader.scan() : reader.scan(rangeLo, rangeHi);
-            while (it.hasNext()) {
-                VectorSchemaRoot batch = it.next();
-                for (int i = 0; i < batch.getRowCount(); i++) {
-                    List<Object> key = new ArrayList<>();
-                    for (int c = 0; c < schema.primaryKey().size(); c++) {
-                        key.add(batch.getVector(c).getObject(i));
-                    }
-                    Object[] values = new Object[schema.columns().size()];
-                    for (int c = 0; c < values.length; c++) {
-                        values[c] = batch.getVector(c).getObject(i);
-                    }
-                    rows.add(Map.entry(key, new RowValue(RowValue.INSERT, values)));
-                }
-            }
-            it.close();
-            return rows;
         }
     }
 
@@ -279,20 +252,136 @@ public class MergeIterator {
     }
 
     /**
-     * 单个合并源（1 个 MemTable + 每 SSTable 文件 1 个）的当前行。
-     * 对象在构造时一次性分配、跨行复用——消费一行后 {@code advanceSource} 原地换新行，
-     * 避免 PriorityQueue 方案每行新建一个 entry 对象。key 在入堆期间非 null。
+     * 合并源(1 个 MemTable + 每 SSTable 文件 1 个)的「当前行槽」抽象。
+     * nextRow 推进到下一行,之后 key()/values()/kind() 返回新当前行(借用,
+     * 下轮 nextRow 后失效)。对象在构造时一次性分配、跨行复用。
      */
-    private static final class SourceSlot {
-        List<Object> key; // 当前行主键
-        RowValue value;   // 当前行值
-        Iterator<Map.Entry<List<Object>, RowValue>> iter; // 该源剩余行
+    private abstract static class Source {
         final int priority; // MemTable=0, L0=1, L1=2...
         final long seq;     // SSTable 全局序号，同优先级内越大越新
 
-        SourceSlot(int priority, long seq) {
+        Source(int priority, long seq) {
             this.priority = priority;
             this.seq = seq;
+        }
+
+        /** 推进到下一行;false=耗尽。之后 key()/values() 返回新当前行。 */
+        abstract boolean nextRow();
+
+        /** 当前行主键(借用,勿改;下轮 nextRow 后失效)。 */
+        abstract List<Object> key();
+
+        /** 当前行值数组(借用,勿改;下轮 nextRow 后失效)。 */
+        abstract Object[] values();
+
+        /** DELETE tombstone 标记(MemTable 行可能有;磁盘行恒 INSERT)。 */
+        abstract byte kind();
+
+        /** 释放持有的批/通道。 */
+        abstract void close();
+    }
+
+    /** MemTable 源:内存 entry 迭代器,零拷贝引用 map 里的行对象。 */
+    private static final class MemTableSource extends Source {
+        private final Iterator<Map.Entry<List<Object>, RowValue>> iter;
+        private Map.Entry<List<Object>, RowValue> current;
+
+        MemTableSource(Iterator<Map.Entry<List<Object>, RowValue>> iter) {
+            super(0, Long.MAX_VALUE);
+            this.iter = iter;
+        }
+
+        @Override
+        boolean nextRow() {
+            if (!iter.hasNext()) {
+                return false;
+            }
+            current = iter.next();
+            return true;
+        }
+
+        @Override
+        List<Object> key() {
+            return current.getKey();
+        }
+
+        @Override
+        Object[] values() {
+            return current.getValue().values();
+        }
+
+        @Override
+        byte kind() {
+            return current.getValue().kind();
+        }
+
+        @Override
+        void close() {
+            // MemTable 无持有资源
+        }
+    }
+
+    /**
+     * SSTable 源:流式按批从 reader 拉取,每源常驻当前一批(内存 O(批大小) 而非
+     * O(文件行数))。换批时 reader 释放旧批,故当前行必须拷进独立 key 槽与
+     * 独立 values 数组(batchRows 消费的是 values 引用,独立数组保证跨行稳定)。
+     */
+    private static final class SstSource extends Source {
+        private final BatchIterator it;
+        private final int pkCols;
+        private final int totalCols;
+        private VectorSchemaRoot batch;
+        private int pos;
+        private final List<Object> key = new ArrayList<>();
+        private Object[] rowValues;
+
+        SstSource(BatchIterator it, TableSchema schema, int priority, long seq) {
+            super(priority, seq);
+            this.it = it;
+            this.pkCols = schema.primaryKey().size();
+            this.totalCols = schema.columns().size();
+        }
+
+        @Override
+        boolean nextRow() {
+            if (batch == null || pos >= batch.getRowCount()) {
+                if (!it.hasNext()) {
+                    return false;
+                }
+                batch = it.next();
+                pos = 0;
+            }
+            key.clear();
+            for (int c = 0; c < pkCols; c++) {
+                key.add(batch.getVector(c).getObject(pos));
+            }
+            Object[] values = new Object[totalCols];
+            for (int c = 0; c < totalCols; c++) {
+                values[c] = batch.getVector(c).getObject(pos);
+            }
+            rowValues = values;
+            pos++;
+            return true;
+        }
+
+        @Override
+        List<Object> key() {
+            return key;
+        }
+
+        @Override
+        Object[] values() {
+            return rowValues;
+        }
+
+        @Override
+        byte kind() {
+            return RowValue.INSERT; // 磁盘行恒 INSERT(MemTable 的 DELETE 不进 flush)
+        }
+
+        @Override
+        void close() {
+            it.close();
         }
     }
 }
