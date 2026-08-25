@@ -66,23 +66,23 @@ public class MiniDbNestedLoopJoin extends MiniDbJoin {
     }
 
     @Override
-    protected List<int[]> joinPairs(VectorSchemaRoot left, VectorSchemaRoot right,
-                                    JoinInfo info, JoinRelType type, ExecContext ctx) {
+    protected PairSource joinPairs(VectorSchemaRoot left, VectorSchemaRoot right,
+                                   JoinInfo info, JoinRelType type, ExecContext ctx) {
         // 尝试 hash 加速:f(left_cols) = g(right_cols) 可用 hash map 代替逐对求值。
-        List<int[]> accelerated = tryHashAccelerated(left, right, type, ctx);
+        PairSource accelerated = tryHashAccelerated(left, right, type, ctx);
         if (accelerated != null) {
             return accelerated;
         }
-        return nestedLoopJoin(left, right, type, ctx);
+        return new NestedLoopPairSource(left, right, type, ctx);
     }
 
     /**
      * 若条件为 {@code f(left_cols) = g(right_cols)}(各操作数只引用单侧列),则对右侧建
      * hash map、左侧 probe,避免 O(n×m) 逐对求值。无法加速时返回 null,调用方回退到
-     * {@link #nestedLoopJoin}。
+     * {@link NestedLoopPairSource}。
      */
-    private List<int[]> tryHashAccelerated(VectorSchemaRoot left, VectorSchemaRoot right,
-                                           JoinRelType type, ExecContext ctx) {
+    private PairSource tryHashAccelerated(VectorSchemaRoot left, VectorSchemaRoot right,
+                                          JoinRelType type, ExecContext ctx) {
         RexNode condition = getCondition();
         if (!(condition instanceof RexCall call) || call.getKind() != SqlKind.EQUALS
                 || call.getOperands().size() != 2) {
@@ -121,18 +121,12 @@ public class MiniDbNestedLoopJoin extends MiniDbJoin {
     }
 
     /**
-     * 对右侧表达式建 hash map,左侧逐行 probe。rightExpr 的 RexInputRef 索引需从
-     * [leftCols..] 偏移到 [0..rightCols),由 {@link #shiftIndices} 完成。
+     * 对右侧表达式建 hash map,左侧逐行 probe(流式产出)。rightExpr 的 RexInputRef
+     * 索引需从 [leftCols..] 偏移到 [0..rightCols),由 {@link #shiftIndices} 完成。
      */
-    private List<int[]> hashAcceleratedJoin(VectorSchemaRoot left, VectorSchemaRoot right,
-                                            RexNode leftExpr, RexNode rightExpr, int leftCols,
-                                            JoinRelType type, ExecContext ctx) {
-        boolean keepUnmatchedLeft = type == JoinRelType.LEFT || type == JoinRelType.FULL;
-        boolean keepUnmatchedRight = type == JoinRelType.RIGHT || type == JoinRelType.FULL;
-        boolean[] matchedLeft = new boolean[left.getRowCount()];
-        boolean[] matchedRight = new boolean[right.getRowCount()];
-        List<int[]> outputRows = new ArrayList<>();
-
+    private PairSource hashAcceleratedJoin(VectorSchemaRoot left, VectorSchemaRoot right,
+                                           RexNode leftExpr, RexNode rightExpr, int leftCols,
+                                           JoinRelType type, ExecContext ctx) {
         // 右侧建 hash map:shift 索引后一次求值全量右行,逐行读 key 入 hash。
         RexNode rightExprShifted = shiftIndices(rightExpr, -leftCols);
         Map<Object, List<Integer>> hashMap = new HashMap<>();
@@ -147,46 +141,234 @@ public class MiniDbNestedLoopJoin extends MiniDbJoin {
         } finally {
             rightResults.close();
         }
-
-        // 左侧 probe:一次求值全量左行,逐行查 hash map。
+        // 左侧 probe 结果一次求值全量(表达式求值无状态,行对产出流式)。
         ValueVector leftResults = ctx.interpreter().eval(leftExpr, left);
-        try {
-            for (int leftIdx = 0; leftIdx < left.getRowCount(); leftIdx++) {
-                if (leftIdx % 1000 == 0) {
-                    ExecContext.checkInterrupted();
-                }
-                if (leftResults.isNull(leftIdx)) {
-                    continue;
-                }
-                List<Integer> matchingRight = hashMap.get(
-                        RowVectors.readObject(leftResults, leftIdx));
-                if (matchingRight != null) {
-                    for (int rightIdx : matchingRight) {
-                        outputRows.add(new int[]{leftIdx, rightIdx});
+        return new HashAccelPairSource(left, right, type, ctx, hashMap, leftResults);
+    }
+
+    /** 流式 probe 左侧匹配行;阶段 2/3 产出未匹配左行与未匹配右行(outer join)。 */
+    private static final class HashAccelPairSource implements PairSource {
+        private final VectorSchemaRoot left;
+        private final VectorSchemaRoot right;
+        private final JoinRelType type;
+        private final ExecContext ctx;
+        private final Map<Object, List<Integer>> hashMap;
+        private final ValueVector leftResults;
+        private final boolean keepUnmatchedLeft;
+        private final boolean keepUnmatchedRight;
+        private final boolean[] matchedLeft;
+        private final boolean[] matchedRight;
+
+        private int leftIdx = 0;
+        private List<Integer> matchList;
+        private int matchPos = 0;
+        private int phase = 0; // 0=probe, 1=unmatched left, 2=unmatched right
+        private int scanIdx = 0;
+
+        HashAccelPairSource(VectorSchemaRoot left, VectorSchemaRoot right, JoinRelType type,
+                            ExecContext ctx, Map<Object, List<Integer>> hashMap,
+                            ValueVector leftResults) {
+            this.left = left;
+            this.right = right;
+            this.type = type;
+            this.ctx = ctx;
+            this.hashMap = hashMap;
+            this.leftResults = leftResults;
+            this.keepUnmatchedLeft = type == JoinRelType.LEFT || type == JoinRelType.FULL;
+            this.keepUnmatchedRight = type == JoinRelType.RIGHT || type == JoinRelType.FULL;
+            this.matchedLeft = new boolean[left.getRowCount()];
+            this.matchedRight = new boolean[right.getRowCount()];
+            // 预加载第 0 行的匹配列表(fill 循环推进前先消费当前行)
+            if (left.getRowCount() > 0 && !leftResults.isNull(0)) {
+                this.matchList = hashMap.get(RowVectors.readObject(leftResults, 0));
+            }
+        }
+
+        @Override
+        public int fill(int[] leftRows, int[] rightRows, int outPos, int len) {
+            int out = outPos;
+            int end = outPos + len;
+            while (out < end) {
+                if (phase == 0) {
+                    if (leftIdx >= left.getRowCount()) {
+                        phase = 1;
+                        scanIdx = 0;
+                        continue;
+                    }
+                    if (matchList != null && matchPos < matchList.size()) {
+                        int rightIdx = matchList.get(matchPos++);
+                        leftRows[out] = leftIdx;
+                        rightRows[out] = rightIdx;
                         matchedLeft[leftIdx] = true;
                         matchedRight[rightIdx] = true;
+                        out++;
+                        continue;
+                    }
+                    leftIdx++;
+                    if (leftIdx % 1000 == 0) {
+                        ExecContext.checkInterrupted();
+                    }
+                    matchList = null;
+                    matchPos = 0;
+                    if (leftIdx < left.getRowCount() && !leftResults.isNull(leftIdx)) {
+                        matchList = hashMap.get(RowVectors.readObject(leftResults, leftIdx));
+                    }
+                    continue;
+                }
+                if (phase == 1 && keepUnmatchedLeft) {
+                    while (scanIdx < left.getRowCount() && matchedLeft[scanIdx]) {
+                        scanIdx++;
+                    }
+                    if (scanIdx < left.getRowCount()) {
+                        leftRows[out] = scanIdx;
+                        rightRows[out] = -1;
+                        out++;
+                        scanIdx++;
+                        continue;
+                    }
+                    // 左未匹配耗尽 → 阶段 3
+                    if (keepUnmatchedRight) {
+                        phase = 2;
+                        scanIdx = 0;
+                    } else {
+                        break;
                     }
                 }
+                if (phase == 2 && keepUnmatchedRight) {
+                    while (scanIdx < right.getRowCount() && matchedRight[scanIdx]) {
+                        scanIdx++;
+                    }
+                    if (scanIdx < right.getRowCount()) {
+                        leftRows[out] = -1;
+                        rightRows[out] = scanIdx;
+                        out++;
+                        scanIdx++;
+                        continue;
+                    }
+                    break;
+                }
+                break;
             }
-        } finally {
-            leftResults.close();
+            return out;
         }
 
-        if (keepUnmatchedLeft) {
-            for (int leftIdx = 0; leftIdx < left.getRowCount(); leftIdx++) {
-                if (!matchedLeft[leftIdx]) {
-                    outputRows.add(new int[]{leftIdx, -1});
-                }
-            }
+        @Override
+        public void close() {
+            leftResults.close();
         }
-        if (keepUnmatchedRight) {
-            for (int rightIdx = 0; rightIdx < right.getRowCount(); rightIdx++) {
-                if (!matchedRight[rightIdx]) {
-                    outputRows.add(new int[]{-1, rightIdx});
-                }
-            }
+    }
+
+    /**
+     * 纯嵌套循环:O(n×m) 逐对求值,当 hash 加速不可用时回退到此处。
+     * 双游标推进 + probeRoot 复用,天然流式。非静态内部类以访问 buildProbeRoot/getCondition。
+     */
+    private final class NestedLoopPairSource implements PairSource {
+        private final VectorSchemaRoot left;
+        private final VectorSchemaRoot right;
+        private final JoinRelType type;
+        private final ExecContext ctx;
+        private final boolean keepUnmatchedLeft;
+        private final boolean keepUnmatchedRight;
+        private final boolean[] matchedLeft;
+        private final boolean[] matchedRight;
+        private final VectorSchemaRoot probeRoot;
+
+        private int leftIdx = 0;
+        private int rightIdx = 0;
+        private int phase = 0; // 0=loop, 1=unmatched left, 2=unmatched right
+        private int scanIdx = 0;
+
+        NestedLoopPairSource(VectorSchemaRoot left, VectorSchemaRoot right, JoinRelType type,
+                             ExecContext ctx) {
+            this.left = left;
+            this.right = right;
+            this.type = type;
+            this.ctx = ctx;
+            this.keepUnmatchedLeft = type == JoinRelType.LEFT || type == JoinRelType.FULL;
+            this.keepUnmatchedRight = type == JoinRelType.RIGHT || type == JoinRelType.FULL;
+            this.matchedLeft = new boolean[left.getRowCount()];
+            this.matchedRight = new boolean[right.getRowCount()];
+            this.probeRoot = buildProbeRoot(ctx, left, right);
         }
-        return outputRows;
+
+        @Override
+        public int fill(int[] leftRows, int[] rightRows, int outPos, int len) {
+            int out = outPos;
+            int end = outPos + len;
+            while (out < end) {
+                if (phase == 0) {
+                    if (leftIdx >= left.getRowCount()) {
+                        phase = 1;
+                        scanIdx = 0;
+                        continue;
+                    }
+                    if (rightIdx >= right.getRowCount()) {
+                        leftIdx++;
+                        rightIdx = 0;
+                        if (leftIdx % 1000 == 0) {
+                            ExecContext.checkInterrupted();
+                        }
+                        continue;
+                    }
+                    writeProbeRow(probeRoot, left, leftIdx, right, rightIdx);
+                    ValueVector conditionResult = ctx.interpreter().eval(getCondition(), probeRoot);
+                    try {
+                        boolean matches = !conditionResult.isNull(0)
+                                && ((BitVector) conditionResult).get(0) == 1;
+                        if (matches) {
+                            leftRows[out] = leftIdx;
+                            rightRows[out] = rightIdx;
+                            matchedLeft[leftIdx] = true;
+                            matchedRight[rightIdx] = true;
+                            out++;
+                        }
+                    } finally {
+                        conditionResult.close();
+                    }
+                    rightIdx++;
+                    continue;
+                }
+                if (phase == 1 && keepUnmatchedLeft) {
+                    while (scanIdx < left.getRowCount() && matchedLeft[scanIdx]) {
+                        scanIdx++;
+                    }
+                    if (scanIdx < left.getRowCount()) {
+                        leftRows[out] = scanIdx;
+                        rightRows[out] = -1;
+                        out++;
+                        scanIdx++;
+                        continue;
+                    }
+                    // 左未匹配耗尽 → 阶段 3
+                    if (keepUnmatchedRight) {
+                        phase = 2;
+                        scanIdx = 0;
+                    } else {
+                        break;
+                    }
+                }
+                if (phase == 2 && keepUnmatchedRight) {
+                    while (scanIdx < right.getRowCount() && matchedRight[scanIdx]) {
+                        scanIdx++;
+                    }
+                    if (scanIdx < right.getRowCount()) {
+                        leftRows[out] = -1;
+                        rightRows[out] = scanIdx;
+                        out++;
+                        scanIdx++;
+                        continue;
+                    }
+                    break;
+                }
+                break;
+            }
+            return out;
+        }
+
+        @Override
+        public void close() {
+            probeRoot.close();
+        }
     }
 
     /** 把 RexNode 里所有 RexInputRef 索引偏移 {@code delta}(可为负)。 */
@@ -197,55 +379,5 @@ public class MiniDbNestedLoopJoin extends MiniDbJoin {
                 return new RexInputRef(inputRef.getIndex() + delta, inputRef.getType());
             }
         });
-    }
-
-    /** 原始嵌套循环:O(n×m) 逐对求值,当 hash 加速不可用时回退到此处。 */
-    private List<int[]> nestedLoopJoin(VectorSchemaRoot left, VectorSchemaRoot right,
-                                       JoinRelType type, ExecContext ctx) {
-        boolean keepUnmatchedLeft = type == JoinRelType.LEFT || type == JoinRelType.FULL;
-        boolean keepUnmatchedRight = type == JoinRelType.RIGHT || type == JoinRelType.FULL;
-        boolean[] matchedLeft = new boolean[left.getRowCount()];
-        boolean[] matchedRight = new boolean[right.getRowCount()];
-        VectorSchemaRoot probeRoot = buildProbeRoot(ctx, left, right);
-        List<int[]> outputRows = new ArrayList<>();
-        try {
-            for (int leftIdx = 0; leftIdx < left.getRowCount(); leftIdx++) {
-                if (leftIdx % 1000 == 0) {
-                    ExecContext.checkInterrupted();
-                }
-                for (int rightIdx = 0; rightIdx < right.getRowCount(); rightIdx++) {
-                    writeProbeRow(probeRoot, left, leftIdx, right, rightIdx);
-                    ValueVector conditionResult = ctx.interpreter().eval(getCondition(), probeRoot);
-                    try {
-                        boolean matches = !conditionResult.isNull(0)
-                                && ((BitVector) conditionResult).get(0) == 1;
-                        if (matches) {
-                            outputRows.add(new int[]{leftIdx, rightIdx});
-                            matchedLeft[leftIdx] = true;
-                            matchedRight[rightIdx] = true;
-                        }
-                    } finally {
-                        conditionResult.close();
-                    }
-                }
-            }
-        } finally {
-            probeRoot.close();
-        }
-        if (keepUnmatchedLeft) {
-            for (int leftIdx = 0; leftIdx < left.getRowCount(); leftIdx++) {
-                if (!matchedLeft[leftIdx]) {
-                    outputRows.add(new int[]{leftIdx, -1});
-                }
-            }
-        }
-        if (keepUnmatchedRight) {
-            for (int rightIdx = 0; rightIdx < right.getRowCount(); rightIdx++) {
-                if (!matchedRight[rightIdx]) {
-                    outputRows.add(new int[]{-1, rightIdx});
-                }
-            }
-        }
-        return outputRows;
     }
 }

@@ -72,8 +72,8 @@ public class MiniDbSortMergeJoin extends MiniDbJoin {
     }
 
     @Override
-    protected List<int[]> joinPairs(VectorSchemaRoot left, VectorSchemaRoot right,
-                                    JoinInfo info, JoinRelType type, ExecContext ctx) {
+    protected PairSource joinPairs(VectorSchemaRoot left, VectorSchemaRoot right,
+                                   JoinInfo info, JoinRelType type, ExecContext ctx) {
         List<Integer> leftKeyCols = info.leftKeys;
         List<Integer> rightKeyCols = info.rightKeys;
         // Row indices in merge order: a pre-sorted input can be consumed in
@@ -82,96 +82,176 @@ public class MiniDbSortMergeJoin extends MiniDbJoin {
                 : sortedIndices(left, leftKeyCols);
         List<Integer> rightScanOrder = rightSorted ? identity(right.getRowCount())
                 : sortedIndices(right, rightKeyCols);
-        // Outer-join semantics: unmatched rows on the preserved side are padded
-        // with nulls on the other side.
-        boolean keepUnmatchedLeft = type == JoinRelType.LEFT || type == JoinRelType.FULL;
-        boolean keepUnmatchedRight = type == JoinRelType.RIGHT || type == JoinRelType.FULL;
-        List<int[]> outputRows = new ArrayList<>();
-        int leftPos = 0;
-        int rightPos = 0;
-        while (leftPos < leftScanOrder.size() && rightPos < rightScanOrder.size()) {
-            int leftRowIdx = leftScanOrder.get(leftPos);
-            int rightRowIdx = rightScanOrder.get(rightPos);
-            boolean leftHasNullKey = hasNullKey(left, leftRowIdx, leftKeyCols);
-            boolean rightHasNullKey = hasNullKey(right, rightRowIdx, rightKeyCols);
-            if (leftHasNullKey || rightHasNullKey) {
-                // Null keys never match. For outer joins each null-keyed row is
-                // emitted as a preserved row (padded with nulls on the other side);
-                // for inner joins it is simply skipped.
-                if (leftHasNullKey && rightHasNullKey) {
-                    if (keepUnmatchedLeft) {
-                        outputRows.add(new int[]{leftRowIdx, -1});
+        return new MergePairSource(left, right, type, ctx, leftKeyCols, rightKeyCols,
+                leftScanOrder, rightScanOrder);
+    }
+
+    /**
+     * 流式双指针 merge:游标推进产出匹配/保留行,相等键组的 cross product 按内层
+     * 游标逐对产出——不物化输出行对,内存 O(批大小)。
+     */
+    private static final class MergePairSource implements PairSource {
+        private final VectorSchemaRoot left;
+        private final VectorSchemaRoot right;
+        private final JoinRelType type;
+        private final ExecContext ctx;
+        private final List<Integer> leftKeyCols;
+        private final List<Integer> rightKeyCols;
+        private final List<Integer> leftScanOrder;
+        private final List<Integer> rightScanOrder;
+        private final boolean keepUnmatchedLeft;
+        private final boolean keepUnmatchedRight;
+
+        // 主游标
+        private int leftPos = 0;
+        private int rightPos = 0;
+        // 相等键组 cross 游标(inCross=true 时生效)
+        private boolean inCross;
+        private int crossLeftPos;
+        private int crossRightPos;
+        private int crossLeftEnd;
+        private int crossRightEnd;
+        private int crossRightStart;
+
+        MergePairSource(VectorSchemaRoot left, VectorSchemaRoot right, JoinRelType type,
+                        ExecContext ctx, List<Integer> leftKeyCols, List<Integer> rightKeyCols,
+                        List<Integer> leftScanOrder, List<Integer> rightScanOrder) {
+            this.left = left;
+            this.right = right;
+            this.type = type;
+            this.ctx = ctx;
+            this.leftKeyCols = leftKeyCols;
+            this.rightKeyCols = rightKeyCols;
+            this.leftScanOrder = leftScanOrder;
+            this.rightScanOrder = rightScanOrder;
+            this.keepUnmatchedLeft = type == JoinRelType.LEFT || type == JoinRelType.FULL;
+            this.keepUnmatchedRight = type == JoinRelType.RIGHT || type == JoinRelType.FULL;
+        }
+
+        @Override
+        public int fill(int[] leftRows, int[] rightRows, int outPos, int len) {
+            int out = outPos;
+            int end = outPos + len;
+            while (out < end) {
+                if (inCross) {
+                    // 产出当前相等键组的一对
+                    leftRows[out] = leftScanOrder.get(crossLeftPos);
+                    rightRows[out] = rightScanOrder.get(crossRightPos);
+                    out++;
+                    crossRightPos++;
+                    if (crossRightPos >= crossRightEnd) {
+                        crossLeftPos++;
+                        crossRightPos = crossRightStart;
+                        if (crossLeftPos >= crossLeftEnd) {
+                            // 组耗尽,恢复主循环
+                            inCross = false;
+                            leftPos = crossLeftEnd;
+                            rightPos = crossRightEnd;
+                        }
                     }
+                    continue;
+                }
+                if (leftPos >= leftScanOrder.size()) {
+                    // 右侧余行:键都大于左侧耗尽侧(或 null 键),FULL/RIGHT 保留
+                    while (rightPos < rightScanOrder.size() && out < end) {
+                        if (keepUnmatchedRight) {
+                            leftRows[out] = -1;
+                            rightRows[out] = rightScanOrder.get(rightPos);
+                            out++;
+                        }
+                        rightPos++;
+                    }
+                    break;
+                }
+                if (rightPos >= rightScanOrder.size()) {
+                    while (leftPos < leftScanOrder.size() && out < end) {
+                        if (keepUnmatchedLeft) {
+                            leftRows[out] = leftScanOrder.get(leftPos);
+                            rightRows[out] = -1;
+                            out++;
+                        }
+                        leftPos++;
+                    }
+                    break;
+                }
+                int leftRowIdx = leftScanOrder.get(leftPos);
+                int rightRowIdx = rightScanOrder.get(rightPos);
+                boolean leftHasNullKey = hasNullKey(left, leftRowIdx, leftKeyCols);
+                boolean rightHasNullKey = hasNullKey(right, rightRowIdx, rightKeyCols);
+                if (leftHasNullKey || rightHasNullKey) {
+                    // Null keys never match. For outer joins each null-keyed row is
+                    // emitted as a preserved row; for inner joins it is skipped.
+                    if (leftHasNullKey && rightHasNullKey) {
+                        if (keepUnmatchedLeft) {
+                            leftRows[out] = leftRowIdx;
+                            rightRows[out] = -1;
+                            out++;
+                        }
+                        if (keepUnmatchedRight) {
+                            leftRows[out] = -1;
+                            rightRows[out] = rightRowIdx;
+                            out++;
+                        }
+                        leftPos++;
+                        rightPos++;
+                    } else if (leftHasNullKey) {
+                        if (keepUnmatchedLeft) {
+                            leftRows[out] = leftRowIdx;
+                            rightRows[out] = -1;
+                            out++;
+                        }
+                        leftPos++;
+                    } else {
+                        if (keepUnmatchedRight) {
+                            leftRows[out] = -1;
+                            rightRows[out] = rightRowIdx;
+                            out++;
+                        }
+                        rightPos++;
+                    }
+                    continue;
+                }
+                int cmp = compareKeys(left, leftRowIdx, leftKeyCols,
+                        right, rightRowIdx, rightKeyCols);
+                if (cmp < 0) {
+                    if (keepUnmatchedLeft) {
+                        leftRows[out] = leftRowIdx;
+                        rightRows[out] = -1;
+                        out++;
+                    }
+                    leftPos++;
+                } else if (cmp > 0) {
                     if (keepUnmatchedRight) {
-                        outputRows.add(new int[]{-1, rightRowIdx});
+                        leftRows[out] = -1;
+                        rightRows[out] = rightRowIdx;
+                        out++;
                     }
-                    leftPos++;
                     rightPos++;
-                } else if (leftHasNullKey) {
-                    if (keepUnmatchedLeft) {
-                        outputRows.add(new int[]{leftRowIdx, -1});
-                    }
-                    leftPos++;
                 } else {
-                    if (keepUnmatchedRight) {
-                        outputRows.add(new int[]{-1, rightRowIdx});
+                    // 相等键:找两侧完整组(连续、非 null、同键),进入 cross 逐对产出
+                    int leftGroupEnd = leftPos;
+                    while (leftGroupEnd < leftScanOrder.size()
+                            && !hasNullKey(left, leftScanOrder.get(leftGroupEnd), leftKeyCols)
+                            && compareKeys(left, leftScanOrder.get(leftGroupEnd), leftKeyCols,
+                            right, rightRowIdx, rightKeyCols) == 0) {
+                        leftGroupEnd++;
                     }
-                    rightPos++;
-                }
-                continue;
-            }
-            int cmp = compareKeys(left, leftRowIdx, leftKeyCols,
-                    right, rightRowIdx, rightKeyCols);
-            if (cmp < 0) {
-                if (keepUnmatchedLeft) {
-                    outputRows.add(new int[]{leftRowIdx, -1});
-                }
-                leftPos++;
-            } else if (cmp > 0) {
-                if (keepUnmatchedRight) {
-                    outputRows.add(new int[]{-1, rightRowIdx});
-                }
-                rightPos++;
-            } else {
-                // Equal keys: find the full group of matching rows on each side
-                // (contiguous, non-null, same key) and cross-product them.
-                int leftGroupEnd = leftPos;
-                while (leftGroupEnd < leftScanOrder.size()
-                        && !hasNullKey(left, leftScanOrder.get(leftGroupEnd), leftKeyCols)
-                        && compareKeys(left, leftScanOrder.get(leftGroupEnd), leftKeyCols,
-                        right, rightRowIdx, rightKeyCols) == 0) {
-                    leftGroupEnd++;
-                }
-                int rightGroupEnd = rightPos;
-                while (rightGroupEnd < rightScanOrder.size()
-                        && !hasNullKey(right, rightScanOrder.get(rightGroupEnd), rightKeyCols)
-                        && compareKeys(right, rightScanOrder.get(rightGroupEnd), rightKeyCols,
-                        left, leftRowIdx, leftKeyCols) == 0) {
-                    rightGroupEnd++;
-                }
-                for (int lp = leftPos; lp < leftGroupEnd; lp++) {
-                    for (int rp = rightPos; rp < rightGroupEnd; rp++) {
-                        outputRows.add(new int[]{leftScanOrder.get(lp), rightScanOrder.get(rp)});
+                    int rightGroupEnd = rightPos;
+                    while (rightGroupEnd < rightScanOrder.size()
+                            && !hasNullKey(right, rightScanOrder.get(rightGroupEnd), rightKeyCols)
+                            && compareKeys(right, rightScanOrder.get(rightGroupEnd), rightKeyCols,
+                            left, leftRowIdx, leftKeyCols) == 0) {
+                        rightGroupEnd++;
                     }
+                    inCross = true;
+                    crossLeftPos = leftPos;
+                    crossRightPos = rightPos;
+                    crossLeftEnd = leftGroupEnd;
+                    crossRightEnd = rightGroupEnd;
+                    crossRightStart = rightPos;
                 }
-                leftPos = leftGroupEnd;
-                rightPos = rightGroupEnd;
             }
+            return out;
         }
-        // Drain whichever side still has rows (all remaining rows there have
-        // keys larger than the exhausted side's, or are null-keyed).
-        while (leftPos < leftScanOrder.size()) {
-            if (keepUnmatchedLeft) {
-                outputRows.add(new int[]{leftScanOrder.get(leftPos), -1});
-            }
-            leftPos++;
-        }
-        while (rightPos < rightScanOrder.size()) {
-            if (keepUnmatchedRight) {
-                outputRows.add(new int[]{-1, rightScanOrder.get(rightPos)});
-            }
-            rightPos++;
-        }
-        return outputRows;
     }
 }

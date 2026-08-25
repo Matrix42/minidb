@@ -54,8 +54,8 @@ public class MiniDbHashJoin extends MiniDbJoin {
     }
 
     @Override
-    protected List<int[]> joinPairs(VectorSchemaRoot left, VectorSchemaRoot right,
-                                    JoinInfo info, JoinRelType type, ExecContext ctx) {
+    protected PairSource joinPairs(VectorSchemaRoot left, VectorSchemaRoot right,
+                                   JoinInfo info, JoinRelType type, ExecContext ctx) {
         List<Integer> leftKeyCols = info.leftKeys;
         List<Integer> rightKeyCols = info.rightKeys;
         int[] leftKeyArr = toIntArray(leftKeyCols);
@@ -74,49 +74,136 @@ public class MiniDbHashJoin extends MiniDbJoin {
             buildTable.computeIfAbsent(new ColumnKey(left, leftIdx, leftKeyArr),
                     k -> new ArrayList<>()).add(leftIdx);
         }
-        boolean keepUnmatchedLeft = type == JoinRelType.LEFT || type == JoinRelType.FULL;
-        boolean keepUnmatchedRight = type == JoinRelType.RIGHT || type == JoinRelType.FULL;
-        boolean[] matchedLeft = new boolean[left.getRowCount()];
-        List<int[]> outputRows = new ArrayList<>();
-        try {
-            // Probe: for each right row, join with every left row of the same key.
-            for (int rightIdx = 0; rightIdx < right.getRowCount(); rightIdx++) {
-                if (rightIdx % 1000 == 0) {
+        return new HashPairSource(left, right, type, ctx, buildTable, leftKeyCols, rightKeyCols,
+                leftKeyArr, rightKeyArr, residual, hasResidual, probeRoot);
+    }
+
+    /**
+     * 流式 probe:右侧逐行查 build 表产出匹配对;probe 耗尽后阶段 2 产出
+     * 未匹配左行(LEFT/FULL 的 null-pad——行是否匹配要等整个 probe 结束才能定)。
+     * 不物化输出行对,内存 O(批大小)。
+     */
+    private static final class HashPairSource implements PairSource {
+        private final VectorSchemaRoot left;
+        private final VectorSchemaRoot right;
+        private final JoinRelType type;
+        private final ExecContext ctx;
+        private final Map<ColumnKey, List<Integer>> buildTable;
+        private final List<Integer> leftKeyCols;
+        private final List<Integer> rightKeyCols;
+        private final int[] leftKeyArr;
+        private final int[] rightKeyArr;
+        private final RexNode residual;
+        private final boolean hasResidual;
+        private final VectorSchemaRoot probeRoot;
+        private final boolean keepUnmatchedLeft;
+        private final boolean keepUnmatchedRight;
+        private final boolean[] matchedLeft;
+
+        // probe 游标
+        private int probeIdx = 0;
+        private List<Integer> matchList;
+        private int matchPos = 0;
+        // 阶段 2(未匹配左行)游标
+        private boolean phaseTwo;
+        private int unmatchedLeftIdx = 0;
+
+        HashPairSource(VectorSchemaRoot left, VectorSchemaRoot right, JoinRelType type,
+                       ExecContext ctx, Map<ColumnKey, List<Integer>> buildTable,
+                       List<Integer> leftKeyCols, List<Integer> rightKeyCols,
+                       int[] leftKeyArr, int[] rightKeyArr, RexNode residual,
+                       boolean hasResidual, VectorSchemaRoot probeRoot) {
+            this.left = left;
+            this.right = right;
+            this.type = type;
+            this.ctx = ctx;
+            this.buildTable = buildTable;
+            this.leftKeyCols = leftKeyCols;
+            this.rightKeyCols = rightKeyCols;
+            this.leftKeyArr = leftKeyArr;
+            this.rightKeyArr = rightKeyArr;
+            this.residual = residual;
+            this.hasResidual = hasResidual;
+            this.probeRoot = probeRoot;
+            this.keepUnmatchedLeft = type == JoinRelType.LEFT || type == JoinRelType.FULL;
+            this.keepUnmatchedRight = type == JoinRelType.RIGHT || type == JoinRelType.FULL;
+            this.matchedLeft = new boolean[left.getRowCount()];
+            loadMatchList();
+        }
+
+        private void loadMatchList() {
+            if (probeIdx >= right.getRowCount()) {
+                matchList = null;
+                return;
+            }
+            if (hasNullKey(right, probeIdx, rightKeyCols)) {
+                matchList = null; // null 键等值永不匹配
+            } else {
+                matchList = buildTable.get(new ColumnKey(right, probeIdx, rightKeyArr));
+            }
+            matchPos = 0;
+        }
+
+        @Override
+        public int fill(int[] leftRows, int[] rightRows, int outPos, int len) {
+            int out = outPos;
+            int end = outPos + len;
+            while (out < end) {
+                if (phaseTwo) {
+                    // 阶段 2:LEFT/FULL 的未匹配左行(null-pad 右侧)
+                    while (unmatchedLeftIdx < left.getRowCount()
+                            && matchedLeft[unmatchedLeftIdx]) {
+                        unmatchedLeftIdx++;
+                    }
+                    if (unmatchedLeftIdx >= left.getRowCount()) {
+                        break;
+                    }
+                    leftRows[out] = unmatchedLeftIdx;
+                    rightRows[out] = -1;
+                    out++;
+                    unmatchedLeftIdx++;
+                    continue;
+                }
+                if (probeIdx >= right.getRowCount()) {
+                    if (keepUnmatchedLeft) {
+                        phaseTwo = true;
+                        unmatchedLeftIdx = 0;
+                        continue;
+                    }
+                    break;
+                }
+                if (matchList != null && matchPos < matchList.size()) {
+                    int leftIdx = matchList.get(matchPos++);
+                    if (!hasResidual || residualMatches(probeRoot, left, leftIdx, right,
+                            probeIdx, residual, ctx)) {
+                        leftRows[out] = leftIdx;
+                        rightRows[out] = probeIdx;
+                        matchedLeft[leftIdx] = true;
+                        out++;
+                    }
+                    continue;
+                }
+                // 当前 probe 行匹配耗尽:无匹配(或 null 键)且需保留 → null-pad 右行
+                if (matchList == null && keepUnmatchedRight) {
+                    leftRows[out] = -1;
+                    rightRows[out] = probeIdx;
+                    out++;
+                }
+                probeIdx++;
+                if (probeIdx % 1000 == 0) {
                     ExecContext.checkInterrupted();
                 }
-                List<Integer> matchingLeftRows;
-                if (hasNullKey(right, rightIdx, rightKeyCols)) {
-                    matchingLeftRows = null;
-                } else {
-                    matchingLeftRows = buildTable.get(new ColumnKey(right, rightIdx, rightKeyArr));
-                }
-                if (matchingLeftRows != null) {
-                    for (int leftIdx : matchingLeftRows) {
-                        if (hasResidual && !residualMatches(probeRoot, left, leftIdx, right, rightIdx,
-                                residual, ctx)) {
-                            continue;
-                        }
-                        outputRows.add(new int[]{leftIdx, rightIdx});
-                        matchedLeft[leftIdx] = true;
-                    }
-                } else if (keepUnmatchedRight) {
-                    // Right-preserved outer join: emit the unmatched right row.
-                    outputRows.add(new int[]{-1, rightIdx});
-                }
+                loadMatchList();
             }
-        } finally {
+            return out;
+        }
+
+        @Override
+        public void close() {
             if (probeRoot != null) {
                 probeRoot.close();
             }
         }
-        if (keepUnmatchedLeft) {
-            for (int leftIdx = 0; leftIdx < left.getRowCount(); leftIdx++) {
-                if (!matchedLeft[leftIdx]) {
-                    outputRows.add(new int[]{leftIdx, -1});
-                }
-            }
-        }
-        return outputRows;
     }
 
     private static boolean residualMatches(VectorSchemaRoot probeRoot, VectorSchemaRoot left,

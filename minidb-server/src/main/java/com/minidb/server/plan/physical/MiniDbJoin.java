@@ -27,10 +27,15 @@ import org.apache.calcite.rex.RexNode;
  * Join base class. Subclasses implement one strategy (MiniDbHashJoin,
  * MiniDbSortMergeJoin, MiniDbNestedLoopJoin); this class owns columnar
  * materialization of both inputs (into a single {@link VectorSchemaRoot} each,
- * no per-cell boxing), output building, and the single-batch lazy iterator.
- * Join strategies work on row indices and columnar keys, never on Object[].
+ * no per-cell boxing), streaming output (pairs are produced lazily and the
+ * output is emitted in batches — memory O(batch size) instead of O(result)),
+ * and output building. Join strategies work on row indices and columnar keys,
+ * never on Object[].
  */
 public abstract class MiniDbJoin extends Join implements MiniDbRel {
+
+    /** 输出批次行数:与存储层 MAX_BATCH_ROWS 对齐,流式产批控制内存峰值。 */
+    private static final int OUTPUT_BATCH = 4096;
 
     protected MiniDbJoin(RelOptCluster cluster, RelTraitSet traitSet,
                          RelNode left, RelNode right, RexNode condition,
@@ -48,28 +53,8 @@ public abstract class MiniDbJoin extends Join implements MiniDbRel {
         VectorSchemaRoot right = materializeColumns(getRight(), ctx);
         try {
             JoinInfo info = analyzeCondition();
-            List<int[]> pairs = joinPairs(left, right, info, type, ctx);
-            VectorSchemaRoot out = buildOutput(left, right, pairs, ctx);
-            left.close();
-            right.close();
-            boolean[] done = {false};
-            return BatchIterator.interruptible(new BatchIterator() {
-                @Override
-                public boolean hasNext() {
-                    return !done[0];
-                }
-
-                @Override
-                public VectorSchemaRoot next() {
-                    done[0] = true;
-                    return out;
-                }
-
-                @Override
-                public void close() {
-                    out.close();
-                }
-            });
+            PairSource pairs = joinPairs(left, right, info, type, ctx);
+            return new StreamingIterator(left, right, pairs, ctx);
         } catch (RuntimeException e) {
             left.close();
             right.close();
@@ -78,11 +63,96 @@ public abstract class MiniDbJoin extends Join implements MiniDbRel {
     }
 
     /**
-     * Strategy-specific join. Returns output row pairs {@code {leftIdx, rightIdx}},
-     * where -1 means the null-padded side (outer joins preserve unmatched rows).
+     * 流式行对源:join 策略按需产出 {@code {leftIdx, rightIdx}} 行对
+     * (rightIdx = -1 表示左侧 null-pad,leftIdx = -1 表示右侧 null-pad)。
+     * 替代原来的全量 {@code List<int[]>} 物化——大结果集内存从 O(输出行数) 降到
+     * O(批大小),outer join 的 null-pad 行在两阶段产出(probe 完才知未匹配)。
      */
-    protected abstract List<int[]> joinPairs(VectorSchemaRoot left, VectorSchemaRoot right,
-                                             JoinInfo info, JoinRelType type, ExecContext ctx);
+    protected interface PairSource {
+        /**
+         * 向 {@code leftRows/rightRows} 的 {@code [outPos, outPos+len)} 填行对;
+         * 返回实际填充的终点下标(小于 outPos+len 即源耗尽)。
+         */
+        int fill(int[] leftRows, int[] rightRows, int outPos, int len);
+
+        /** 释放源持有的资源(如逐对求值的 probe root);迭代器 close 时调用。 */
+        default void close() {
+        }
+    }
+
+    /** 拉模式多批迭代器:每批从 PairSource 填 OUTPUT_BATCH 行对,建一个输出 root。 */
+    private final class StreamingIterator implements BatchIterator {
+        private final VectorSchemaRoot left;
+        private final VectorSchemaRoot right;
+        private final PairSource pairs;
+        private final ExecContext ctx;
+        private final int[] leftRows = new int[OUTPUT_BATCH];
+        private final int[] rightRows = new int[OUTPUT_BATCH];
+        private VectorSchemaRoot current;
+        private boolean exhausted;
+        // 已通过 next() 返回的 batch。调用方不负责 close(所有权模型与
+        // materializeColumns 一致:靠迭代器 close 统一释放),故累积在此,close 时全关。
+        private final List<VectorSchemaRoot> emitted = new ArrayList<>();
+
+        StreamingIterator(VectorSchemaRoot left, VectorSchemaRoot right,
+                          PairSource pairs, ExecContext ctx) {
+            this.left = left;
+            this.right = right;
+            this.pairs = pairs;
+            this.ctx = ctx;
+        }
+
+        @Override
+        public boolean hasNext() {
+            if (current != null) {
+                return true;
+            }
+            if (exhausted) {
+                return false;
+            }
+            int n = pairs.fill(leftRows, rightRows, 0, OUTPUT_BATCH);
+            if (n == 0) {
+                exhausted = true;
+                return false;
+            }
+            current = buildOutput(left, right, leftRows, rightRows, n, ctx);
+            return true;
+        }
+
+        @Override
+        public VectorSchemaRoot next() {
+            if (!hasNext()) {
+                throw new java.util.NoSuchElementException();
+            }
+            VectorSchemaRoot out = current;
+            current = null;
+            emitted.add(out);
+            return out;
+        }
+
+        @Override
+        public void close() {
+            if (current != null) {
+                current.close();
+                current = null;
+            }
+            for (VectorSchemaRoot b : emitted) {
+                b.close();
+            }
+            emitted.clear();
+            pairs.close();
+            left.close();
+            right.close();
+        }
+    }
+
+    /**
+     * Strategy-specific join. Returns a lazy pair source; strategies own their
+     * internal cursors and outer-join phases, and must not materialize the
+     * whole result.
+     */
+    protected abstract PairSource joinPairs(VectorSchemaRoot left, VectorSchemaRoot right,
+                                            JoinInfo info, JoinRelType type, ExecContext ctx);
 
     /** Column count of the left input (from its row type, not the data). */
     protected final int leftColumnCount() {
@@ -158,9 +228,9 @@ public abstract class MiniDbJoin extends Join implements MiniDbRel {
         return VectorSchemaRoot.of(vectors.toArray(new FieldVector[0]));
     }
 
-    /** Writes join output pairs back into a columnar root (null side = setNull). */
+    /** Writes join output pairs into a columnar root (null side = setNull). */
     private VectorSchemaRoot buildOutput(VectorSchemaRoot left, VectorSchemaRoot right,
-                                         List<int[]> pairs, ExecContext ctx) {
+                                         int[] leftRows, int[] rightRows, int n, ExecContext ctx) {
         List<FieldVector> vectors = new ArrayList<>();
         // 用实际物化向量 schema(而非 plan rowType):子节点(Aggregate)可能在 buildOutput
         // 里提升了 DECIMAL scale,plan rowType 仍是原 scale,会导致输出截断。
@@ -170,21 +240,13 @@ public abstract class MiniDbJoin extends Join implements MiniDbRel {
         for (FieldVector v : right.getFieldVectors()) {
             vectors.add(v.getField().createVector(ctx.allocator()));
         }
-        int total = pairs.size();
+        int total = n;
         for (FieldVector v : vectors) {
             v.setInitialCapacity(total);
             v.allocateNew();
         }
         int leftCols = leftColumnCount();
         int rightCols = rightColumnCount();
-        // 行对 → 左右行号数组(-1 = 该侧无匹配,输出 null),按列批量拷贝
-        int[] leftRows = new int[total];
-        int[] rightRows = new int[total];
-        for (int r = 0; r < total; r++) {
-            int[] pair = pairs.get(r);
-            leftRows[r] = pair[0];
-            rightRows[r] = pair[1];
-        }
         for (int c = 0; c < leftCols; c++) {
             RowCopier.copyRowsByIndex(left.getVector(c), leftRows, 0, vectors.get(c), 0, total);
         }
