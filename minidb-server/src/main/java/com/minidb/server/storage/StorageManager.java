@@ -50,10 +50,15 @@ public class StorageManager implements AutoCloseable {
     private final LSMBackgroundExecutor lsmExecutor;
 
     public StorageManager(MiniDbCatalog catalog, BufferAllocator allocator, Path dataDir) {
+        this(catalog, allocator, dataDir, MiniDbConfig.load(dataDir));
+    }
+
+    public StorageManager(MiniDbCatalog catalog, BufferAllocator allocator, Path dataDir,
+                          MiniDbConfig config) {
         this.catalog = catalog;
         this.allocator = allocator;
         this.dataDir = dataDir;
-        this.config = MiniDbConfig.load(dataDir);
+        this.config = config;
         this.catalogStore = new JsonCatalogStore(dataDir.resolve("catalog.json"));
         this.tableStorage = new IpcFileTableStorage(dataDir);
         formats.put(StorageFormat.ARROW, new ArrowPartFormat());
