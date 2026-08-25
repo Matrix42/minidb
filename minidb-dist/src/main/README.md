@@ -20,7 +20,7 @@
    sqlline> SELECT * FROM t;
    ```
 
-3. 停止:`bin/minidb-server stop`(优雅关闭,shutdown hook 落盘)
+3. 停止:`bin/minidb-server stop`(优雅关闭,shutdown hook 落盘;Windows 下优雅停止可能不触发 hook,超时后强制终止,已提交数据由 WAL 保证不丢)
 4. 查看状态:`bin/minidb-server status`
 
 **调试/前台运行**:`bin/minidb-server`(无参数,Ctrl+C 停止)。
