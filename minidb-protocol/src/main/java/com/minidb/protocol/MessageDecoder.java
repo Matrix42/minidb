@@ -72,9 +72,17 @@ public class MessageDecoder extends ByteToMessageDecoder {
                 long requestId = in.readLong();
                 boolean lastBatch = in.readByte() != 0;
                 int dataLen = in.readInt();
-                byte[] data = new byte[dataLen];
-                in.readBytes(data);
+                // readBytes 返回独立引用计数的新 ByteBuf,由消息消费方(客户端解码)负责 release。
+                ByteBuf data = in.readBytes(dataLen);
                 return new Message.ArrowBatch(requestId, lastBatch, data);
+            }
+            case MessageType.ARROW_CONTINUATION -> {
+                long requestId = in.readLong();
+                long cursorId = in.readLong();
+                boolean lastBatch = in.readByte() != 0;
+                int dataLen = in.readInt();
+                ByteBuf data = in.readBytes(dataLen);
+                return new Message.ArrowContinuation(requestId, cursorId, lastBatch, data);
             }
             case MessageType.UPDATE_COUNT -> {
                 long requestId = in.readLong();

@@ -1,5 +1,7 @@
 package com.minidb.protocol;
 
+import io.netty.buffer.ByteBuf;
+import io.netty.buffer.Unpooled;
 import io.netty.channel.embedded.EmbeddedChannel;
 import org.junit.jupiter.api.Test;
 
@@ -71,13 +73,26 @@ class CodecTest {
 
     @Test
     void arrowBatchRoundTrip() {
-        byte[] payload = new byte[] {1, 2, 3, 4, 5};
+        ByteBuf payload = Unpooled.wrappedBuffer(new byte[] {1, 2, 3, 4, 5});
         Message.ArrowBatch out =
                 (Message.ArrowBatch) roundTrip(new Message.ArrowBatch(9L, true, payload));
         assertEquals(9L, out.requestId());
         assertTrue(out.lastBatch());
-        assertEquals(5, out.data().length);
-        assertEquals(5, out.data()[4]);
+        assertEquals(5, out.data().readableBytes());
+        assertEquals(5, out.data().getByte(4));
+        out.data().release();
+    }
+
+    @Test
+    void arrowContinuationRoundTrip() {
+        ByteBuf payload = Unpooled.wrappedBuffer(new byte[] {9, 8, 7});
+        Message.ArrowContinuation out = (Message.ArrowContinuation) roundTrip(
+                new Message.ArrowContinuation(5L, 9L, false, payload));
+        assertEquals(5L, out.requestId());
+        assertEquals(9L, out.cursorId());
+        assertEquals(3, out.data().readableBytes());
+        assertEquals(9, out.data().getByte(0));
+        out.data().release();
     }
 
     @Test

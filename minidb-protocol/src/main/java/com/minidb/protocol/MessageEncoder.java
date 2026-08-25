@@ -50,11 +50,22 @@ public class MessageEncoder extends MessageToByteEncoder<Message> {
             out.writeBytes(err);
         } else if (msg instanceof Message.ArrowBatch b) {
             out.writeByte(MessageType.ARROW_BATCH);
-            out.writeInt(8 + 1 + 4 + b.data().length);
+            out.writeInt(8 + 1 + 4 + b.data().readableBytes());
             out.writeLong(b.requestId());
             out.writeByte(b.lastBatch() ? 1 : 0);
-            out.writeInt(b.data().length);
+            out.writeInt(b.data().readableBytes());
             out.writeBytes(b.data());
+            // 数据所有权转给 outbound buffer,消息的引用在此释放(Encoder 是唯一释放点)。
+            b.data().release();
+        } else if (msg instanceof Message.ArrowContinuation c) {
+            out.writeByte(MessageType.ARROW_CONTINUATION);
+            out.writeInt(8 + 8 + 1 + 4 + c.data().readableBytes());
+            out.writeLong(c.requestId());
+            out.writeLong(c.cursorId());
+            out.writeByte(c.lastBatch() ? 1 : 0);
+            out.writeInt(c.data().readableBytes());
+            out.writeBytes(c.data());
+            c.data().release();
         } else if (msg instanceof Message.UpdateCount u) {
             out.writeByte(MessageType.UPDATE_COUNT);
             out.writeInt(16);

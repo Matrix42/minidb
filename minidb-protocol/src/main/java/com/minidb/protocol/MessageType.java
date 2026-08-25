@@ -7,6 +7,7 @@ public final class MessageType {
     public static final byte CLOSE_REQUEST = 0x11;
     public static final byte EXECUTE_RESPONSE = 0x20;
     public static final byte ARROW_BATCH = 0x21;
+    public static final byte ARROW_CONTINUATION = 0x23;
     public static final byte UPDATE_COUNT = 0x22;
     public static final byte SCHEMAS_REQUEST = 0x12;
     public static final byte TABLES_REQUEST = 0x13;

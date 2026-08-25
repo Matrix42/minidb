@@ -8,10 +8,9 @@ import com.minidb.server.exec.MetadataExecutor;
 import com.minidb.server.exec.Paginator;
 import com.minidb.server.exec.QueryExecutor;
 import com.minidb.server.exec.QueryResult;
+import io.netty.buffer.ByteBuf;
 import io.netty.channel.ChannelHandlerContext;
 import io.netty.channel.SimpleChannelInboundHandler;
-import java.io.ByteArrayOutputStream;
-import java.nio.channels.Channels;
 import java.util.HashMap;
 import java.util.Map;
 import java.util.Set;
@@ -21,7 +20,12 @@ import java.util.concurrent.Future;
 import java.util.function.Supplier;
 import org.apache.arrow.memory.BufferAllocator;
 import org.apache.arrow.vector.VectorSchemaRoot;
+import org.apache.arrow.vector.VectorUnloader;
 import org.apache.arrow.vector.ipc.ArrowStreamWriter;
+import org.apache.arrow.vector.ipc.WriteChannel;
+import org.apache.arrow.vector.ipc.message.ArrowRecordBatch;
+import org.apache.arrow.vector.ipc.message.IpcOption;
+import org.apache.arrow.vector.ipc.message.MessageSerializer;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
@@ -163,17 +167,44 @@ public class SessionHandler extends SimpleChannelInboundHandler<Message> {
 
     private void sendRows(ChannelHandlerContext ctx, long requestId, VectorSchemaRoot root,
                           boolean lastBatch) {
+        // 编码直接进 Netty ByteBuf(零 byte[] 中间拷贝),数据所有权随消息转给 Encoder。
+        ByteBuf buf = ctx.alloc().buffer();
         try {
-            ByteArrayOutputStream out = new ByteArrayOutputStream();
             try (ArrowStreamWriter writer = new ArrowStreamWriter(
-                    root, null, Channels.newChannel(out))) {
+                    root, null, new ByteBufChannel(buf))) {
                 writer.start();
                 writer.writeBatch();
                 writer.end();
             }
-            ctx.writeAndFlush(new Message.ArrowBatch(requestId, lastBatch, out.toByteArray()));
+            ctx.writeAndFlush(new Message.ArrowBatch(requestId, lastBatch, buf));
         } catch (Exception e) {
+            buf.release();
             LOG.warn("failed to send rows for request {}", requestId, e);
+            String message = e.getMessage() == null ? e.toString() : e.getMessage();
+            ctx.writeAndFlush(Message.ExecuteResponse.error(requestId, message));
+        }
+    }
+
+    /**
+     * 分页续批:只编码 IPC record-batch message(无 magic/schema/EOS)。schema 已在
+     * 本 cursor 的首批发过,客户端按 cursorId 复用——大结果集每页省掉 schema 重复编码
+     * 的固定开销。VectorUnloader.getRecordBatch 已 retain buffers,serialize 后可安全 close。
+     */
+    private void sendContinuation(ChannelHandlerContext ctx, long requestId, long cursorId,
+                                  VectorSchemaRoot root, boolean lastBatch) {
+        ByteBuf buf = ctx.alloc().buffer();
+        try {
+            ArrowRecordBatch recordBatch = new VectorUnloader(root).getRecordBatch();
+            try {
+                MessageSerializer.serialize(
+                        new WriteChannel(new ByteBufChannel(buf)), recordBatch, IpcOption.DEFAULT);
+            } finally {
+                recordBatch.close();
+            }
+            ctx.writeAndFlush(new Message.ArrowContinuation(requestId, cursorId, lastBatch, buf));
+        } catch (Exception e) {
+            buf.release();
+            LOG.warn("failed to send continuation for request {}", requestId, e);
             String message = e.getMessage() == null ? e.toString() : e.getMessage();
             ctx.writeAndFlush(Message.ExecuteResponse.error(requestId, message));
         }
@@ -196,7 +227,7 @@ public class SessionHandler extends SimpleChannelInboundHandler<Message> {
                 return;
             }
             boolean last = paginator.isDone();
-            sendRows(ctx, req.requestId(), page, last);
+            sendContinuation(ctx, req.requestId(), req.cursorId(), page, last);
             page.close();
             if (last) {
                 // Last page emitted: the cursor is exhausted, so release it now.

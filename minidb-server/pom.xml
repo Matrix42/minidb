@@ -81,6 +81,12 @@
       <groupId>org.junit.jupiter</groupId>
       <artifactId>junit-jupiter</artifactId>
     </dependency>
+    <dependency>
+      <!-- 端到端分页测试:起真实 MiniDbServer,用客户端 MiniDbClient 拉取多页。 -->
+      <groupId>com.minidb</groupId>
+      <artifactId>minidb-jdbc</artifactId>
+      <scope>test</scope>
+    </dependency>
   </dependencies>
   <build>
     <plugins>
