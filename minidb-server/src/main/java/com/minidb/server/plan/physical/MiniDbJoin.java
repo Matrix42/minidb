@@ -125,9 +125,9 @@ public abstract class MiniDbJoin extends Join implements MiniDbRel {
                             sv.setValueCount(batch.getRowCount());
                         }
                     }
-                    for (int i = 0; i < batch.getRowCount(); i++) {
-                        RowCopier.copyRow(batch, i, merged, dst++);
-                    }
+                    // 批量列拷贝(固定宽走无检查 copyFrom,merged 已预分配 total)
+                    RowCopier.copyRows(batch, 0, merged, dst, batch.getRowCount());
+                    dst += batch.getRowCount();
                 }
                 merged.setRowCount(dst);
             }
@@ -177,22 +177,20 @@ public abstract class MiniDbJoin extends Join implements MiniDbRel {
         }
         int leftCols = leftColumnCount();
         int rightCols = rightColumnCount();
+        // 行对 → 左右行号数组(-1 = 该侧无匹配,输出 null),按列批量拷贝
+        int[] leftRows = new int[total];
+        int[] rightRows = new int[total];
         for (int r = 0; r < total; r++) {
             int[] pair = pairs.get(r);
-            for (int c = 0; c < leftCols; c++) {
-                if (pair[0] >= 0) {
-                    RowCopier.copyRow(left.getVector(c), pair[0], vectors.get(c), r);
-                } else {
-                    vectors.get(c).setNull(r);
-                }
-            }
-            for (int c = 0; c < rightCols; c++) {
-                if (pair[1] >= 0) {
-                    RowCopier.copyRow(right.getVector(c), pair[1], vectors.get(leftCols + c), r);
-                } else {
-                    vectors.get(leftCols + c).setNull(r);
-                }
-            }
+            leftRows[r] = pair[0];
+            rightRows[r] = pair[1];
+        }
+        for (int c = 0; c < leftCols; c++) {
+            RowCopier.copyRowsByIndex(left.getVector(c), leftRows, 0, vectors.get(c), 0, total);
+        }
+        for (int c = 0; c < rightCols; c++) {
+            RowCopier.copyRowsByIndex(right.getVector(c), rightRows, 0,
+                    vectors.get(leftCols + c), 0, total);
         }
         for (FieldVector v : vectors) {
             v.setValueCount(total);

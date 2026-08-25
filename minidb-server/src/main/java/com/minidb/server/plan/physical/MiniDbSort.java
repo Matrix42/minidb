@@ -10,6 +10,7 @@ import java.util.List;
 import org.apache.arrow.algorithm.sort.CompositeVectorComparator;
 import org.apache.arrow.algorithm.sort.IndexSorter;
 import org.apache.arrow.algorithm.sort.VectorValueComparator;
+import org.apache.arrow.vector.FieldVector;
 import org.apache.arrow.vector.IntVector;
 import org.apache.arrow.vector.ValueVector;
 import org.apache.arrow.vector.VectorSchemaRoot;
@@ -71,12 +72,18 @@ public class MiniDbSort extends Sort implements MiniDbRel {
             int end = Math.min(rows, start + fetchRows);
 
             VectorSchemaRoot out = VectorSchemaRoot.create(materialized.getSchema(), ctx.allocator());
-            out.allocateNew();
-            int dst = 0;
-            for (int i = start; i < end; i++) {
-                RowCopier.copyRow(materialized, indices.get(i), out, dst++);
+            int outRows = end - start;
+            // 预分配 outRows,按排序后行号批量拷贝(固定宽走无检查 copyFrom)
+            for (FieldVector v : out.getFieldVectors()) {
+                v.setInitialCapacity(outRows);
+                v.allocateNew();
             }
-            out.setRowCount(dst);
+            int[] order = new int[rows];
+            for (int i = 0; i < rows; i++) {
+                order[i] = indices.get(i);
+            }
+            RowCopier.copyRowsByIndex(materialized, order, start, out, 0, outRows);
+            out.setRowCount(outRows);
             materialized.close();
 
             VectorSchemaRoot single = out;
@@ -169,12 +176,15 @@ public class MiniDbSort extends Sort implements MiniDbRel {
         }
         VectorSchemaRoot merged = VectorSchemaRoot.create(batches.get(0).getSchema(),
                 ctx.allocator());
-        merged.allocateNew();
+        // 预分配 total(mergeBatches 参数,调用方已累计),批量列拷贝的前提
+        for (FieldVector v : merged.getFieldVectors()) {
+            v.setInitialCapacity(total);
+            v.allocateNew();
+        }
         int dst = 0;
         for (VectorSchemaRoot batch : batches) {
-            for (int i = 0; i < batch.getRowCount(); i++) {
-                RowCopier.copyRow(batch, i, merged, dst++);
-            }
+            RowCopier.copyRows(batch, 0, merged, dst, batch.getRowCount());
+            dst += batch.getRowCount();
         }
         merged.setRowCount(dst);
         return merged;

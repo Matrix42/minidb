@@ -189,12 +189,15 @@ public final class RowVectors {
                 merged = emptyRoot(input.getRowType(), ctx.allocator());
             } else {
                 merged = VectorSchemaRoot.create(batches.get(0).getSchema(), ctx.allocator());
-                merged.allocateNew();
+                // 预分配 total,批量列拷贝(固定宽走无检查 copyFrom)的前提
+                for (FieldVector v : merged.getFieldVectors()) {
+                    v.setInitialCapacity(total);
+                    v.allocateNew();
+                }
                 int dst = 0;
                 for (VectorSchemaRoot batch : batches) {
-                    for (int i = 0; i < batch.getRowCount(); i++) {
-                        RowCopier.copyRow(batch, i, merged, dst++);
-                    }
+                    RowCopier.copyRows(batch, 0, merged, dst, batch.getRowCount());
+                    dst += batch.getRowCount();
                 }
                 merged.setRowCount(dst);
             }

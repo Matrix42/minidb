@@ -65,6 +65,101 @@ public final class RowCopier {
     }
 
     /**
+     * 批量连续行拷贝:src 从 {@code srcStart} 起 count 行 → dst 从 {@code dstStart} 起。
+     * 调用方必须保证 dst 容量足够(预分配 setInitialCapacity + allocateNew,或
+     * 已 setValueCount)——固定宽列走无检查 {@code copyFrom}(省每行 handleSafe 容量
+     * 检查,TPC-DS 主流 INT/BIGINT/DOUBLE 列的批量物化主路径);可变宽/跨类型/
+     * 跨 scale Decimal 走逐行 copyFromSafe/writeValue(容量动态)。调用方负责在
+     * 批量后 setValueCount(copyFrom 不更新 valueCount)。
+     */
+    public static void copyRows(VectorSchemaRoot src, int srcStart, VectorSchemaRoot dst,
+                                int dstStart, int count) {
+        List<FieldVector> srcVectors = src.getFieldVectors();
+        List<FieldVector> dstVectors = dst.getFieldVectors();
+        for (int c = 0; c < srcVectors.size(); c++) {
+            copyRange(srcVectors.get(c), srcStart, dstVectors.get(c), dstStart, count);
+        }
+    }
+
+    /**
+     * 按行号批量拷贝:src 按 {@code srcRows[srcStart + i]} 取行 → dst 从
+     * {@code dstStart + i} 连续写。用于过滤(保留行号数组)与排序/join 输出的
+     * 任意行映射;容量与 valueCount 约定同 {@link #copyRows}。
+     */
+    public static void copyRowsByIndex(VectorSchemaRoot src, int[] srcRows, int srcStart,
+                                       VectorSchemaRoot dst, int dstStart, int count) {
+        List<FieldVector> srcVectors = src.getFieldVectors();
+        List<FieldVector> dstVectors = dst.getFieldVectors();
+        for (int c = 0; c < srcVectors.size(); c++) {
+            copyRangeByIndex(srcVectors.get(c), srcRows, srcStart,
+                    dstVectors.get(c), dstStart, count);
+        }
+    }
+
+    /** 单列版 {@link #copyRows}:只拷一个向量(列重排/子集场景,如投影列映射)。 */
+    public static void copyRows(FieldVector src, int srcStart, FieldVector dst,
+                                int dstStart, int count) {
+        copyRange(src, srcStart, dst, dstStart, count);
+    }
+
+    /** 单列版 {@link #copyRowsByIndex};srcRows 元素 < 0 表示该输出行置 null。 */
+    public static void copyRowsByIndex(FieldVector src, int[] srcRows, int srcStart,
+                                       FieldVector dst, int dstStart, int count) {
+        copyRangeByIndex(src, srcRows, srcStart, dst, dstStart, count);
+    }
+
+    /** 连续行区间拷贝:固定宽同型走无检查 copyFrom,其余逐行 copyRow。 */
+    private static void copyRange(FieldVector src, int srcStart, FieldVector dst,
+                                  int dstStart, int count) {
+        if (fastCopy(src, dst)) {
+            for (int i = 0; i < count; i++) {
+                dst.copyFrom(srcStart + i, dstStart + i, src);
+            }
+        } else {
+            for (int i = 0; i < count; i++) {
+                copyRow(src, srcStart + i, dst, dstStart + i);
+            }
+        }
+    }
+
+    private static void copyRangeByIndex(FieldVector src, int[] srcRows, int srcStart,
+                                         FieldVector dst, int dstStart, int count) {
+        if (fastCopy(src, dst)) {
+            for (int i = 0; i < count; i++) {
+                int s = srcRows[srcStart + i];
+                if (s >= 0) {
+                    dst.copyFrom(s, dstStart + i, src);
+                } else {
+                    dst.setNull(dstStart + i);
+                }
+            }
+        } else {
+            for (int i = 0; i < count; i++) {
+                int s = srcRows[srcStart + i];
+                if (s >= 0) {
+                    copyRow(src, s, dst, dstStart + i);
+                } else {
+                    dst.setNull(dstStart + i);
+                }
+            }
+        }
+    }
+
+    /**
+     * 可走无检查 copyFrom 的条件:同 minorType、非 Decimal(跨 scale 需转换),
+     * 且是定宽向量(可变宽如 VarChar 的 data buffer 容量依赖内容,预分配不保证,
+     * 必须 copyFromSafe 动态增长)。
+     */
+    private static boolean fastCopy(FieldVector src, FieldVector dst) {
+        if (src.getMinorType() != dst.getMinorType()) {
+            return false;
+        }
+        return src instanceof org.apache.arrow.vector.BaseFixedWidthVector
+                && dst instanceof org.apache.arrow.vector.BaseFixedWidthVector
+                && !(src instanceof DecimalVector);
+    }
+
+    /**
      * Copy the value at {@code srcRow} from {@code src} into {@code dst} at
      * {@code dstRow}, coercing between compatible numeric/text types when the
      * source and destination vector types differ (e.g. BigIntVector literal

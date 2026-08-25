@@ -96,11 +96,21 @@ public class MiniDbUnion extends Union implements MiniDbRel {
         try {
             int dst = 0;
             for (VectorSchemaRoot batch : batches) {
-                for (int i = 0; i < batch.getRowCount(); i++) {
-                    if (distinct && !seen.add(new ColumnKey(batch, i, allCols))) {
-                        continue;
+                if (distinct) {
+                    // 去重:逐行检查(跨批行号,无法整批批量),保留行号再拷
+                    int[] kept = new int[batch.getRowCount()];
+                    int keptCnt = 0;
+                    for (int i = 0; i < batch.getRowCount(); i++) {
+                        if (seen.add(new ColumnKey(batch, i, allCols))) {
+                            kept[keptCnt++] = i;
+                        }
                     }
-                    RowCopier.copyRow(batch, i, out, dst++);
+                    RowCopier.copyRowsByIndex(batch, kept, 0, out, dst, keptCnt);
+                    dst += keptCnt;
+                } else {
+                    // UNION ALL:整批连续批量拷贝(固定宽走无检查 copyFrom)
+                    RowCopier.copyRows(batch, 0, out, dst, batch.getRowCount());
+                    dst += batch.getRowCount();
                 }
             }
             // setValueCount BEFORE of() so the root's rowCount picks it up

@@ -314,13 +314,19 @@ public class MiniDbScan extends TableScan implements MiniDbRel {
                 return batch;
             }
             VectorSchemaRoot out = VectorSchemaRoot.create(batch.getSchema(), ctx.allocator());
-            out.allocateNew();
+            // 预分配 kept,先收集保留行号再按列批量拷贝(固定宽走无检查 copyFrom)
+            for (FieldVector v : out.getFieldVectors()) {
+                v.setInitialCapacity(kept);
+                v.allocateNew();
+            }
+            int[] keptRows = new int[kept];
             int dst = 0;
             for (int i = 0; i < batch.getRowCount(); i++) {
                 if (!condition.isNull(i) && ((BitVector) condition).get(i) == 1) {
-                    RowCopier.copyRow(batch, i, out, dst++);
+                    keptRows[dst++] = i;
                 }
             }
+            RowCopier.copyRowsByIndex(batch, keptRows, 0, out, 0, kept);
             out.setRowCount(kept);
             return out;
         } finally {
@@ -342,11 +348,10 @@ public class MiniDbScan extends TableScan implements MiniDbRel {
             v.setInitialCapacity(rows);
             v.allocateNew();
         }
-        for (int r = 0; r < rows; r++) {
-            for (int c = 0; c < projectedColumns.length; c++) {
-                RowCopier.copyRow(batch.getVector(projectedColumns[c]), r,
-                        outVectors.get(c), r);
-            }
+        for (int c = 0; c < projectedColumns.length; c++) {
+            // 列重排批量拷贝:src 列 projectedColumns[c] → dst 列 c,行连续
+            RowCopier.copyRows(batch.getVector(projectedColumns[c]), 0,
+                    outVectors.get(c), 0, rows);
         }
         for (FieldVector v : outVectors) {
             v.setValueCount(rows);

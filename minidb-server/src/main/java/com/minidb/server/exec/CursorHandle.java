@@ -1,6 +1,9 @@
 package com.minidb.server.exec;
 
 import com.minidb.storage.common.BatchIterator;
+import java.util.ArrayList;
+import java.util.List;
+import org.apache.arrow.vector.FieldVector;
 import org.apache.arrow.vector.VectorSchemaRoot;
 import org.apache.arrow.vector.types.pojo.Schema;
 
@@ -20,27 +23,34 @@ public record CursorHandle(BatchIterator iterator, ExecContext context, Schema s
 
     /** Pulls every remaining batch into a single owned root and closes the iterator. */
     public VectorSchemaRoot materialize() {
+        List<VectorSchemaRoot> batches = new ArrayList<>();
+        int total = 0;
         VectorSchemaRoot merged = null;
-        int dst = 0;
         try {
             while (iterator.hasNext()) {
                 VectorSchemaRoot batch = iterator.next();
-                if (merged == null) {
-                    merged = VectorSchemaRoot.create(batch.getSchema(), context.allocator());
-                    merged.allocateNew();
-                }
-                for (int i = 0; i < batch.getRowCount(); i++) {
-                    RowCopier.copyRow(batch, i, merged, dst++);
-                }
+                batches.add(batch);
+                total += batch.getRowCount();
             }
+            if (batches.isEmpty()) {
+                return emptyRoot();
+            }
+            merged = VectorSchemaRoot.create(batches.get(0).getSchema(), context.allocator());
+            // 预分配 total,批量列拷贝(固定宽走无检查 copyFrom)的前提
+            for (FieldVector v : merged.getFieldVectors()) {
+                v.setInitialCapacity(total);
+                v.allocateNew();
+            }
+            int dst = 0;
+            for (VectorSchemaRoot batch : batches) {
+                RowCopier.copyRows(batch, 0, merged, dst, batch.getRowCount());
+                dst += batch.getRowCount();
+            }
+            merged.setRowCount(dst);
+            return merged;
         } finally {
             close(); // 释放 iterator + CSE 缓存
         }
-        if (merged == null) {
-            return emptyRoot();
-        }
-        merged.setRowCount(dst);
-        return merged;
     }
 
     private VectorSchemaRoot emptyRoot() {
