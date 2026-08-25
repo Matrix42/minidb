@@ -7,13 +7,18 @@ set "BIN_DIR=%~dp0"
 for %%I in ("%BIN_DIR%..") do set "MINIDB_HOME=%%~fI"
 
 if defined JAVA_HOME (
-  set "JAVA=%JAVA_HOME%\bin\java.exe"
+  set "JAVA=!JAVA_HOME!\bin\java.exe"
+  if not exist "!JAVA!" (
+    echo ERROR: java not found at !JAVA!
+    exit /b 1
+  )
 ) else (
   set "JAVA=java"
-)
-if not exist "%JAVA%" (
-  echo ERROR: java not found. Set JAVA_HOME or add to PATH.
-  exit /b 1
+  where java >nul 2>nul
+  if errorlevel 1 (
+    echo ERROR: java not found. Set JAVA_HOME or add java to PATH.
+    exit /b 1
+  )
 )
 
 if not defined MINIDB_DATA_DIR set "MINIDB_DATA_DIR=%MINIDB_HOME%\data"
@@ -25,7 +30,7 @@ set "LOG_OUT=%MINIDB_HOME%\logs\minidb.out"
 set "CMD=%1"
 shift
 
-set "JAVA_OPTS=--add-opens=java.base/java.nio=ALL-UNNAMED --add-opens=java.base/jdk.internal.misc=ALL-UNNAMED --add-opens=java.base/sun.nio.ch=ALL-UNNAMED -Dlog4j2.configurationFile=conf\log4j2.properties"
+set "JAVA_OPTS=--add-opens=java.base/java.nio=ALL-UNNAMED --add-opens=java.base/jdk.internal.misc=ALL-UNNAMED --add-opens=java.base/sun.nio.ch=ALL-UNNAMED -D"log4j2.configurationFile=%MINIDB_CONF_DIR%\log4j2.properties""
 
 set "ARGS=--data "%MINIDB_DATA_DIR%" --conf "%MINIDB_CONF_DIR%""
 if defined MINIDB_PORT set "ARGS=%ARGS% --port %MINIDB_PORT%"

@@ -1,18 +1,23 @@
 @echo off
-rem MiniDB sqlline 命令行客户端(Windows)。linux/macOS 用 sqlline。
-setlocal
+rem MiniDB sqlline CLI client (Windows). Use sqlline on linux/macOS.
+setlocal enabledelayedexpansion
 
 set "BIN_DIR=%~dp0"
 for %%I in ("%BIN_DIR%..") do set "MINIDB_HOME=%%~fI"
 
 if defined JAVA_HOME (
-  set "JAVA=%JAVA_HOME%\bin\java.exe"
+  set "JAVA=!JAVA_HOME!\bin\java.exe"
+  if not exist "!JAVA!" (
+    echo ERROR: java not found at !JAVA!
+    exit /b 1
+  )
 ) else (
   set "JAVA=java"
-)
-if not exist "%JAVA%" (
-  echo ERROR: java not found. Set JAVA_HOME or add to PATH.
-  exit /b 1
+  where java >nul 2>nul
+  if errorlevel 1 (
+    echo ERROR: java not found. Set JAVA_HOME or add java to PATH.
+    exit /b 1
+  )
 )
 
 if not defined MINIDB_HOST set "MINIDB_HOST=localhost"
