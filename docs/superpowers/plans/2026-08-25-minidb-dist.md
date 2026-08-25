@@ -721,3 +721,12 @@ git commit -m "feat: 发行 bin 脚本(minidb-server/sqlline 双平台)与端到
 - **Spec 覆盖核对**:布局(bin/conf/data/jdbc/tools/libs)→ Task 4/5;`server.port` → Task 1;StorageManager 注入 → Task 2;Main 合入 + conf 重载 + exec 插件 → Task 3;发行物三形态 → Task 4 Step 6;双平台脚本与环境变量 → Task 5;测试与冒烟 → Task 1/5。无缺口。
 - **占位符扫描**:无 TBD/「适当处理」类描述;每个代码步骤给了完整代码。
 - **类型/签名一致性**:`MiniDbConfig.serverPort()`(Task 1)被 Task 3 main 使用;`StorageManager(catalog, allocator, dataDir, config)`(Task 2)被 Task 3 start 使用;`MiniDbServer.start(port, dataDir, confDir)`(Task 3)被 Task 5 脚本经 `Main`→`MiniDbServer.main` 间接使用;脚本入口 `com.minidb.server.MiniDbServer`(Task 3)与 Task 5 脚本一致。sqlline 主类 `sqlline.SqlLine` 与驱动类 `com.minidb.jdbc.MiniDbDriver` 已验证存在。
+
+---
+
+## 执行状态:已完成(2026-08-25)
+
+任务 1-5 全部完成并评审通过(commit 78441d2..29c0a2b,12 个)。相对本计划的两处实际偏差:
+
+1. **用户追加需求(推翻 spec「不做 stop 脚本」)**:bin 脚本支持 `minidb-server start/stop/status` 守护子命令;`MiniDbServer.main` 新增 `--pid-file`(守护模式 pid 落盘)。
+2. **assembly dependencySet → copy-dependencies staging**(声称 Maven 3.9.9 兼容问题,产物已验证等价);bat 脚本 CRLF 行尾 + 构建层行尾归一(修复 cmd 解析 UTF-8+LF 批处理的硬伤)。
