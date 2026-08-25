@@ -102,7 +102,7 @@
             <argument>--add-opens=java.base/sun.nio.ch=ALL-UNNAMED</argument>
             <argument>-classpath</argument>
             <classpath/>
-            <argument>com.minidb.server.Main</argument>
+            <argument>com.minidb.server.MiniDbServer</argument>
             <argument>--port</argument>
             <argument>8899</argument>
           </arguments>

@@ -3,6 +3,7 @@ package com.minidb.server;
 import com.minidb.protocol.MessageDecoder;
 import com.minidb.protocol.MessageEncoder;
 import com.minidb.server.catalog.MiniDbCatalog;
+import com.minidb.server.config.MiniDbConfig;
 import com.minidb.server.exec.MetadataExecutor;
 import com.minidb.server.exec.QueryExecutor;
 import com.minidb.server.netty.SessionHandler;
@@ -37,8 +38,13 @@ public class MiniDbServer implements AutoCloseable {
     private ExecutorService queryPool;
 
     public void start(int port, Path dataDir) throws Exception {
+        // 向后兼容:配置仍从数据目录读(旧行为)。
+        start(port, dataDir, dataDir);
+    }
+
+    public void start(int port, Path dataDir, Path confDir) throws Exception {
         allocator = new RootAllocator();
-        storage = new StorageManager(catalog, allocator, dataDir);
+        storage = new StorageManager(catalog, allocator, dataDir, MiniDbConfig.load(confDir));
         storage.loadAll();
         StatsManager stats = new StatsManager(storage);
         QueryExecutor executor = new QueryExecutor(catalog, storage, allocator, stats);
@@ -78,6 +84,35 @@ public class MiniDbServer implements AutoCloseable {
 
     private static int defaultQueryThreads() {
         return Math.max(1, Runtime.getRuntime().availableProcessors());
+    }
+
+    /** 启动入口(发行脚本与 mvn exec 共用):--port 覆盖 conf/config.yaml 的 server.port。 */
+    public static void main(String[] args) throws Exception {
+        int port = -1;
+        Path dataDir = Path.of("data");
+        Path confDir = Path.of("conf");
+        for (int i = 0; i < args.length; i++) {
+            if ("--port".equals(args[i])) {
+                port = Integer.parseInt(args[++i]);
+            } else if ("--data".equals(args[i])) {
+                dataDir = Path.of(args[++i]);
+            } else if ("--conf".equals(args[i])) {
+                confDir = Path.of(args[++i]);
+            }
+        }
+        MiniDbConfig config = MiniDbConfig.load(confDir);
+        if (port < 0) {
+            port = config.serverPort();
+        }
+        LOG.info("MiniDB starting on port {} with data dir {}, conf dir {}", port, dataDir, confDir);
+        MiniDbServer server = new MiniDbServer();
+        server.start(port, dataDir, confDir);
+        LOG.info("MiniDB listening on port {}", server.port());
+        Runtime.getRuntime().addShutdownHook(new Thread(() -> {
+            LOG.info("MiniDB shutting down");
+            server.close();
+        }));
+        Thread.currentThread().join();
     }
 
     @Override

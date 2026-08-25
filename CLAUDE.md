@@ -20,7 +20,7 @@ MiniDB 是一个基于 Apache Calcite(解析/规划)+ Apache Arrow(列式存储)
   - 单模块测试:`./mvnw.cmd test -pl minidb-server`
   - 单测试类:`./mvnw.cmd test -pl minidb-server -Dtest=QueryExecutorTest`
   - 编译:`./mvnw.cmd -pl minidb-server -am compile -q`
-- **启动服务端**:`./mvnw.cmd -pl minidb-server exec:java`,默认监听 8899,数据目录 `./data`。需加 JVM 参数:
+- **启动服务端**:`./mvnw.cmd -pl minidb-server exec:java`(经 `MiniDbServer.main`),默认监听 8899(conf/config.yaml 的 server.port),数据目录 `./data`,配置目录 `./conf`(缺文件回退默认值)。需加 JVM 参数:
   ```
   --add-opens=java.base/java.nio=ALL-UNNAMED
   --add-opens=java.base/jdk.internal.misc=ALL-UNNAMED
