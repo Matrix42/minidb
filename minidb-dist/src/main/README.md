@@ -11,7 +11,7 @@
 
 ## 快速开始(要求 JDK 17+)
 
-1. 启动服务端:`bin/minidb-server`(Windows:`bin\minidb-server.bat`),默认监听 8899
+1. 启动服务端:`bin/minidb-server start`(Windows:`bin\minidb-server.bat start`),默认监听 8899
 2. 连接:`bin/sqlline`(Windows:`bin\sqlline.bat`),默认连 `jdbc:minidb://localhost:8899`
 
    ```
@@ -20,7 +20,10 @@
    sqlline> SELECT * FROM t;
    ```
 
-3. 停止:Ctrl+C(优雅关闭,数据落盘)
+3. 停止:`bin/minidb-server stop`(优雅关闭,shutdown hook 落盘)
+4. 查看状态:`bin/minidb-server status`
+
+**调试/前台运行**:`bin/minidb-server`(无参数,Ctrl+C 停止)。
 
 ## 配置
 

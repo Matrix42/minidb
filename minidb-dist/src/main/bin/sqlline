@@ -1,0 +1,35 @@
+#!/usr/bin/env bash
+# MiniDB sqlline 命令行客户端(linux/macOS)。Windows 用 sqlline.bat。
+set -euo pipefail
+
+BIN_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+MINIDB_HOME="$(dirname "$BIN_DIR")"
+
+if [ -n "${JAVA_HOME:-}" ] && [ -x "$JAVA_HOME/bin/java" ]; then
+  JAVA="$JAVA_HOME/bin/java"
+else
+  JAVA="$(command -v java || true)"
+fi
+if [ -z "$JAVA" ]; then
+  echo "错误:未找到 java。请设置 JAVA_HOME 或加入 PATH。" >&2
+  exit 1
+fi
+
+HOST="${MINIDB_HOST:-localhost}"
+PORT="${MINIDB_PORT:-8899}"
+URL="${MINIDB_URL:-jdbc:minidb://${HOST}:${PORT}}"
+
+# 类路径分隔符:Windows(含 git-bash)用分号,Linux/macOS 用冒号
+case "$(uname -s 2>/dev/null || echo)" in
+  CYGWIN*|MINGW*|MSYS*) CP_SEP=';' ;;
+  *) CP_SEP=':' ;;
+esac
+
+cd "$MINIDB_HOME"
+# shellcheck disable=SC2086
+exec "$JAVA" ${MINIDB_JAVA_OPTS:-} \
+  --add-opens=java.base/java.nio=ALL-UNNAMED \
+  --add-opens=java.base/jdk.internal.misc=ALL-UNNAMED \
+  --add-opens=java.base/sun.nio.ch=ALL-UNNAMED \
+  -cp "tools/*${CP_SEP}jdbc/*" \
+  sqlline.SqlLine -n "" -p "" -d com.minidb.jdbc.MiniDbDriver -u "$URL" "$@"

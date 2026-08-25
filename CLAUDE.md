@@ -9,7 +9,7 @@ MiniDB 是一个基于 Apache Calcite(解析/规划)+ Apache Arrow(列式存储)
 - `minidb-protocol` — Netty wire 协议(Message 编解码),**极简且稳定,改动需极谨慎**。
 - `minidb-server` — 服务端:Calcite 解析/规划、Arrow 存储、向量化批式执行、JDBC 协议处理。
 - `minidb-jdbc` — 客户端 JDBC 驱动(`jdbc:minidb://host:port`),基于自定义 Netty 协议。
-- `minidb-dist` — 发行组装模块(pom packaging 无源码),产出 bin/conf/data/jdbc/tools/libs/ 发行目录与 tar.gz/zip。
+- `minidb-dist` — 发行组装模块(pom packaging 无源码),产出 bin/conf/data/jdbc/tools/libs/ 发行目录与 tar.gz/zip,支持 start/stop/status 守护管理。
 
 **定位**:功能完整的单机数据库。无事务(autoCommit 恒 true)。
 
@@ -28,7 +28,7 @@ MiniDB 是一个基于 Apache Calcite(解析/规划)+ Apache Arrow(列式存储)
   --add-opens=java.base/sun.nio.ch=ALL-UNNAMED
   ```
 - **JDBC 客户端**需加:`--add-opens=java.base/java.nio=org.apache.arrow.memory.core,ALL-UNNAMED`(Arrow 的 MemoryUtil 用了 Unsafe)。
-- **发行包**:`./mvnw.cmd -pl minidb-dist -am package` 产出 `minidb-dist/target/minidb-1.0.0/`(+tar.gz/zip),布局 `bin/`(双平台启动脚本,含自写 sqlline)/`conf/`(config.yaml + log4j2.properties)/`data/`/`jdbc/`(shade 驱动)/`tools/`(sqlline jar)/`libs/`(服务端依赖)。
+- **发行包**:`./mvnw.cmd -pl minidb-dist -am package` 产出 `minidb-dist/target/minidb-1.0.0/`(+tar.gz/zip),布局 `bin/`(双平台启动脚本,含自写 sqlline)/`conf/`(config.yaml + log4j2.properties)/`data/`/`jdbc/`(shade 驱动)/`tools/`(sqlline jar)/`libs/`(服务端依赖)。`bin/minidb-server start/stop/status` 守护管理。
 
 ## 项目规范(重要)
 

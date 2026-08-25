@@ -1,0 +1,148 @@
+#!/usr/bin/env bash
+# MiniDB 服务端启动脚本(linux/macOS)。Windows 用 minidb-server.bat。
+# 用法:bin/minidb-server [start|stop|status]
+#   无参数  前台运行(调试用)
+#   start   后台守护启动
+#   stop    优雅停止(shutdown hook 落盘)
+#   status  查询运行状态
+set -euo pipefail
+
+BIN_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+MINIDB_HOME="$(dirname "$BIN_DIR")"
+
+if [ -n "${JAVA_HOME:-}" ] && [ -x "$JAVA_HOME/bin/java" ]; then
+  JAVA="$JAVA_HOME/bin/java"
+else
+  JAVA="$(command -v java || true)"
+fi
+if [ -z "$JAVA" ]; then
+  echo "错误:未找到 java。请设置 JAVA_HOME 或加入 PATH。" >&2
+  exit 1
+fi
+
+DATA_DIR="${MINIDB_DATA_DIR:-$MINIDB_HOME/data}"
+CONF_DIR="${MINIDB_CONF_DIR:-$MINIDB_HOME/conf}"
+PID_FILE="$MINIDB_HOME/logs/minidb.pid"
+LOG_OUT="$MINIDB_HOME/logs/minidb.out"
+
+do_status() {
+  if [ -f "$PID_FILE" ]; then
+    pid="$(tr -d '[:space:]' < "$PID_FILE")"
+    if kill -0 "$pid" 2>/dev/null; then
+      echo "MiniDB is running (pid $pid)"
+      return 0
+    fi
+    echo "MiniDB is stopped (pid file exists but process $pid is dead)"
+    rm -f "$PID_FILE"
+    return 1
+  fi
+  echo "MiniDB is stopped"
+  return 1
+}
+
+do_stop() {
+  if [ ! -f "$PID_FILE" ]; then
+    echo "MiniDB 未运行(无 pid 文件)" >&2
+    return 1
+  fi
+  pid="$(tr -d '[:space:]' < "$PID_FILE")"
+  echo "正在停止 MiniDB (pid $pid)..."
+  kill "$pid" 2>/dev/null || true
+  waited=0
+  while [ -f "$PID_FILE" ] && [ $waited -lt 30 ]; do
+    if ! kill -0 "$pid" 2>/dev/null; then
+      rm -f "$PID_FILE"
+      echo "MiniDB 已停止"
+      return 0
+    fi
+    sleep 1
+    waited=$((waited + 1))
+  done
+  if kill -0 "$pid" 2>/dev/null; then
+    echo "优雅停止超时,强制终止"
+    kill -9 "$pid" 2>/dev/null || true
+  fi
+  rm -f "$PID_FILE"
+  echo "MiniDB 已停止"
+}
+
+do_start() {
+  if do_status > /dev/null 2>&1; then
+    echo "MiniDB 已在运行中" >&2
+    return 1
+  fi
+  mkdir -p "$MINIDB_HOME/logs"
+  cd "$MINIDB_HOME"
+
+  PORT_ARG=()
+  if [ -n "${MINIDB_PORT:-}" ]; then
+    PORT_ARG=(--port "$MINIDB_PORT")
+  fi
+  # shellcheck disable=SC2086
+  nohup "$JAVA" ${MINIDB_JAVA_OPTS:-} \
+    --add-opens=java.base/java.nio=ALL-UNNAMED \
+    --add-opens=java.base/jdk.internal.misc=ALL-UNNAMED \
+    --add-opens=java.base/sun.nio.ch=ALL-UNNAMED \
+    "-Dlog4j2.configurationFile=$CONF_DIR/log4j2.properties" \
+    -cp "libs/*" \
+    com.minidb.server.MiniDbServer \
+    --data "$DATA_DIR" --conf "$CONF_DIR" \
+    "${PORT_ARG[@]}" >> "$LOG_OUT" 2>&1 &
+  BG_PID=$!
+  echo "$BG_PID" > "$PID_FILE"
+
+  waited=0
+  while ! kill -0 "$BG_PID" 2>/dev/null && [ $waited -lt 10 ]; do
+    sleep 1
+    waited=$((waited + 1))
+  done
+  if kill -0 "$BG_PID" 2>/dev/null; then
+    echo "MiniDB started (pid $BG_PID)"
+  else
+    echo "MiniDB 启动失败,查看日志: $LOG_OUT" >&2
+    rm -f "$PID_FILE"
+    return 1
+  fi
+
+  # 等待端口就绪(最多 15 秒)
+  PORT="${MINIDB_PORT:-8899}"
+  waited=0
+  while [ $waited -lt 15 ]; do
+    (exec 3<>/dev/tcp/localhost/"$PORT") 2>/dev/null && break
+    sleep 1
+    waited=$((waited + 1))
+  done
+}
+
+CMD="${1:-}"
+shift 2>/dev/null || true
+
+case "$CMD" in
+  start)
+    do_start
+    ;;
+  stop)
+    do_stop
+    ;;
+  status)
+    do_status
+    ;;
+  *)
+    # 前台运行(无参数,调试用)
+    cd "$MINIDB_HOME"
+    PORT_ARG=()
+    if [ -n "${MINIDB_PORT:-}" ]; then
+      PORT_ARG=(--port "$MINIDB_PORT")
+    fi
+    # shellcheck disable=SC2086
+    exec "$JAVA" ${MINIDB_JAVA_OPTS:-} \
+      --add-opens=java.base/java.nio=ALL-UNNAMED \
+      --add-opens=java.base/jdk.internal.misc=ALL-UNNAMED \
+      --add-opens=java.base/sun.nio.ch=ALL-UNNAMED \
+      "-Dlog4j2.configurationFile=$CONF_DIR/log4j2.properties" \
+      -cp "libs/*" \
+      com.minidb.server.MiniDbServer \
+      --data "$DATA_DIR" --conf "$CONF_DIR" \
+      "${PORT_ARG[@]}"
+    ;;
+esac
