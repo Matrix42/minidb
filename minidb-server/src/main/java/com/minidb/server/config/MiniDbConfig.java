@@ -42,6 +42,9 @@ public final class MiniDbConfig {
     /** 查询线程池大小:0 = 自动(可用处理器数)。 */
     public static final int DEFAULT_SERVER_QUERY_THREADS = 0;
 
+    /** 监听端口,conf/config.yaml 的 server.port。 */
+    public static final int DEFAULT_SERVER_PORT = 8899;
+
     private static final ObjectMapper YAML = new ObjectMapper(new YAMLFactory());
 
     private final long compactionTargetSizeBytes;
@@ -54,11 +57,12 @@ public final class MiniDbConfig {
     private final long lsmBackgroundIntervalMs;
     private final int lsmBloomBitsPerKey;
     private final int serverQueryThreads;
+    private final int serverPort;
 
     private MiniDbConfig(long compactionTargetSizeBytes, int compactionAutoPartThreshold,
                          long lsmMemtableSizeBytes, int lsmL0FileLimit, int lsmLevelSizeMultiplier,
                          boolean lsmWalFsync, long lsmBackgroundIntervalMs, int lsmBloomBitsPerKey,
-                         int serverQueryThreads) {
+                         int serverQueryThreads, int serverPort) {
         this.compactionTargetSizeBytes = compactionTargetSizeBytes;
         this.compactionAutoPartThreshold = compactionAutoPartThreshold;
         this.lsmMemtableSizeBytes = lsmMemtableSizeBytes;
@@ -68,6 +72,7 @@ public final class MiniDbConfig {
         this.lsmBackgroundIntervalMs = lsmBackgroundIntervalMs;
         this.lsmBloomBitsPerKey = lsmBloomBitsPerKey;
         this.serverQueryThreads = serverQueryThreads;
+        this.serverPort = serverPort;
     }
 
     public long compactionTargetSizeBytes() {
@@ -107,6 +112,11 @@ public final class MiniDbConfig {
         return serverQueryThreads;
     }
 
+    /** 监听端口,conf/config.yaml 的 server.port。 */
+    public int serverPort() {
+        return serverPort;
+    }
+
     public static MiniDbConfig load(Path dataDir) {
         long targetBytes = DEFAULT_COMPACTION_TARGET_SIZE_BYTES;
         int autoThreshold = DEFAULT_COMPACTION_AUTO_PART_THRESHOLD;
@@ -117,6 +127,7 @@ public final class MiniDbConfig {
         long lsmInterval = DEFAULT_LSM_BACKGROUND_INTERVAL_MS;
         int lsmBloom = DEFAULT_LSM_BLOOM_BITS_PER_KEY;
         int queryThreads = DEFAULT_SERVER_QUERY_THREADS;
+        int serverPort = DEFAULT_SERVER_PORT;
         Path file = dataDir.resolve("config.yaml");
         if (Files.exists(file)) {
             Map<String, Object> root = readYaml(file);
@@ -159,9 +170,13 @@ public final class MiniDbConfig {
             if (qt != null && qt >= 0) {
                 queryThreads = qt;
             }
+            Integer port = asInt(server == null ? null : server.get("port"));
+            if (port != null && port > 0) {
+                serverPort = port;
+            }
         }
         return new MiniDbConfig(targetBytes, autoThreshold,
-                lsmMemtable, lsmL0, lsmMultiplier, lsmFsync, lsmInterval, lsmBloom, queryThreads);
+                lsmMemtable, lsmL0, lsmMultiplier, lsmFsync, lsmInterval, lsmBloom, queryThreads, serverPort);
     }
 
     private static Map<String, Object> readYaml(Path file) {

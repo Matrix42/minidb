@@ -45,4 +45,16 @@ class MiniDbConfigTest {
                 "server:\n  query-threads: 4\n");
         assertEquals(4, MiniDbConfig.load(dir).serverQueryThreads());
     }
+
+    @Test
+    void serverPortDefaultsTo8899(@TempDir Path dir) {
+        assertEquals(8899, MiniDbConfig.load(dir).serverPort());
+    }
+
+    @Test
+    void loadsServerPort(@TempDir Path dir) throws Exception {
+        Files.writeString(dir.resolve("config.yaml"),
+                "server:\n  port: 9100\n");
+        assertEquals(9100, MiniDbConfig.load(dir).serverPort());
+    }
 }
