@@ -1,0 +1,15 @@
+# MiniDB 服务端配置。缺省键回退默认值,修改后重启生效。
+# 配置文件统一放 conf/,数据落在 data/(配置与数据解耦)。
+compaction:
+  target-size-mb: 128
+  auto-part-threshold: 16
+lsm:
+  memtable-size-mb: 64
+  l0-file-limit: 4
+  level-size-multiplier: 10
+  wal-fsync: false
+  background-interval-ms: 1000
+  bloom-bits-per-key: 10
+server:
+  query-threads: 0
+  port: 8899

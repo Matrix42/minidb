@@ -1,0 +1,50 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<assembly xmlns="http://maven.apache.org/ASSEMBLY/2.2.0"
+          xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+          xsi:schemaLocation="http://maven.apache.org/ASSEMBLY/2.2.0 https://maven.apache.org/xsd/assembly-2.2.0.xsd">
+  <id>dist</id>
+  <formats>
+    <format>dir</format>
+    <format>tar.gz</format>
+    <format>zip</format>
+  </formats>
+  <includeBaseDirectory>true</includeBaseDirectory>
+
+  <fileSets>
+    <!-- 依赖(由 maven-dependency-plugin 提前拷贝到 staging) -->
+    <fileSet>
+      <directory>${project.build.directory}/staging/libs</directory>
+      <outputDirectory>libs</outputDirectory>
+    </fileSet>
+    <fileSet>
+      <directory>${project.build.directory}/staging/jdbc</directory>
+      <outputDirectory>jdbc</outputDirectory>
+    </fileSet>
+    <fileSet>
+      <directory>${project.build.directory}/staging/tools</directory>
+      <outputDirectory>tools</outputDirectory>
+    </fileSet>
+    <!-- 脚本按原样拷贝;sh 保留执行位 -->
+    <fileSet>
+      <directory>src/main/bin</directory>
+      <outputDirectory>bin</outputDirectory>
+      <fileMode>0755</fileMode>
+    </fileSet>
+    <fileSet>
+      <directory>src/main/conf</directory>
+      <outputDirectory>conf</outputDirectory>
+    </fileSet>
+    <fileSet>
+      <directory>src/main/data</directory>
+      <outputDirectory>data</outputDirectory>
+    </fileSet>
+  </fileSets>
+
+  <files>
+    <file>
+      <source>src/main/README.md</source>
+      <outputDirectory>.</outputDirectory>
+      <destName>README.md</destName>
+    </file>
+  </files>
+</assembly>

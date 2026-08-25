@@ -1,0 +1,97 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<project xmlns="http://maven.apache.org/POM/4.0.0"
+         xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+         xsi:schemaLocation="http://maven.apache.org/POM/4.0.0 http://maven.apache.org/xsd/maven-4.0.0.xsd">
+  <modelVersion>4.0.0</modelVersion>
+  <parent>
+    <groupId>com.minidb</groupId>
+    <artifactId>minidb-parent</artifactId>
+    <version>1.0.0</version>
+  </parent>
+  <artifactId>minidb-dist</artifactId>
+  <packaging>pom</packaging>
+
+  <!-- 仅用于拉取发行依赖;无源码,由 assembly 组装发行目录。 -->
+  <dependencies>
+    <dependency>
+      <groupId>com.minidb</groupId>
+      <artifactId>minidb-server</artifactId>
+      <scope>runtime</scope>
+    </dependency>
+    <dependency>
+      <groupId>com.minidb</groupId>
+      <artifactId>minidb-jdbc</artifactId>
+      <scope>runtime</scope>
+    </dependency>
+    <dependency>
+      <groupId>sqlline</groupId>
+      <artifactId>sqlline</artifactId>
+      <scope>runtime</scope>
+    </dependency>
+  </dependencies>
+
+  <build>
+    <plugins>
+      <!-- 将依赖按目标目录分别拷贝到 staging -->
+      <plugin>
+        <groupId>org.apache.maven.plugins</groupId>
+        <artifactId>maven-dependency-plugin</artifactId>
+        <version>3.1.2</version>
+        <executions>
+          <execution>
+            <id>copy-libs</id>
+            <phase>prepare-package</phase>
+            <goals><goal>copy-dependencies</goal></goals>
+            <configuration>
+              <outputDirectory>${project.build.directory}/staging/libs</outputDirectory>
+              <includeScope>runtime</includeScope>
+              <excludeArtifactIds>minidb-jdbc,sqlline,jline,jline-builtins,jline-console,jline-reader,jline-style,jline-terminal,jline-terminal-jansi,jline-terminal-jna,jansi,jna</excludeArtifactIds>
+            </configuration>
+          </execution>
+          <execution>
+            <id>copy-jdbc</id>
+            <phase>prepare-package</phase>
+            <goals><goal>copy-dependencies</goal></goals>
+            <configuration>
+              <outputDirectory>${project.build.directory}/staging/jdbc</outputDirectory>
+              <includeScope>runtime</includeScope>
+              <includeArtifactIds>minidb-jdbc</includeArtifactIds>
+            </configuration>
+          </execution>
+          <execution>
+            <id>copy-tools</id>
+            <phase>prepare-package</phase>
+            <goals><goal>copy-dependencies</goal></goals>
+            <configuration>
+              <outputDirectory>${project.build.directory}/staging/tools</outputDirectory>
+              <includeScope>runtime</includeScope>
+              <includeArtifactIds>sqlline,jline,jline-builtins,jline-console,jline-reader,jline-style,jline-terminal,jline-terminal-jansi,jline-terminal-jna,jansi,jna</includeArtifactIds>
+            </configuration>
+          </execution>
+        </executions>
+      </plugin>
+      <!-- 将 staging 目录与静态资源组装成发行包 -->
+      <plugin>
+        <groupId>org.apache.maven.plugins</groupId>
+        <artifactId>maven-assembly-plugin</artifactId>
+        <version>3.7.1</version>
+        <configuration>
+          <finalName>minidb-1.0.0</finalName>
+          <appendAssemblyId>false</appendAssemblyId>
+          <descriptors>
+            <descriptor>src/main/assembly/dist.xml</descriptor>
+          </descriptors>
+        </configuration>
+        <executions>
+          <execution>
+            <id>dist</id>
+            <phase>package</phase>
+            <goals>
+              <goal>single</goal>
+            </goals>
+          </execution>
+        </executions>
+      </plugin>
+    </plugins>
+  </build>
+</project>

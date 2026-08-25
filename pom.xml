@@ -16,6 +16,7 @@
     <module>minidb-jdbc</module>
     <module>minidb-integration-tests</module>
     <module>minidb-tpcds</module>
+    <module>minidb-dist</module>
   </modules>
 
   <properties>
@@ -27,6 +28,7 @@
     <calcite.version>1.42.0</calcite.version>
     <junit.version>5.14.4</junit.version>
     <log4j.version>2.24.3</log4j.version>
+    <sqlline.version>1.12.0</sqlline.version>
   </properties>
 
   <dependencyManagement>
@@ -130,6 +132,11 @@
         <groupId>com.minidb</groupId>
         <artifactId>minidb-jdbc</artifactId>
         <version>${project.version}</version>
+      </dependency>
+      <dependency>
+        <groupId>sqlline</groupId>
+        <artifactId>sqlline</artifactId>
+        <version>${sqlline.version}</version>
       </dependency>
     </dependencies>
   </dependencyManagement>
