@@ -13,7 +13,9 @@ import org.apache.arrow.vector.VectorSchemaRoot;
  * key 类型一致（Integer/Long/String），无需边界转换。
  */
 public class MergeIterator {
-    private final MemTable memTable;
+    // 按优先级排序的 MemTable 列表:[0]=当前表(最新),越靠后越旧(swap 早的表)。
+    // 双缓冲 flush 下待落盘的表在此列表中,scan 必须覆盖,否则丢数据。
+    private final List<MemTable> memTables;
     private final SSTableManager sstManager;
     private final TableSchema schema;
     private final PartFormat format;
@@ -23,17 +25,17 @@ public class MergeIterator {
     private final List<Object> rangeLo;
     private final List<Object> rangeHi;
 
-    public MergeIterator(MemTable memTable, SSTableManager sstManager,
+    public MergeIterator(List<MemTable> memTables, SSTableManager sstManager,
                          TableSchema schema, PartFormat format,
                          BufferAllocator allocator) {
-        this(memTable, sstManager, schema, format, allocator, null, null);
+        this(memTables, sstManager, schema, format, allocator, null, null);
     }
 
-    public MergeIterator(MemTable memTable, SSTableManager sstManager,
+    public MergeIterator(List<MemTable> memTables, SSTableManager sstManager,
                          TableSchema schema, PartFormat format,
                          BufferAllocator allocator,
                          List<Object> rangeLo, List<Object> rangeHi) {
-        this.memTable = memTable;
+        this.memTables = memTables;
         this.sstManager = sstManager;
         this.schema = schema;
         this.format = format;
@@ -69,18 +71,21 @@ public class MergeIterator {
         private final List<VectorSchemaRoot> emitted = new ArrayList<>();
 
         MergeScanIterator() {
-            // 优先级：MemTable=0, L0=1, L1=2, L2=3...
+            // 优先级：当前 MemTable=0, 待 flush 表按 swap 新→旧 = 1..k, L0=k+1, L1=k+2...
             // 数字越小优先级越高；key 相同时优先级高的先出堆。
             List<SSTable> sstFiles = sstManager.allSSTables();
-            sources = new Source[sstFiles.size() + 1];
+            sources = new Source[memTables.size() + sstFiles.size()];
             heap = new int[sources.length];
 
-            // MemTable source (priority 0)
-            sources[0] = new MemTableSource(memTable.iterator());
+            // MemTable sources:memTables 已按优先级排好([0]=当前表最新)
+            int idx = 0;
+            for (MemTable mt : memTables) {
+                sources[idx] = new MemTableSource(mt.iterator(), idx);
+                idx++;
+            }
 
-            // SSTable sources。priority 直接用 sst.level()+1（比按 allLevels() 的
-            // keySet 迭代序号更确定——CHM 的迭代序不保证升序，而 level 即优先级语义）。
-            int idx = 1;
+            // SSTable sources。priority 直接用 idx + sst.level()+1(比按 allLevels() 的
+            // keySet 迭代序号更确定——CHM 的迭代序不保证升序,而 level 即优先级语义)。
             for (SSTable sst : sstFiles) {
                 // 文件级裁剪:与查询范围不相交的文件直接跳过(块级裁剪在 reader 内)
                 if (!overlapsRange(sst)) {
@@ -92,7 +97,7 @@ public class MergeIterator {
                 // 内存 O(批大小 × 文件数) 而非 O(文件总行数)。
                 BatchIterator it = rangeLo == null && rangeHi == null
                         ? reader.scan() : reader.scan(rangeLo, rangeHi);
-                sources[idx++] = new SstSource(it, schema, sst.level() + 1, sst.seq());
+                sources[idx++] = new SstSource(it, schema, idx + sst.level(), sst.seq());
             }
 
             // 每个源读首行入堆，再一次性自底向上 heapify（O(N)）——替代逐次 offer
@@ -286,8 +291,8 @@ public class MergeIterator {
         private final Iterator<Map.Entry<List<Object>, RowValue>> iter;
         private Map.Entry<List<Object>, RowValue> current;
 
-        MemTableSource(Iterator<Map.Entry<List<Object>, RowValue>> iter) {
-            super(0, Long.MAX_VALUE);
+        MemTableSource(Iterator<Map.Entry<List<Object>, RowValue>> iter, int priority) {
+            super(priority, Long.MAX_VALUE);
             this.iter = iter;
         }
 

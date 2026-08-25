@@ -8,23 +8,40 @@ import java.io.*;
 import java.nio.ByteBuffer;
 import java.nio.channels.FileChannel;
 import java.nio.charset.StandardCharsets;
+import java.nio.file.DirectoryStream;
+import java.nio.file.Files;
 import java.nio.file.Path;
 import java.nio.file.StandardOpenOption;
 import java.util.ArrayList;
+import java.util.Comparator;
 import java.util.List;
 import java.util.zip.CRC32;
 
+/**
+ * 写前日志(WAL),按「代」分段:当前段 {@code wal.log} 接收新 append,双缓冲 flush 时
+ * {@link #rotate()} 把当前段改成旧段 {@code wal-<gen>.log} 并开新当前段,对应表落盘后
+ * {@link #dropSegment(int)} 删旧段。恢复按代升序重放所有段 + 当前段——swap 出的表
+ * 在 flush 完成前其 WAL 数据必须保留(否则 crash 丢数据),完成后再删。
+ */
 public class WAL implements AutoCloseable {
 
     public record Entry(List<Object> key, RowValue value) {}
 
-    private final FileChannel channel;
+    private static final String SEGMENT_PREFIX = "wal-";
+
+    private final Path dir;
+    private final Path currentPath; // wal.log
     private final TableSchema schema;
     private final CRC32 crc = new CRC32();
     private final ByteBuffer writeBuf = ByteBuffer.allocate(8192);
+    private FileChannel channel;
+    private int nextSegmentGen; // 下次 rotate 使用的代号
 
     public WAL(Path walFile, TableSchema schema) throws IOException {
         this.schema = schema;
+        this.currentPath = walFile;
+        this.dir = walFile.getParent();
+        this.nextSegmentGen = maxSegmentGen() + 1;
         this.channel = FileChannel.open(walFile,
                 StandardOpenOption.CREATE, StandardOpenOption.READ, StandardOpenOption.WRITE);
         this.channel.position(this.channel.size()); // 追加写
@@ -57,39 +74,55 @@ public class WAL implements AutoCloseable {
         }
     }
 
-    public List<Entry> recover() {
-        List<Entry> entries = new ArrayList<>();
+    /**
+     * 双缓冲切换:当前段(数据 = 换出表)关后改名 {@code wal-<gen>.log},开新的空当前段。
+     * 返回旧段代号,落盘完成后由调用方 {@link #dropSegment(int)} 删除。
+     */
+    public int rotate() {
+        int gen = nextSegmentGen++;
         try {
-            if (channel.size() == 0) {
-                return entries;
-            }
+            channel.close();
+            Files.move(currentPath, dir.resolve(SEGMENT_PREFIX + gen + ".log"));
+            channel = FileChannel.open(currentPath,
+                    StandardOpenOption.CREATE, StandardOpenOption.READ, StandardOpenOption.WRITE);
             channel.position(0);
-            ByteBuffer header = ByteBuffer.allocate(8);
-            while (channel.position() < channel.size()) {
-                try {
-                    header.clear();
-                    readFully(header);
-                    header.flip();
-                    int checksum = header.getInt();
-                    int length = header.getInt();
-                    if (length <= 0 || length > 10 * 1024 * 1024) {
-                        break; // 损坏或异常长度，停止恢复
-                    }
-                    ByteBuffer body = ByteBuffer.allocate(length);
-                    readFully(body);
-                    crc.reset();
-                    crc.update(body.array());
-                    if ((int) crc.getValue() != checksum) {
-                        break; // checksum 不匹配，停止恢复
-                    }
-                    entries.add(decodeEntry(body.array()));
-                } catch (EOFException e) {
-                    break; // 文件截断（崩溃时部分写入），返回已恢复的条目
-                }
+        } catch (IOException e) {
+            throw new UncheckedIOException(e);
+        }
+        return gen;
+    }
+
+    /** 删除代号 gen 的旧段(对应表已落盘)。不存在时幂等。 */
+    public void dropSegment(int gen) {
+        try {
+            Files.deleteIfExists(dir.resolve(SEGMENT_PREFIX + gen + ".log"));
+        } catch (IOException e) {
+            throw new UncheckedIOException(e);
+        }
+    }
+
+    /** 清空全部段(TRUNCATE 用):删所有旧段 + 截断当前段。 */
+    public void truncateAll() {
+        try {
+            channel.truncate(0);
+            channel.position(0);
+            for (Path seg : listSegments()) {
+                Files.deleteIfExists(seg);
             }
         } catch (IOException e) {
             throw new UncheckedIOException(e);
         }
+    }
+
+    /** 恢复:旧段按代号升序(先写的数据先重放) + 当前段。 */
+    public List<Entry> recover() {
+        List<Entry> entries = new ArrayList<>();
+        List<Path> segments = listSegments();
+        segments.sort(Comparator.comparingInt(this::segmentGen));
+        for (Path seg : segments) {
+            entries.addAll(recoverFile(seg));
+        }
+        entries.addAll(recoverCurrent());
         return entries;
     }
 
@@ -111,9 +144,105 @@ public class WAL implements AutoCloseable {
         }
     }
 
-    private void readFully(ByteBuffer buf) throws IOException {
+    /** 当前段文件从头读(现有恢复逻辑)。 */
+    private List<Entry> recoverCurrent() {
+        List<Entry> entries = new ArrayList<>();
+        try {
+            if (channel.size() == 0) {
+                return entries;
+            }
+            channel.position(0);
+            ByteBuffer header = ByteBuffer.allocate(8);
+            while (channel.position() < channel.size()) {
+                try {
+                    header.clear();
+                    readFully(channel, header);
+                    header.flip();
+                    int checksum = header.getInt();
+                    int length = header.getInt();
+                    if (length <= 0 || length > 10 * 1024 * 1024) {
+                        break; // 损坏或异常长度，停止恢复
+                    }
+                    ByteBuffer body = ByteBuffer.allocate(length);
+                    readFully(channel, body);
+                    crc.reset();
+                    crc.update(body.array());
+                    if ((int) crc.getValue() != checksum) {
+                        break; // checksum 不匹配，停止恢复
+                    }
+                    entries.add(decodeEntry(body.array()));
+                } catch (EOFException e) {
+                    break; // 文件截断（崩溃时部分写入），返回已恢复的条目
+                }
+            }
+        } catch (IOException e) {
+            throw new UncheckedIOException(e);
+        }
+        return entries;
+    }
+
+    /** 单个旧段文件从头读(只读打开,不碰当前段 channel)。 */
+    private List<Entry> recoverFile(Path seg) {
+        List<Entry> entries = new ArrayList<>();
+        try (FileChannel ch = FileChannel.open(seg, StandardOpenOption.READ)) {
+            ByteBuffer header = ByteBuffer.allocate(8);
+            while (ch.position() < ch.size()) {
+                try {
+                    header.clear();
+                    readFully(ch, header);
+                    header.flip();
+                    int checksum = header.getInt();
+                    int length = header.getInt();
+                    if (length <= 0 || length > 10 * 1024 * 1024) {
+                        break;
+                    }
+                    ByteBuffer body = ByteBuffer.allocate(length);
+                    readFully(ch, body);
+                    crc.reset();
+                    crc.update(body.array());
+                    if ((int) crc.getValue() != checksum) {
+                        break;
+                    }
+                    entries.add(decodeEntry(body.array()));
+                } catch (EOFException e) {
+                    break;
+                }
+            }
+        } catch (IOException e) {
+            throw new UncheckedIOException(e);
+        }
+        return entries;
+    }
+
+    private List<Path> listSegments() {
+        List<Path> segments = new ArrayList<>();
+        try (DirectoryStream<Path> ds = Files.newDirectoryStream(dir, SEGMENT_PREFIX + "*.log")) {
+            for (Path p : ds) {
+                segments.add(p);
+            }
+        } catch (IOException e) {
+            throw new UncheckedIOException(e);
+        }
+        return segments;
+    }
+
+    private int maxSegmentGen() {
+        int max = -1;
+        for (Path seg : listSegments()) {
+            max = Math.max(max, segmentGen(seg));
+        }
+        return max;
+    }
+
+    private int segmentGen(Path seg) {
+        String name = seg.getFileName().toString(); // wal-<n>.log
+        String num = name.substring(SEGMENT_PREFIX.length(), name.length() - ".log".length());
+        return Integer.parseInt(num);
+    }
+
+    private static void readFully(FileChannel ch, ByteBuffer buf) throws IOException {
         while (buf.hasRemaining()) {
-            if (channel.read(buf) < 0) {
+            if (ch.read(buf) < 0) {
                 throw new EOFException();
             }
         }

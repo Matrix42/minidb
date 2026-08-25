@@ -27,6 +27,28 @@ public class LSMTable implements TableHandle {
     private volatile MemTable memTable;
     private volatile boolean closed;
 
+    // 双缓冲 flush:memTable 满时 swap 出并加入此列表,由后台执行器异步落盘。
+    // 列表头 = 最先 swap(最旧),列表尾 = 最新 swap;读路径(scan/getByKey/rowCount)
+    // 必须覆盖待落盘的表,否则丢数据。
+    private final Object tableLock = new Object();
+    private final List<PendingFlush> pendingFlush = new ArrayList<>();
+    // TRUNCATE 递增:正在落盘的 flush 任务在 addLevel0 前检查,变了则丢弃(表已清空)。
+    private volatile long flushEpoch = 0;
+    // 后台 flush 执行器(由 LSMBackgroundExecutor.register 注入);null = 同步退化。
+    private volatile LSMBackgroundExecutor flushExecutor;
+
+    /** swap 出的待落盘表 + 其 WAL 段代号(落盘完成后 dropSegment 删段)。 */
+    private static final class PendingFlush {
+        final MemTable memTable;
+        final int walGen;
+        volatile boolean flushing; // 正在落盘:读路径仍须看到,落盘完成才移除
+
+        PendingFlush(MemTable memTable, int walGen) {
+            this.memTable = memTable;
+            this.walGen = walGen;
+        }
+    }
+
     public LSMTable(TableSchema schema, PartFormat format, BufferAllocator allocator,
                     Path tableDir, long flushThresholdBytes) {
         this(schema, format, allocator, tableDir, flushThresholdBytes, 10, 4, 10);
@@ -68,7 +90,8 @@ public class LSMTable implements TableHandle {
         // 恢复 SSTable 元数据
         sstManager.loadExisting(tableDir, schema, format, allocator);
 
-        // 恢复 WAL
+        // 恢复 WAL(旧段按代升序 + 当前段——双缓冲下 swap 出的表在 flush 完成前
+        // 其 WAL 段必须保留,故恢复重放全部段)
         List<WAL.Entry> walEntries = wal.recover();
         if (!walEntries.isEmpty()) {
             // WAL 有数据 = 上次 crash 前 MemTable 没 flush
@@ -103,12 +126,12 @@ public class LSMTable implements TableHandle {
 
     @Override
     public BatchIterator scan() {
-        return new MergeIterator(memTable, sstManager, schema, format, allocator).scan();
+        return new MergeIterator(memTablesSnapshot(), sstManager, schema, format, allocator).scan();
     }
 
     @Override
     public BatchIterator scan(List<Object> rangeLo, List<Object> rangeHi) {
-        return new MergeIterator(memTable, sstManager, schema, format, allocator,
+        return new MergeIterator(memTablesSnapshot(), sstManager, schema, format, allocator,
                 rangeLo, rangeHi).scan();
     }
 
@@ -143,16 +166,105 @@ public class LSMTable implements TableHandle {
         }
 
         if (memTable.needsFlush()) {
-            flushMemTable();
+            swapAndFlushAsync();
         }
+    }
+
+    /**
+     * 双缓冲:满表 swap 出交给后台 flush,写路径只做指针交换 + WAL 段切换
+     * (O(1),不落盘)。落盘由 {@link LSMBackgroundExecutor#flushAsync} 后台执行。
+     */
+    private void swapAndFlushAsync() {
+        synchronized (tableLock) {
+            if (closed) return;
+            MemTable full = memTable;
+            memTable = new MemTable(schema, flushThresholdBytes);
+            // 当前 WAL 段(数据 = 满表)切为旧段,新段给新表——flush 完成后 drop 旧段,
+            // 避免 truncate 误删新表数据
+            int gen = wal.rotate();
+            pendingFlush.add(new PendingFlush(full, gen));
+        }
+        triggerFlush();
+    }
+
+    private void triggerFlush() {
+        LSMBackgroundExecutor ex = flushExecutor;
+        if (ex == null) {
+            flushNextPending(); // 无后台执行器(测试直连):同步 flush,语义一致
+        } else {
+            ex.flushAsync(this);
+        }
+    }
+
+    /** 由后台执行器调用:把最早 swap 的表落盘,循环处理完所有待落盘表。 */
+    public void flushNextPending() {
+        while (true) {
+            PendingFlush pf;
+            synchronized (tableLock) {
+                pf = firstQueued();
+                if (pf == null) {
+                    return;
+                }
+                pf.flushing = true;
+            }
+            flushOne(pf);
+        }
+    }
+
+    /** 单个待落盘表:过滤 tombstone → 写 SSTable → 移出列表 → drop WAL 段。 */
+    private void flushOne(PendingFlush pf) {
+        long epoch = flushEpoch;
+        // 过滤 DELETE tombstone，SSTable 只存有效行
+        List<Map.Entry<List<Object>, RowValue>> normalized = new ArrayList<>();
+        for (Map.Entry<List<Object>, RowValue> entry : pf.memTable.rows()) {
+            if (entry.getValue().kind() == RowValue.DELETE) continue;
+            normalized.add(Map.entry(entry.getKey(), entry.getValue()));
+        }
+
+        if (!normalized.isEmpty()) {
+            long seq = sstManager.nextSeq();
+            Path file = tableDir.resolve("sst-L0-" + String.format("%06d", seq) + ".sst");
+            SSTableWriter writer = new SSTableWriter(file, 0, schema, format, allocator, bloomBitsPerKey);
+            writer.writeFromIterator(normalized.iterator(), normalized.size());
+            SSTableReader reader = new SSTableReader(file, schema, format, allocator);
+            SSTable sst = reader.metadata();
+            reader.close();
+            if (flushEpoch == epoch) {
+                sstManager.addLevel0(new SSTable(file, 0, seq, sst.minKey(), sst.maxKey(),
+                        sst.rowCount(), sst.bloom()));
+            } else {
+                // TRUNCATE 在 flush 期间发生:表已清空,丢弃刚写的文件
+                try {
+                    Files.deleteIfExists(file);
+                } catch (IOException e) {
+                    throw new UncheckedIOException(e);
+                }
+            }
+        }
+        synchronized (tableLock) {
+            pendingFlush.remove(pf);
+        }
+        wal.dropSegment(pf.walGen);
+    }
+
+    private PendingFlush firstQueued() {
+        for (PendingFlush pf : pendingFlush) {
+            if (!pf.flushing) {
+                return pf;
+            }
+        }
+        return null;
     }
 
     /** 查找主键对应的行（用于约束校验与扫描点查）。返回 null 表示不存在或被删除。 */
     @Override
     public RowValue getByKey(List<Object> key) {
-        RowValue rv = memTable.get(key);
-        if (rv != null) {
-            return rv.kind() == RowValue.DELETE ? null : rv;
+        // 内存表(当前 + 待落盘):最新者优先
+        for (MemTable mt : memTablesSnapshot()) {
+            RowValue rv = mt.get(key);
+            if (rv != null) {
+                return rv.kind() == RowValue.DELETE ? null : rv;
+            }
         }
         // 查 SSTable：先 Bloom filter，再 key range，再读
         // SSTableWriter.encodeKey 对整数零填充以保证字典序与数值序一致，
@@ -197,10 +309,12 @@ public class LSMTable implements TableHandle {
     @Override
     public long rowCount() {
         long count = 0;
-        // MemTable 中的有效行（非 DELETE）
-        for (Map.Entry<List<Object>, RowValue> e : memTable.rows()) {
-            if (e.getValue().kind() != RowValue.DELETE) {
-                count++;
+        // 内存表(当前 + 待落盘)中的有效行（非 DELETE）
+        for (MemTable mt : memTablesSnapshot()) {
+            for (Map.Entry<List<Object>, RowValue> e : mt.rows()) {
+                if (e.getValue().kind() != RowValue.DELETE) {
+                    count++;
+                }
             }
         }
         // SSTable 中的行数（近似，不扣减 MemTable 覆盖的）
@@ -244,9 +358,13 @@ public class LSMTable implements TableHandle {
 
     @Override
     public void clearParts() {
-        // truncate: 清空 MemTable + 删所有 SSTable
-        memTable = new MemTable(schema, flushThresholdBytes);
-        wal.truncate();
+        synchronized (tableLock) {
+            memTable = new MemTable(schema, flushThresholdBytes);
+            // 挂起的 swap 作废(数据即删);正在落盘的 flush 任务靠 epoch 检查丢弃
+            pendingFlush.clear();
+            flushEpoch++;
+            wal.truncateAll();
+        }
         List<SSTable> all = new ArrayList<>(sstManager.allSSTables());
         sstManager.remove(all);
     }
@@ -258,7 +376,9 @@ public class LSMTable implements TableHandle {
 
     @Override
     public void close() throws Exception {
-        // 先 flush MemTable 再设 closed=true,否则 flushMemTable() 的 closed 守卫会跳过 flush
+        // 先停异步提交,再同步清空 pending 与当前表(数据必须落盘)。
+        flushExecutor = null;
+        flushNextPending();
         if (!memTable.isEmpty()) {
             flushMemTable();
         }
@@ -266,37 +386,65 @@ public class LSMTable implements TableHandle {
         wal.close();
     }
 
+    /** 同步落盘当前 MemTable(恢复/close/测试直连用;无后台时写满即走此路径)。 */
     public void flushMemTable() {
-        if (closed) return;
-        MemTable oldMt = this.memTable;
-        this.memTable = new MemTable(schema, flushThresholdBytes);
-        if (oldMt.isEmpty()) {
-            wal.truncate();
-            return;
-        }
-        long seq = sstManager.nextSeq();
-        Path file = tableDir.resolve("sst-L0-" + String.format("%06d", seq) + ".sst");
+        synchronized (tableLock) {
+            if (closed) return;
+            MemTable oldMt = memTable;
+            memTable = new MemTable(schema, flushThresholdBytes);
+            if (oldMt.isEmpty()) {
+                wal.truncateAll();
+                return;
+            }
 
-        // 过滤 DELETE tombstone，SSTable 只存有效行
-        List<Map.Entry<List<Object>, RowValue>> normalized = new ArrayList<>();
-        for (Map.Entry<List<Object>, RowValue> entry : oldMt.rows()) {
-            if (entry.getValue().kind() == RowValue.DELETE) continue;
-            normalized.add(Map.entry(entry.getKey(), entry.getValue()));
-        }
+            // 过滤 DELETE tombstone，SSTable 只存有效行
+            List<Map.Entry<List<Object>, RowValue>> normalized = new ArrayList<>();
+            for (Map.Entry<List<Object>, RowValue> entry : oldMt.rows()) {
+                if (entry.getValue().kind() == RowValue.DELETE) continue;
+                normalized.add(Map.entry(entry.getKey(), entry.getValue()));
+            }
 
-        if (normalized.isEmpty()) {
-            wal.truncate();
-            return;
-        }
+            if (normalized.isEmpty()) {
+                wal.truncateAll();
+                return;
+            }
 
-        SSTableWriter writer = new SSTableWriter(file, 0, schema, format, allocator, bloomBitsPerKey);
-        writer.writeFromIterator(normalized.iterator(), normalized.size());
-        SSTableReader reader = new SSTableReader(file, schema, format, allocator);
-        SSTable sst = reader.metadata();
-        reader.close();
-        sstManager.addLevel0(new SSTable(file, 0, seq, sst.minKey(), sst.maxKey(),
-                sst.rowCount(), sst.bloom()));
-        wal.truncate();
+            long seq = sstManager.nextSeq();
+            Path file = tableDir.resolve("sst-L0-" + String.format("%06d", seq) + ".sst");
+            SSTableWriter writer = new SSTableWriter(file, 0, schema, format, allocator, bloomBitsPerKey);
+            writer.writeFromIterator(normalized.iterator(), normalized.size());
+            SSTableReader reader = new SSTableReader(file, schema, format, allocator);
+            SSTable sst = reader.metadata();
+            reader.close();
+            sstManager.addLevel0(new SSTable(file, 0, seq, sst.minKey(), sst.maxKey(),
+                    sst.rowCount(), sst.bloom()));
+            wal.truncateAll();
+        }
+    }
+
+    /** 注入后台 flush 执行器(LSMBackgroundExecutor.register 时调用);null = 同步退化。 */
+    public void setFlushExecutor(LSMBackgroundExecutor executor) {
+        this.flushExecutor = executor;
+    }
+
+    /** 待落盘表数量(诊断/测试用:确认 swap 后未被 flush 前读路径仍覆盖)。 */
+    int pendingFlushCount() {
+        synchronized (tableLock) {
+            return pendingFlush.size();
+        }
+    }
+
+    /** 当前表 + 待落盘表的快照,已按版本优先级排好([0]=当前表最新,往后越旧)。 */
+    private List<MemTable> memTablesSnapshot() {
+        synchronized (tableLock) {
+            List<MemTable> out = new ArrayList<>(pendingFlush.size() + 1);
+            out.add(memTable);
+            // pending 从最新 swap(列表尾)到最旧(列表头)——版本新者优先
+            for (int i = pendingFlush.size() - 1; i >= 0; i--) {
+                out.add(pendingFlush.get(i).memTable);
+            }
+            return out;
+        }
     }
 
     // 暴露给后台任务
