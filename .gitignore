@@ -1,5 +1,6 @@
 target/
 data/
+!minidb-dist/src/main/data/
 .idea/
 *.iml
 .vscode/

@@ -1,0 +1,1 @@
+本目录存放 MiniDB 数据文件(表数据与 catalog.json)。勿手动编辑。
