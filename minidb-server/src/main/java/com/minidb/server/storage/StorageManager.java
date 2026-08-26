@@ -48,6 +48,7 @@ public class StorageManager implements AutoCloseable {
     private final Map<StorageFormat, PartFormat> formats = new EnumMap<>(StorageFormat.class);
     private final Map<String, TableHandle> tables = new ConcurrentHashMap<>();
     private final LSMBackgroundExecutor lsmExecutor;
+    private final IndexManager indexManager;
 
     public StorageManager(MiniDbCatalog catalog, BufferAllocator allocator, Path dataDir) {
         this(catalog, allocator, dataDir, MiniDbConfig.load(dataDir));
@@ -68,6 +69,8 @@ public class StorageManager implements AutoCloseable {
                 config.lsmL0FileLimit(), config.compactionTargetSizeBytes(),
                 config.lsmBackgroundIntervalMs());
         lsmExecutor.start();
+        this.indexManager = new IndexManager(catalog, config, allocator,
+                formats.get(StorageFormat.ARROW), tableStorage, lsmExecutor);
     }
 
     public MiniDbConfig config() {
@@ -98,6 +101,10 @@ public class StorageManager implements AutoCloseable {
         return lsmExecutor;
     }
 
+    public IndexManager indexManager() {
+        return indexManager;
+    }
+
     /** 启动:先恢复中断的 compaction,再恢复元数据,并为每张表挂「目录句柄」(按主键有无分发 LSMTable/SimpleTable)。 */
     public void loadAll() {
         recoverCompaction();
@@ -113,6 +120,9 @@ public class StorageManager implements AutoCloseable {
                 tables.put(sk, table);
                 if (table instanceof LSMTable) {
                     lsmExecutor.register(sk, (LSMTable) table);
+                }
+                if (!ts.indexes().isEmpty()) {
+                    indexManager.rebuildFromDisk(schema, tableName, ts);
                 }
             }
         }
@@ -157,6 +167,7 @@ public class StorageManager implements AutoCloseable {
         if (old == null) {
             throw new IllegalArgumentException("table not found: " + tableName);
         }
+        indexManager.dropIndexesForTable(schemaName, tableName);
         closeAndUnregister(old, sk);
         catalog.dropTable(schemaName, tableName);
         tableStorage.delete(schemaName, tableName);
@@ -253,10 +264,18 @@ public class StorageManager implements AutoCloseable {
         if (table instanceof LSMTable) {
             lsmExecutor.register(newKey, (LSMTable) table);
         }
+        indexManager.renameTable(schemaName, oldName, schemaName, newName);
     }
 
     public void dropSchema(String schemaName) {
         String skPrefix = key(schemaName) + ".";
+        for (String k : tables.keySet()) {
+            if (k.startsWith(skPrefix)) {
+                String tableName = k.substring(skPrefix.length());
+                indexManager.dropIndexesForTable(schemaName, tableName);
+            }
+        }
+
         List<String> toDrop = new ArrayList<>();
         for (String k : tables.keySet()) {
             if (k.startsWith(skPrefix)) {
@@ -279,6 +298,7 @@ public class StorageManager implements AutoCloseable {
             throw new IllegalArgumentException("table not found: " + tableName);
         }
         table.clearParts();
+        indexManager.clearIndexes(schemaName, tableName);
     }
 
     /** 合并一张表的所有 part(按配置的目标大小切分)。 */
