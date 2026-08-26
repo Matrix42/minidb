@@ -8,6 +8,8 @@ import java.nio.file.Path;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Map;
+import java.util.Set;
+import java.util.concurrent.ConcurrentHashMap;
 import org.apache.arrow.memory.BufferAllocator;
 import org.apache.arrow.vector.FieldVector;
 import org.apache.arrow.vector.VectorSchemaRoot;
@@ -38,6 +40,9 @@ public class LSMTable implements TableHandle {
     private volatile long flushEpoch = 0;
     // 后台 flush 执行器(由 LSMBackgroundExecutor.register 注入);null = 同步退化。
     private volatile LSMBackgroundExecutor flushExecutor;
+
+    // tx-private MemTable: key = txId, value = 该事务在此表的私有 MemTable
+    private final ConcurrentHashMap<Long, MemTable> txMemTables = new ConcurrentHashMap<>();
 
     /** swap 出的待落盘表 + 其 WAL 段代号(落盘完成后 dropSegment 删段)。 */
     private static final class PendingFlush {
@@ -200,24 +205,11 @@ public class LSMTable implements TableHandle {
             case UPDATE -> RowValue.UPDATE;
             case DELETE -> RowValue.DELETE;
         };
-        List<String> pkCols = schema.primaryKey();
-        List<Integer> pkIdx = new ArrayList<>();
-        for (String pkCol : pkCols) {
-            pkIdx.add(schema.columnIndex(pkCol));
-        }
+        List<Integer> pkIdx = pkIndexes();
 
         for (int r = 0; r < batch.getRowCount(); r++) {
-            List<Object> key = new ArrayList<>();
-            for (int idx : pkIdx) {
-                Object val = batch.getVector(idx).getObject(r);
-                key.add(val == null ? "" : val);
-            }
-            Object[] values = op == Operation.DELETE ? null : new Object[schema.columns().size()];
-            if (values != null) {
-                for (int c = 0; c < values.length; c++) {
-                    values[c] = batch.getVector(c).getObject(r);
-                }
-            }
+            List<Object> key = extractKey(batch, r, pkIdx);
+            Object[] values = op == Operation.DELETE ? null : extractValues(batch, r);
             RowValue rv = new RowValue(kind, values);
             wal.append(key, rv);
             memTable.put(key, rv);
@@ -226,6 +218,107 @@ public class LSMTable implements TableHandle {
         if (memTable.needsFlush()) {
             swapAndFlushAsync();
         }
+    }
+
+    @Override
+    public void writePart(VectorSchemaRoot batch, Operation op, long txId) {
+        if (txId == 0) {
+            writePart(batch, op); // 非事务路径
+            return;
+        }
+        MemTable txMem = txMemTables.computeIfAbsent(txId,
+                k -> new MemTable(schema, flushThresholdBytes));
+        byte kind = switch (op) {
+            case INSERT -> RowValue.INSERT;
+            case UPDATE -> RowValue.UPDATE;
+            case DELETE -> RowValue.DELETE;
+        };
+        List<Integer> pkIdx = pkIndexes();
+        for (int r = 0; r < batch.getRowCount(); r++) {
+            List<Object> key = extractKey(batch, r, pkIdx);
+            Object[] values = op == Operation.DELETE ? null : extractValues(batch, r);
+            RowValue rv = new RowValue(kind, values);
+            wal.append(txId, key, rv);
+            txMem.put(key, rv);
+        }
+    }
+
+    @Override
+    public void commitTx(long txId) {
+        MemTable txMem = txMemTables.remove(txId);
+        if (txMem == null) return;
+        synchronized (tableLock) {
+            for (Map.Entry<List<Object>, RowValue> e : txMem.rows()) {
+                memTable.put(e.getKey(), e.getValue());
+            }
+        }
+    }
+
+    @Override
+    public void rollbackTx(long txId) {
+        txMemTables.remove(txId);
+    }
+
+    @Override
+    public BatchIterator scan(long snapshotTxId) {
+        if (snapshotTxId < 0) {
+            return scan(); // READ_UNCOMMITTED：不过滤
+        }
+        return new MergeIterator(memTablesSnapshot(), txMemTables, sstManager,
+                schema, format, allocator, null, null, snapshotTxId).scan();
+    }
+
+    /**
+     * 事务恢复:从 WAL 恢复已提交事务的数据,跳过未提交事务的条目。
+     * 保留旧 {@link #recover()} 向后兼容(无事务时使用)。
+     */
+    public void recover(Set<Long> committedTxIds) {
+        sstManager.loadExisting(tableDir, schema, format, allocator);
+        List<WAL.Entry> entries = wal.recover(committedTxIds);
+        for (WAL.Entry entry : entries) {
+            List<Object> key = new ArrayList<>(entry.key());
+            RowValue rv = entry.value();
+            if (rv.values() != null) {
+                Object[] converted = new Object[rv.values().length];
+                for (int c = 0; c < converted.length; c++) {
+                    converted[c] = convertValue(rv.values()[c], schema.columns().get(c).type());
+                }
+                rv = new RowValue(rv.kind(), converted);
+            }
+            memTable.put(key, rv);
+        }
+        if (memTable.needsFlush()) {
+            flushMemTable();
+        }
+    }
+
+    /** 从 batch 中提取主键。 */
+    private List<Object> extractKey(VectorSchemaRoot batch, int row, List<Integer> pkIdx) {
+        List<Object> key = new ArrayList<>();
+        for (int idx : pkIdx) {
+            Object val = batch.getVector(idx).getObject(row);
+            key.add(val == null ? "" : val);
+        }
+        return key;
+    }
+
+    /** 从 batch 中提取所有列值。 */
+    private Object[] extractValues(VectorSchemaRoot batch, int row) {
+        Object[] values = new Object[schema.columns().size()];
+        for (int c = 0; c < values.length; c++) {
+            values[c] = batch.getVector(c).getObject(row);
+        }
+        return values;
+    }
+
+    /** 主键列索引列表。 */
+    private List<Integer> pkIndexes() {
+        List<String> pkCols = schema.primaryKey();
+        List<Integer> pkIdx = new ArrayList<>();
+        for (String pkCol : pkCols) {
+            pkIdx.add(schema.columnIndex(pkCol));
+        }
+        return pkIdx;
     }
 
     /**

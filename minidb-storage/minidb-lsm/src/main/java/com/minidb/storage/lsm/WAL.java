@@ -14,7 +14,9 @@ import java.nio.file.Path;
 import java.nio.file.StandardOpenOption;
 import java.util.ArrayList;
 import java.util.Comparator;
+import java.util.HashSet;
 import java.util.List;
+import java.util.Set;
 import java.util.zip.CRC32;
 
 /**
@@ -25,7 +27,12 @@ import java.util.zip.CRC32;
  */
 public class WAL implements AutoCloseable {
 
-    public record Entry(List<Object> key, RowValue value) {}
+    public record Entry(long txId, List<Object> key, RowValue value) {
+        /** 兼容旧格式（无 txId 的条目视为已提交）。 */
+        public Entry(List<Object> key, RowValue value) {
+            this(0L, key, value);
+        }
+    }
 
     private static final String SEGMENT_PREFIX = "wal-";
 
@@ -48,8 +55,12 @@ public class WAL implements AutoCloseable {
     }
 
     public void append(List<Object> key, RowValue value) {
+        append(0L, key, value);
+    }
+
+    public void append(long txId, List<Object> key, RowValue value) {
         try {
-            byte[] entryBytes = encodeEntry(key, value);
+            byte[] entryBytes = encodeEntry(txId, key, value);
             crc.reset();
             crc.update(entryBytes);
             int checksum = (int) crc.getValue();
@@ -116,6 +127,14 @@ public class WAL implements AutoCloseable {
 
     /** 恢复:旧段按代号升序(先写的数据先重放) + 当前段。 */
     public List<Entry> recover() {
+        return recover(null);
+    }
+
+    /**
+     * 恢复并过滤未提交事务的条目:只保留 txId==0(非事务) 或 txId 在 committedTxIds 中的条目。
+     * committedTxIds 为 null 时不过滤(向后兼容旧 recover())。
+     */
+    public List<Entry> recover(Set<Long> committedTxIds) {
         List<Entry> entries = new ArrayList<>();
         List<Path> segments = listSegments();
         segments.sort(Comparator.comparingInt(this::segmentGen));
@@ -123,7 +142,16 @@ public class WAL implements AutoCloseable {
             entries.addAll(recoverFile(seg));
         }
         entries.addAll(recoverCurrent());
-        return entries;
+        if (committedTxIds == null) {
+            return entries;
+        }
+        List<Entry> filtered = new ArrayList<>();
+        for (Entry e : entries) {
+            if (e.txId() == 0 || committedTxIds.contains(e.txId())) {
+                filtered.add(e);
+            }
+        }
+        return filtered;
     }
 
     public void truncate() {
@@ -248,9 +276,10 @@ public class WAL implements AutoCloseable {
         }
     }
 
-    private byte[] encodeEntry(List<Object> key, RowValue value) throws IOException {
+    private byte[] encodeEntry(long txId, List<Object> key, RowValue value) throws IOException {
         ByteArrayOutputStream bos = new ByteArrayOutputStream();
         DataOutputStream dos = new DataOutputStream(bos);
+        dos.writeLong(txId);
         dos.writeByte(value.kind());
         // Key:类型自描述二进制(tag + 定长/长度前缀),恢复时直接还原 Integer/Long/String,
         // 消除「toString → UTF-8 → 重新 parse」三趟,且不会把数字字符串 key 误当整数。
@@ -277,6 +306,7 @@ public class WAL implements AutoCloseable {
 
     private Entry decodeEntry(byte[] bytes) {
         ByteBuffer buf = ByteBuffer.wrap(bytes);
+        long txId = buf.getLong();
         byte kind = buf.get();
         int keyLen = Short.toUnsignedInt(buf.getShort());
         List<Object> key = new ArrayList<>(keyLen);
@@ -296,7 +326,7 @@ public class WAL implements AutoCloseable {
                 values[i] = decodeValueString(vBytes);
             }
         }
-        return new Entry(key, new RowValue(kind, values));
+        return new Entry(txId, key, new RowValue(kind, values));
     }
 
     /** 单个 key 值编码:类型 tag + 数据,定长整数(4/8/2 字节),字符串长度前缀。 */

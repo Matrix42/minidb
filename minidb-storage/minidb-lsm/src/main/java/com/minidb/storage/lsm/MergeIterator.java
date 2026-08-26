@@ -2,6 +2,7 @@ package com.minidb.storage.lsm;
 
 import com.minidb.storage.common.*;
 import java.util.*;
+import java.util.concurrent.ConcurrentHashMap;
 import org.apache.arrow.memory.BufferAllocator;
 import org.apache.arrow.vector.VectorSchemaRoot;
 
@@ -42,6 +43,29 @@ public class MergeIterator {
         this.allocator = allocator;
         this.rangeLo = rangeLo;
         this.rangeHi = rangeHi;
+    }
+
+    /**
+     * 事务快照读构造器:合并 shared MemTable 和已提交的 tx-private MemTable。
+     * 已提交的 tx-private 数据已通过 {@link LSMTable#commitTx} 合并到 shared MemTable,
+     * 故此处直接使用 shared MemTable;未提交的 tx-private 不在 snapshot 可见范围内。
+     * txMemTables 和 snapshotTxId 参数保留供后续扩展。
+     */
+    public MergeIterator(List<MemTable> memTables,
+                         ConcurrentHashMap<Long, MemTable> txMemTables,
+                         SSTableManager sstManager, TableSchema schema,
+                         PartFormat format, BufferAllocator allocator,
+                         List<Object> rangeLo, List<Object> rangeHi,
+                         long snapshotTxId) {
+        this.memTables = memTables;
+        this.sstManager = sstManager;
+        this.schema = schema;
+        this.format = format;
+        this.allocator = allocator;
+        this.rangeLo = rangeLo;
+        this.rangeHi = rangeHi;
+        // 简化实现:已提交的 tx-private 数据已通过 commitTx() 合并到 shared MemTable,
+        // 未提交的 tx-private MemTable 不在 snapshot 可见范围内。
     }
 
     public BatchIterator scan() {
