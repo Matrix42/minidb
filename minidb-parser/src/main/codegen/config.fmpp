@@ -27,6 +27,8 @@ data: {
     # List of import statements.
     imports: [
       "com.minidb.parser.ddl.SqlAlterTable"
+      "com.minidb.parser.ddl.SqlCreateIndex"
+      "com.minidb.parser.ddl.SqlDropIndex"
       "com.minidb.parser.ddl.SqlForeignKeyConstraint"
       "com.minidb.parser.ddl.SqlTableOptions"
       "org.apache.calcite.schema.ColumnStrategy"
@@ -41,6 +43,7 @@ data: {
     # not a reserved keyword, add it to the 'nonReservedKeywords' section.
     keywords: [
       "IF"
+      "INDEX"
       "MATERIALIZED"
       "STORED"
       "VIRTUAL"
@@ -55,6 +58,7 @@ data: {
     nonReservedKeywordsToAdd: [
       # not in core, added in server
       "IF"
+      "INDEX"
       "MATERIALIZED"
       "STORED"
       "VIRTUAL"
@@ -81,6 +85,7 @@ data: {
       "SqlCreateType"
       "SqlCreateView"
       "SqlCreateFunction"
+      "SqlCreateIndex"
     ]
 
     # List of methods for parsing extensions to "DROP" calls.
@@ -93,6 +98,7 @@ data: {
       "SqlDropType"
       "SqlDropView"
       "SqlDropFunction"
+      "SqlDropIndex"
     ]
 
   # List of methods for parsing extensions to "TRUNCATE" calls.

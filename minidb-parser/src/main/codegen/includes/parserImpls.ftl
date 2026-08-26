@@ -695,3 +695,39 @@ SqlNode SqlAlterTable() :
     }
 }
 
+boolean UniqueOpt() :
+{
+}
+{
+    <UNIQUE> { return true; }
+|
+    { return false; }
+}
+
+SqlCreate SqlCreateIndex(Span s, boolean replace) :
+{
+    final boolean unique;
+    final SqlIdentifier indexName;
+    final SqlIdentifier table;
+    final SqlNodeList columnList;
+}
+{
+    unique = UniqueOpt()
+    <INDEX> indexName = SimpleIdentifier()
+    <ON> table = CompoundIdentifier()
+    columnList = ParenthesizedSimpleIdentifierList()
+    { return new SqlCreateIndex(s.end(this), unique, indexName, table, columnList); }
+}
+
+SqlDrop SqlDropIndex(Span s, boolean replace) :
+{
+    final boolean ifExists;
+    final SqlIdentifier indexName;
+    final SqlIdentifier table;
+}
+{
+    <INDEX> ifExists = IfExistsOpt() indexName = SimpleIdentifier()
+    <ON> table = CompoundIdentifier()
+    { return new SqlDropIndex(s.end(this), ifExists, indexName, table); }
+}
+
