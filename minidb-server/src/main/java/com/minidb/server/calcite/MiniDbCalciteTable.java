@@ -3,6 +3,7 @@ package com.minidb.server.calcite;
 import com.minidb.storage.common.ArrowTypes;
 import com.minidb.storage.common.ColumnMeta;
 import com.minidb.server.catalog.MiniDbCatalog;
+import com.minidb.storage.common.IndexDef;
 import com.minidb.storage.common.TableSchema;
 import com.minidb.server.stats.Histogram;
 import com.minidb.server.stats.StatsEstimator;
@@ -67,6 +68,12 @@ public class MiniDbCalciteTable extends AbstractTable {
         }
         for (List<String> unique : schema.uniqueKeys()) {
             keys.add(bitSetOf(unique));
+        }
+        // UNIQUE 索引:由 UNIQUE 索引列组成的唯一键,供 CBO 基数估计(join distinct 等)。
+        for (IndexDef idx : schema.indexes()) {
+            if (idx.unique()) {
+                keys.add(bitSetOf(idx.columns()));
+            }
         }
         return keys;
     }
