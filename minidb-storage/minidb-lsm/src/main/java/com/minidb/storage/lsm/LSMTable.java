@@ -166,6 +166,9 @@ public class LSMTable implements TableHandle {
                         vectors.add(dstV);
                     }
                     VectorSchemaRoot out = VectorSchemaRoot.of(vectors.toArray(new FieldVector[0]));
+                    // 空投影(COUNT(*) 等,cols 为空数组)产出 0 向量的 root,其 rowCount 推导为 0——必须显式设回,否则聚合算子读到 0 行。
+                    // 非空投影下 of() 已按首个向量 valueCount 设值,此处设回同值(幂等)。
+                    out.setRowCount(src.getRowCount());
                     emitted.add(out);
                     pending = out;
                 }

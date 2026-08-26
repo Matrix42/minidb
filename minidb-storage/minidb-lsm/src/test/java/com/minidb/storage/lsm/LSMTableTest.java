@@ -138,6 +138,47 @@ class LSMTableTest {
         table2.close();
     }
 
+    @Test
+    void emptyProjectionPreservesRowCount(@TempDir Path dir) throws Exception {
+        // 空投影(COUNT(*) 等不引用任何列时)由 projectColumns 包装为 0 列 root,
+        // 行数必须保留,否则聚合算子读到 0 行。
+        LSMTable table = new LSMTable(schema, new ArrowPartFormat(), allocator, dir,
+                64 * 1024 * 1024);
+
+        VectorSchemaRoot batch = table.newBatchRoot();
+        batch.allocateNew();
+        for (int i = 0; i < 3; i++) {
+            ((org.apache.arrow.vector.IntVector) batch.getVector(0)).setSafe(i, i);
+            ((org.apache.arrow.vector.VarCharVector) batch.getVector(1)).setSafe(i, ("v" + i).getBytes());
+        }
+        batch.setRowCount(3);
+        table.writePart(batch, TableHandle.Operation.INSERT);
+        batch.close();
+
+        try (BatchIterator it = table.scan(new int[0])) {
+            assertTrue(it.hasNext(), "空投影应产生至少一个批");
+            VectorSchemaRoot b = it.next();
+            assertEquals(0, b.getFieldVectors().size(), "空投影应输出 0 列");
+            assertEquals(3, b.getRowCount(), "空投影批的行数应保留");
+        }
+        assertEquals(3, rowCountOf(table.scan(new int[0])), "空投影不应丢行");
+        assertEquals(3, rowCountOf(table.scan(new int[]{0})), "单列投影不应丢行");
+
+        table.close();
+    }
+
+    private static long rowCountOf(BatchIterator it) {
+        long total = 0;
+        try {
+            while (it.hasNext()) {
+                total += it.next().getRowCount();
+            }
+            return total;
+        } finally {
+            it.close();
+        }
+    }
+
     private List<Object[]> collect(LSMTable table) {
         List<Object[]> rows = new ArrayList<>();
         BatchIterator it = table.scan();
