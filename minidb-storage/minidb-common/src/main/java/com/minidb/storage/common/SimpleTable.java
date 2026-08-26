@@ -9,6 +9,7 @@ import java.util.ArrayList;
 import java.util.Comparator;
 import java.util.List;
 import java.util.Map;
+import java.util.Set;
 import java.util.concurrent.atomic.AtomicInteger;
 import org.apache.arrow.memory.ArrowBuf;
 import org.apache.arrow.memory.BufferAllocator;
@@ -27,6 +28,9 @@ public class SimpleTable implements TableHandle {
     /** compaction 交换目录的后缀:新 part 先写 .tmp,交换时旧目录暂存 .bak。 */
     public static final String COMPACT_TMP_SUFFIX = ".compact.tmp";
     public static final String COMPACT_BACKUP_SUFFIX = ".compact.bak";
+
+    /** 事务临时目录名前缀:事务写入暂存于 .tx/<txId>/ 下,提交时移到正式目录。 */
+    private static final String TX_DIR_PREFIX = ".tx";
 
     private final TableSchema schema;
     private final BufferAllocator allocator;
@@ -138,6 +142,107 @@ public class SimpleTable implements TableHandle {
     @Override
     public void writePart(VectorSchemaRoot batch, TableHandle.Operation op) {
         writePart(batch);
+    }
+
+    @Override
+    public void writePart(VectorSchemaRoot batch, TableHandle.Operation op, long txId) {
+        if (txId == 0) {
+            writePart(batch); // 非事务路径:直接落正式目录
+            return;
+        }
+        // 事务写入:暂存到 .tx/<txId>/ 临时目录,commit 时再移到正式目录
+        Path txDir = tableDir.resolve(TX_DIR_PREFIX).resolve(String.valueOf(txId));
+        try {
+            Files.createDirectories(txDir);
+        } catch (IOException e) {
+            throw new UncheckedIOException(e);
+        }
+        int seq = txPartSeq(txDir);
+        format.write(txDir.resolve(String.format("part-%06d.%s", seq, format.fileExtension())), batch);
+    }
+
+    /** 事务临时目录中已有 part 文件的最大序号 + 1。 */
+    private int txPartSeq(Path txDir) {
+        int max = 0;
+        String suffix = "." + format.fileExtension();
+        try {
+            if (Files.exists(txDir)) {
+                try (DirectoryStream<Path> ds = Files.newDirectoryStream(txDir)) {
+                    for (Path p : ds) {
+                        String name = p.getFileName().toString();
+                        if (name.startsWith("part-") && name.endsWith(suffix)) {
+                            try {
+                                int seq = Integer.parseInt(
+                                        name.substring("part-".length(), name.length() - suffix.length()));
+                                max = Math.max(max, seq);
+                            } catch (NumberFormatException ignored) {
+                                // 非标准命名,跳过
+                            }
+                        }
+                    }
+                }
+            }
+        } catch (IOException e) {
+            throw new UncheckedIOException(e);
+        }
+        return max + 1;
+    }
+
+    @Override
+    public void commitTx(long txId) {
+        // 将 .tx/<txId>/ 下的临时 part 文件移到正式目录,然后删除临时目录
+        Path txDir = tableDir.resolve(TX_DIR_PREFIX).resolve(String.valueOf(txId));
+        if (!Files.exists(txDir)) {
+            return;
+        }
+        try {
+            try (DirectoryStream<Path> ds = Files.newDirectoryStream(txDir)) {
+                for (Path part : ds) {
+                    // 目标文件名与临时文件名相同,直接移到正式目录
+                    Path target = tableDir.resolve(part.getFileName().toString());
+                    Files.move(part, target);
+                }
+            }
+            Files.deleteIfExists(txDir);
+            // 更新 partSeq 以反映新移入的 part 文件
+            partSeq.set(maxPartSeq());
+        } catch (IOException e) {
+            throw new UncheckedIOException(e);
+        }
+    }
+
+    @Override
+    public void rollbackTx(long txId) {
+        // 丢弃事务临时目录:删除 .tx/<txId>/ 整个目录树
+        Path txDir = tableDir.resolve(TX_DIR_PREFIX).resolve(String.valueOf(txId));
+        if (Files.exists(txDir)) {
+            deleteRecursively(txDir);
+        }
+    }
+
+    /**
+     * 恢复时根据已提交事务集合处理临时目录:
+     * 已提交的 → 将 part 移到正式目录;未提交的 → 删除临时目录。
+     */
+    public void recoverTxDirs(Set<Long> committedTxIds) {
+        Path txRoot = tableDir.resolve(TX_DIR_PREFIX);
+        if (!Files.exists(txRoot)) {
+            return;
+        }
+        try (DirectoryStream<Path> ds = Files.newDirectoryStream(txRoot)) {
+            for (Path txDir : ds) {
+                long txId = Long.parseLong(txDir.getFileName().toString());
+                if (committedTxIds.contains(txId)) {
+                    // 已提交但 part 尚未移到正式目录(崩溃在 commit 中间):补交
+                    commitTx(txId);
+                } else {
+                    // 未提交:丢弃
+                    deleteRecursively(txDir);
+                }
+            }
+        } catch (IOException e) {
+            throw new UncheckedIOException(e);
+        }
     }
 
     /** 删除所有 part 文件(truncate)。 */
@@ -318,6 +423,10 @@ public class SimpleTable implements TableHandle {
     private void collectParts(Path dir, List<Path> parts) {
         try (DirectoryStream<Path> ds = Files.newDirectoryStream(dir)) {
             for (Path p : ds) {
+                // 跳过事务临时目录 .tx,避免扫描到未提交的事务数据
+                if (p.getFileName().toString().startsWith(TX_DIR_PREFIX)) {
+                    continue;
+                }
                 if (Files.isDirectory(p)) {
                     collectParts(p, parts);
                 } else if (p.getFileName().toString().endsWith(partSuffix())) {
