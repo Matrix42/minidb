@@ -65,7 +65,7 @@ class IndexStorageTest {
 
         Path idxDir = dataDir.resolve("public").resolve("t").resolve(".indexes").resolve("idx_a");
         assertTrue(Files.isDirectory(idxDir), "索引目录应存在");
-        assertTrue(indexTable.rowCount() >= 3, "索引表行数应等于数据行数");
+        assertEquals(3, indexTable.rowCount(), "索引表行数应等于数据行数");
     }
 
     @Test

@@ -70,7 +70,7 @@ public class StorageManager implements AutoCloseable {
                 config.lsmBackgroundIntervalMs());
         lsmExecutor.start();
         this.indexManager = new IndexManager(catalog, config, allocator,
-                formats.get(StorageFormat.ARROW), tableStorage, lsmExecutor);
+                formats, tableStorage, lsmExecutor);
     }
 
     public MiniDbConfig config() {
@@ -269,16 +269,11 @@ public class StorageManager implements AutoCloseable {
 
     public void dropSchema(String schemaName) {
         String skPrefix = key(schemaName) + ".";
+        List<String> toDrop = new ArrayList<>();
         for (String k : tables.keySet()) {
             if (k.startsWith(skPrefix)) {
                 String tableName = k.substring(skPrefix.length());
                 indexManager.dropIndexesForTable(schemaName, tableName);
-            }
-        }
-
-        List<String> toDrop = new ArrayList<>();
-        for (String k : tables.keySet()) {
-            if (k.startsWith(skPrefix)) {
                 toDrop.add(k);
             }
         }

@@ -56,19 +56,20 @@ public class IndexManager {
     private final MiniDbCatalog catalog;
     private final MiniDbConfig config;
     private final BufferAllocator allocator;
-    private final PartFormat format;
+    private final Map<StorageFormat, PartFormat> formats;
     private final TableStorage tableStorage;
     private final LSMBackgroundExecutor lsmExecutor;
 
     // outer key = schema.table(小写);inner key = indexName(小写)
     private final Map<String, Map<String, TableHandle>> indexes = new ConcurrentHashMap<>();
 
-    IndexManager(MiniDbCatalog catalog, MiniDbConfig config, BufferAllocator allocator, PartFormat format,
-                 TableStorage tableStorage, LSMBackgroundExecutor lsmExecutor) {
+    IndexManager(MiniDbCatalog catalog, MiniDbConfig config, BufferAllocator allocator,
+                 Map<StorageFormat, PartFormat> formats, TableStorage tableStorage,
+                 LSMBackgroundExecutor lsmExecutor) {
         this.catalog = catalog;
         this.config = config;
         this.allocator = allocator;
-        this.format = format;
+        this.formats = formats;
         this.tableStorage = tableStorage;
         this.lsmExecutor = lsmExecutor;
     }
@@ -365,6 +366,10 @@ public class IndexManager {
 
     private LSMTable openIndex(String schemaName, IndexDef def, TableSchema data, Path idxDir) {
         TableSchema schema = indexSchema(schemaName, def, data);
+        PartFormat format = formats.get(data.storageFormat());
+        if (format == null) {
+            throw new IllegalArgumentException("unknown storage format for index: " + data.storageFormat());
+        }
         return new LSMTable(schema, format, allocator, idxDir,
                 config.lsmMemtableSizeBytes(), config.lsmBloomBitsPerKey(),
                 config.lsmL0FileLimit(), config.lsmLevelSizeMultiplier());
