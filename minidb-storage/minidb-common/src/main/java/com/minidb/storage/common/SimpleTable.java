@@ -5,6 +5,7 @@ import java.io.UncheckedIOException;
 import java.nio.file.DirectoryStream;
 import java.nio.file.Files;
 import java.nio.file.Path;
+import java.nio.file.StandardCopyOption;
 import java.util.ArrayList;
 import java.util.Comparator;
 import java.util.List;
@@ -190,7 +191,7 @@ public class SimpleTable implements TableHandle {
 
     @Override
     public void commitTx(long txId) {
-        // 将 .tx/<txId>/ 下的临时 part 文件移到正式目录,然后删除临时目录
+        // 将 .tx/<txId>/ 下的临时 part 文件移到正式目录,使用新序号避免与现有 part 冲突
         Path txDir = tableDir.resolve(TX_DIR_PREFIX).resolve(String.valueOf(txId));
         if (!Files.exists(txDir)) {
             return;
@@ -198,14 +199,14 @@ public class SimpleTable implements TableHandle {
         try {
             try (DirectoryStream<Path> ds = Files.newDirectoryStream(txDir)) {
                 for (Path part : ds) {
-                    // 目标文件名与临时文件名相同,直接移到正式目录
-                    Path target = tableDir.resolve(part.getFileName().toString());
-                    Files.move(part, target);
+                    // 用 partSeq 分配新序号,避免临时目录内 part 名与正式目录冲突
+                    int seq = partSeq.incrementAndGet();
+                    Path target = tableDir.resolve(String.format("part-%06d.%s", seq, format.fileExtension()));
+                    Files.move(part, target, StandardCopyOption.ATOMIC_MOVE);
                 }
             }
+            // 此时临时目录应为空(所有 part 已移出),删除之
             Files.deleteIfExists(txDir);
-            // 更新 partSeq 以反映新移入的 part 文件
-            partSeq.set(maxPartSeq());
         } catch (IOException e) {
             throw new UncheckedIOException(e);
         }
@@ -245,6 +246,19 @@ public class SimpleTable implements TableHandle {
         }
     }
 
+    /** 检查是否存在活跃事务的临时目录(compact 时用,避免 move/delete 破坏事务数据)。 */
+    private boolean hasActiveTxDirs() {
+        Path txRoot = tableDir.resolve(TX_DIR_PREFIX);
+        if (!Files.exists(txRoot)) {
+            return false;
+        }
+        try (DirectoryStream<Path> ds = Files.newDirectoryStream(txRoot)) {
+            return ds.iterator().hasNext();
+        } catch (IOException e) {
+            throw new UncheckedIOException(e);
+        }
+    }
+
     /** 删除所有 part 文件(truncate)。 */
     public void clearParts() {
         for (Path part : partFiles()) {
@@ -267,6 +281,10 @@ public class SimpleTable implements TableHandle {
         cleanupStaleArtifacts();
         List<Path> parts = partFiles();
         if (parts.size() <= 1) {
+            return parts.size();
+        }
+        // 有活跃事务临时目录时跳过 compaction,避免 move/delete 破坏事务数据
+        if (hasActiveTxDirs()) {
             return parts.size();
         }
         Path tmpDir = sibling(COMPACT_TMP_SUFFIX);
