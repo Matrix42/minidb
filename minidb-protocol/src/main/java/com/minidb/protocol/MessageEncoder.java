@@ -113,6 +113,32 @@ public class MessageEncoder extends MessageToByteEncoder<Message> {
             if (tp.length > 0) out.writeBytes(tp);
             out.writeInt(r.columnNamePattern() == null ? -1 : cp.length);
             if (cp.length > 0) out.writeBytes(cp);
+        } else if (msg instanceof Message.BeginRequest r) {
+            out.writeByte(MessageType.BEGIN_REQUEST);
+            out.writeInt(8);
+            out.writeLong(r.requestId());
+        } else if (msg instanceof Message.CommitRequest r) {
+            out.writeByte(MessageType.COMMIT_REQUEST);
+            out.writeInt(8);
+            out.writeLong(r.requestId());
+        } else if (msg instanceof Message.RollbackRequest r) {
+            out.writeByte(MessageType.ROLLBACK_REQUEST);
+            out.writeInt(8);
+            out.writeLong(r.requestId());
+        } else if (msg instanceof Message.SetAutoCommitRequest r) {
+            out.writeByte(MessageType.SET_AUTOCOMMIT);
+            out.writeInt(8 + 1);
+            out.writeLong(r.requestId());
+            out.writeByte(r.autoCommit() ? 1 : 0);
+        } else if (msg instanceof Message.CommitResponse r) {
+            byte[] err = r.error() == null
+                    ? new byte[0] : r.error().getBytes(StandardCharsets.UTF_8);
+            out.writeByte(MessageType.COMMIT_RESPONSE);
+            out.writeInt(8 + 1 + 4 + err.length);
+            out.writeLong(r.requestId());
+            out.writeByte(r.ok() ? 0 : 1);
+            out.writeInt(err.length);
+            out.writeBytes(err);
         } else {
             throw new IllegalArgumentException("unknown message: " + msg);
         }

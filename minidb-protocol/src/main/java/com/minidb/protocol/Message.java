@@ -24,6 +24,23 @@ public interface Message {
     record CloseCursorRequest(long cursorId) implements Message {
     }
 
+    record BeginRequest(long requestId) implements Message {}
+
+    record CommitRequest(long requestId) implements Message {}
+
+    record RollbackRequest(long requestId) implements Message {}
+
+    record SetAutoCommitRequest(long requestId, boolean autoCommit) implements Message {}
+
+    record CommitResponse(long requestId, boolean ok, String error) implements Message {
+        public static CommitResponse ok(long requestId) {
+            return new CommitResponse(requestId, true, "");
+        }
+        public static CommitResponse error(long requestId, String error) {
+            return new CommitResponse(requestId, false, error);
+        }
+    }
+
     record ExecuteResponse(long requestId, boolean ok, String error) implements Message {
         public static ExecuteResponse ok(long requestId) {
             return new ExecuteResponse(requestId, true, "");

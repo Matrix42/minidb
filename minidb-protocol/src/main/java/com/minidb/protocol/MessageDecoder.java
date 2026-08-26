@@ -124,6 +124,32 @@ public class MessageDecoder extends ByteToMessageDecoder {
                 String columnPattern = readNullableString(in, cpLen);
                 return new Message.ColumnsRequest(requestId, schemaPattern, tablePattern, columnPattern);
             }
+            case MessageType.BEGIN_REQUEST -> {
+                long requestId = in.readLong();
+                return new Message.BeginRequest(requestId);
+            }
+            case MessageType.COMMIT_REQUEST -> {
+                long requestId = in.readLong();
+                return new Message.CommitRequest(requestId);
+            }
+            case MessageType.ROLLBACK_REQUEST -> {
+                long requestId = in.readLong();
+                return new Message.RollbackRequest(requestId);
+            }
+            case MessageType.SET_AUTOCOMMIT -> {
+                long requestId = in.readLong();
+                boolean autoCommit = in.readByte() != 0;
+                return new Message.SetAutoCommitRequest(requestId, autoCommit);
+            }
+            case MessageType.COMMIT_RESPONSE -> {
+                long requestId = in.readLong();
+                boolean ok = in.readByte() == 0;
+                int msgLen = in.readInt();
+                byte[] msg = new byte[msgLen];
+                in.readBytes(msg);
+                return new Message.CommitResponse(requestId, ok,
+                        new String(msg, StandardCharsets.UTF_8));
+            }
             default -> throw new IllegalStateException(
                     String.format("unknown message type: 0x%02X", type));
         }
