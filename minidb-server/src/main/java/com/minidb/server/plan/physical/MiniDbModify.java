@@ -10,6 +10,7 @@ import com.minidb.storage.common.TableHandle;
 import com.minidb.server.exec.ConstraintChecker;
 import com.minidb.server.exec.ExecContext;
 import com.minidb.server.exec.RowCopier;
+import com.minidb.storage.common.IndexDef;
 import com.minidb.storage.common.SimpleTable;
 import com.minidb.storage.lsm.LSMTable;
 import java.util.ArrayList;
@@ -165,25 +166,30 @@ public class MiniDbModify extends TableModify implements MiniDbRel {
                     VectorSchemaRoot batch = input.next();
                     VectorSchemaRoot out = target.newBatchRoot();
                     out.allocateNew();
-                    for (int i = 0; i < batch.getRowCount(); i++) {
-                        // Copy table columns (old values) from input
-                        for (int c = 0; c < numTableCols; c++) {
-                            out.getVector(c).copyFromSafe(i, i, batch.getVector(c));
+                    try {
+                        for (int i = 0; i < batch.getRowCount(); i++) {
+                            // Copy table columns (old values) from input
+                            for (int c = 0; c < numTableCols; c++) {
+                                out.getVector(c).copyFromSafe(i, i, batch.getVector(c));
+                            }
+                            // Overwrite updated columns with new values from trailing input cols
+                            for (int j = 0; j < updateCols.size(); j++) {
+                                RowCopier.writeValue(out.getFieldVectors().get(updateIdx.get(j)), i,
+                                        batch.getFieldVectors().get(numTableCols + j), i);
+                            }
                         }
-                        // Overwrite updated columns with new values from trailing input cols
-                        for (int j = 0; j < updateCols.size(); j++) {
-                            RowCopier.writeValue(out.getFieldVectors().get(updateIdx.get(j)), i,
-                                    batch.getFieldVectors().get(numTableCols + j), i);
+                        out.setRowCount(batch.getRowCount());
+                        // UNIQUE 索引校验:新值不能与已有行冲突(排除本行,旧值仍存于索引表)
+                        validateUpdateUnique(ctx, ts, target, batch, out);
+                        target.writePart(out, op);
+                        if (ts != null && !ts.indexes().isEmpty()) {
+                            // batch 是输入批(前 numTableCols 列为旧值),out 是新值批
+                            ctx.storage().indexManager().onUpdate(ts, batch, out);
                         }
+                        affected += batch.getRowCount();
+                    } finally {
+                        out.close();
                     }
-                    out.setRowCount(batch.getRowCount());
-                    target.writePart(out, op);
-                    if (ts != null && !ts.indexes().isEmpty()) {
-                        // batch 是输入批(前 numTableCols 列为旧值),out 是新值批
-                        ctx.storage().indexManager().onUpdate(ts, batch, out);
-                    }
-                    affected += batch.getRowCount();
-                    out.close();
                 }
             }
         } finally {
@@ -191,9 +197,101 @@ public class MiniDbModify extends TableModify implements MiniDbRel {
         }
     }
 
-    /** INSERT 前的约束校验:NOT NULL + 主键/唯一冲突 + 外键引用存在。 */
+    /** UPDATE 的 UNIQUE 索引校验:新索引键不能与已有行冲突,排除本行(旧值仍在索引表中)。 */
+    private void validateUpdateUnique(ExecContext ctx, TableSchema schema,
+                                       TableHandle target, VectorSchemaRoot oldBatch,
+                                       VectorSchemaRoot newBatch) {
+        if (schema == null || schema.indexes().isEmpty()) return;
+        List<Integer> pkIdx = new ArrayList<>(schema.primaryKey().size());
+        for (String col : schema.primaryKey()) {
+            pkIdx.add(schema.columnIndex(col));
+        }
+        // 收集旧批的主键值(被更新行的旧 PK)
+        Set<List<Object>> oldPks = new HashSet<>();
+        for (int i = 0; i < oldBatch.getRowCount(); i++) {
+            List<Object> pk = new ArrayList<>(pkIdx.size());
+            for (int idx : pkIdx) {
+                pk.add(oldBatch.getVector(idx).getObject(i));
+            }
+            oldPks.add(pk);
+        }
+
+        for (IndexDef idx : schema.indexes()) {
+            if (!idx.unique()) continue;
+            TableHandle indexTable = ctx.storage().indexManager()
+                    .getIndex(schema.schemaName(), schema.name(), idx.name());
+            if (indexTable == null) continue;
+            List<Integer> idxPositions = new ArrayList<>(idx.columns().size());
+            for (String col : idx.columns()) {
+                idxPositions.add(schema.columnIndex(col));
+            }
+            List<Integer> indexPkPositions = new ArrayList<>(schema.primaryKey().size());
+            for (String col : schema.primaryKey()) {
+                indexPkPositions.add(schema.columnIndex(col));
+            }
+
+            for (int r = 0; r < newBatch.getRowCount(); r++) {
+                // 新行的索引键
+                List<Object> newIdxKey = new ArrayList<>(idxPositions.size());
+                boolean hasNull = false;
+                for (int pos : idxPositions) {
+                    if (newBatch.getVector(pos).isNull(r)) { hasNull = true; break; }
+                    newIdxKey.add(newBatch.getVector(pos).getObject(r));
+                }
+                if (hasNull) continue; // null 键不参与唯一性
+
+                // 新行的主键
+                List<Object> newPk = new ArrayList<>(indexPkPositions.size());
+                for (int pos : indexPkPositions) {
+                    newPk.add(newBatch.getVector(pos).getObject(r));
+                }
+
+                // 扫描索引表:前缀匹配索引列值,确认是否有冲突(不同 PK 的行)
+                // 注意:索引表范围扫描是超集语义(只裁剪 SSTable 文件,不裁剪 MemTable 行),
+                // 返回的批可能包含前缀外的行,必须逐行检查索引列前缀匹配。
+                boolean conflict = false;
+                try (BatchIterator it = indexTable.scan(newIdxKey, newIdxKey)) {
+                    while (it.hasNext()) {
+                        VectorSchemaRoot b = it.next();
+                        for (int i = 0; i < b.getRowCount(); i++) {
+                            // 先确认索引列前缀匹配(超集扫描可能返回前缀外的行)
+                            boolean prefixMatch = true;
+                            for (int c = 0; c < idxPositions.size(); c++) {
+                                Object v = b.getVector(c).getObject(i);
+                                if (v == null || !v.equals(newIdxKey.get(c))) {
+                                    prefixMatch = false;
+                                    break;
+                                }
+                            }
+                            if (!prefixMatch) continue;
+
+                            // 索引表 schema = (索引列..., 主键列...)
+                            List<Object> existingPk = new ArrayList<>(indexPkPositions.size());
+                            for (int c = 0; c < indexPkPositions.size(); c++) {
+                                int vecIdx = idxPositions.size() + c;
+                                existingPk.add(b.getVector(vecIdx).getObject(i));
+                            }
+                            // 若匹配行的 PK 正是被更新行的旧 PK → 同一行,允许
+                            if (!oldPks.contains(existingPk)) {
+                                conflict = true;
+                                break;
+                            }
+                        }
+                        if (conflict) break;
+                    }
+                }
+                if (conflict) {
+                    throw new IllegalArgumentException(
+                            "unique index constraint violation: " + idx.name());
+                }
+            }
+        }
+    }
     private void validateInsert(ExecContext ctx, TableHandle target, VectorSchemaRoot batch) {
-        ConstraintChecker.validateInsert(ctx, target.schema(), target, batch);
+        // 用 catalog 而非 target.schema() 查索引元数据(handle 是创建时的快照)
+        TableSchema ts = ctx.storage().catalog().getTable(
+                target.schema().schemaName(), target.schema().name());
+        ConstraintChecker.validateInsert(ctx, ts != null ? ts : target.schema(), target, batch);
     }
 
     /** 外键 INSERT 校验:child 行的外键列值必须存在于引用表(含 null 的键不校验)。 */

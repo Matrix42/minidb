@@ -3,6 +3,7 @@ package com.minidb.server.exec;
 import com.minidb.storage.common.BatchIterator;
 import com.minidb.storage.common.ColumnMeta;
 import com.minidb.storage.common.ForeignKey;
+import com.minidb.storage.common.IndexDef;
 import com.minidb.storage.common.TableHandle;
 import com.minidb.storage.common.TableSchema;
 import java.util.ArrayList;
@@ -25,7 +26,7 @@ public final class ConstraintChecker {
     private ConstraintChecker() {
     }
 
-    /** INSERT 前的约束校验:NOT NULL + 主键/唯一冲突 + 外键引用存在。 */
+    /** INSERT 前的约束校验:NOT NULL + 主键/唯一冲突 + UNIQUE 索引 + 外键引用存在。 */
     public static void validateInsert(ExecContext ctx, TableSchema schema,
                                       TableHandle target, VectorSchemaRoot batch) {
         for (ColumnMeta column : schema.columns()) {
@@ -46,7 +47,56 @@ public final class ConstraintChecker {
         for (List<String> unique : schema.uniqueKeys()) {
             validateUnique(schema, target, batch, unique, "unique");
         }
+        // UNIQUE 索引:含 null 键不参与唯一性;批内同键先自体去重再 vs 存量。
+        for (IndexDef idx : schema.indexes()) {
+            if (!idx.unique()) continue;
+            TableHandle indexTable = ctx.storage().indexManager()
+                    .getIndex(schema.schemaName(), schema.name(), idx.name());
+            if (indexTable == null) continue;
+            List<Integer> idxPositions = columnIndexes(schema, idx.columns());
+            Set<List<Object>> batchKeys = new HashSet<>();
+            for (int i = 0; i < batch.getRowCount(); i++) {
+                List<Object> key = keyOf(batch, i, idxPositions);
+                if (key == null) continue; // null 键跳过
+                if (!batchKeys.add(key)) {
+                    throw new IllegalArgumentException(
+                            "unique index constraint violation: " + idx.name());
+                }
+            }
+            // 存量重复:索引表范围扫描是超集语义(块级窗口),必须对返回行的索引列前缀做
+            // 精确匹配——窗口必然覆盖所有索引列 == key 的行,再按前缀过滤掉窗口内其他键。
+            // 索引表 schema = (索引列..., 主键列...),索引列在下标 0..idxCount-1。
+            for (List<Object> key : batchKeys) {
+                if (indexContainsPrefix(indexTable, key)) {
+                    throw new IllegalArgumentException(
+                            "unique index constraint violation: " + idx.name());
+                }
+            }
+        }
         validateForeignKeys(ctx, schema, target, batch);
+    }
+
+    /** 索引表前缀范围扫描,行级确认存在「索引列 == prefix」的行(过滤超集窗口的其他键)。 */
+    private static boolean indexContainsPrefix(TableHandle indexTable, List<Object> prefix) {
+        try (BatchIterator it = indexTable.scan(prefix, prefix)) {
+            while (it.hasNext()) {
+                VectorSchemaRoot b = it.next();
+                for (int r = 0; r < b.getRowCount(); r++) {
+                    boolean match = true;
+                    for (int c = 0; c < prefix.size(); c++) {
+                        Object v = b.getVector(c).getObject(r);
+                        if (v == null || !v.equals(prefix.get(c))) {
+                            match = false;
+                            break;
+                        }
+                    }
+                    if (match) {
+                        return true;
+                    }
+                }
+            }
+        }
+        return false;
     }
 
     /** 对表已有数据自检 proposed 约束(NOT NULL + 主键/唯一查重 + 外键引用存在)。 */

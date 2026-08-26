@@ -21,10 +21,12 @@ import java.nio.file.DirectoryStream;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.util.ArrayList;
+import java.util.HashSet;
 import java.util.List;
 import java.util.Locale;
 import java.util.Map;
 import java.util.Objects;
+import java.util.Set;
 import java.util.concurrent.ConcurrentHashMap;
 import org.apache.arrow.memory.BufferAllocator;
 import org.apache.arrow.vector.FieldVector;
@@ -121,6 +123,9 @@ public class IndexManager {
      * 扫描数据表,把每行的(索引列..., 主键列...)提取出来批量写入索引表。
      * LSMTable 的 scan() 返回超集语义(对索引表 key 无裁剪),但这里写入的是精确键,
      * 因此无超集问题。
+     * <p>若索引为 UNIQUE,在写入前逐批用 seen 集校验无重复(含存量与批内);冲突抛
+     * {@link IllegalArgumentException}。调用方(QueryExecutor.handleCreateIndex)
+     * 捕获异常后清理索引半成品。
      */
     public void populateFromTable(String schemaName, String tableName, IndexDef def,
                                    TableHandle dataTable, TableHandle indexTable) {
@@ -133,6 +138,9 @@ public class IndexManager {
         for (String col : data.primaryKey()) {
             pkPositions.add(data.columnIndex(col));
         }
+
+        // UNIQUE 索引:seen 集追踪所有已写键,发现重复即抛错(调用方清理半成品)
+        Set<List<Object>> seen = def.unique() ? new HashSet<>() : null;
 
         List<Object[]> buffer = new ArrayList<>(MAX_BATCH_ROWS);
         try (BatchIterator it = dataTable.scan()) {
@@ -147,6 +155,20 @@ public class IndexManager {
                     }
                     for (int col : pkPositions) {
                         key[pos++] = RowVectors.readObject(batch.getVector(col), r);
+                    }
+                    if (seen != null) {
+                        // 仅索引列值(不含主键)检查重复——同索引值跨主键仍算冲突
+                        List<Object> idxKey = new ArrayList<>(idxPositions.size());
+                        for (int c = 0; c < idxPositions.size(); c++) {
+                            idxKey.add(key[c]);
+                        }
+                        // null 键不参与唯一性
+                        if (idxKey.stream().noneMatch(Objects::isNull)
+                                && !seen.add(idxKey)) {
+                            throw new IllegalArgumentException(
+                                    "unique index constraint violation: "
+                                            + def.name() + " — duplicate key " + idxKey);
+                        }
                     }
                     buffer.add(key);
                     if (buffer.size() >= MAX_BATCH_ROWS) {
