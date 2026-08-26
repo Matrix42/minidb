@@ -1,5 +1,8 @@
 package com.minidb.server.plan.physical;
 import com.google.common.collect.Range;
+import com.minidb.server.calcite.MiniDbCalciteTable;
+import com.minidb.server.storage.IndexManager;
+import com.minidb.storage.common.IndexDef;
 import com.minidb.server.catalog.InformationSchemaCatalog;
 import com.minidb.server.exec.ExecContext;
 import com.minidb.server.exec.InformationSchema;
@@ -20,6 +23,8 @@ import java.util.HashMap;
 import java.util.Iterator;
 import java.util.List;
 import java.util.Map;
+import java.util.HashSet;
+import java.util.Set;
 import org.apache.arrow.vector.BitVector;
 import org.apache.arrow.vector.FieldVector;
 import org.apache.arrow.vector.ValueVector;
@@ -51,6 +56,7 @@ public class MiniDbScan extends TableScan implements MiniDbRel {
     private final int[] projectedColumns;
     /** 下推的谓词:null→不过滤;非null→扫描时 eval 并过滤。 */
     private final RexNode pushedFilter;
+    private final String usedIndex;
 
     public MiniDbScan(RelOptCluster cluster, RelTraitSet traitSet, RelOptTable table) {
         this(cluster, traitSet, table, null, null);
@@ -61,6 +67,7 @@ public class MiniDbScan extends TableScan implements MiniDbRel {
         super(cluster, traitSet, List.of(), table);
         this.projectedColumns = projectedColumns;
         this.pushedFilter = pushedFilter;
+        this.usedIndex = selectIndex(table, pushedFilter);
         if (projectedColumns != null && !isIdentityProjection(projectedColumns,
                 table.getRowType().getFieldCount())) {
             // 投影后 rowType = 投影列子集:上层算子的表达式/行类型分析按 rowType 取列,
@@ -100,6 +107,7 @@ public class MiniDbScan extends TableScan implements MiniDbRel {
     @Override
     public RelWriter explainTerms(RelWriter pw) {
         super.explainTerms(pw);
+        if (usedIndex != null) pw.item("index", usedIndex);
         if (pushedFilter != null) {
             pw.item("filter", pushedFilter);
         }
@@ -115,6 +123,10 @@ public class MiniDbScan extends TableScan implements MiniDbRel {
 
     public RexNode pushedFilter() {
         return pushedFilter;
+    }
+
+    public String usedIndex() {
+        return usedIndex;
     }
 
     @Override
@@ -164,6 +176,10 @@ public class MiniDbScan extends TableScan implements MiniDbRel {
             RangeBounds range = RangeBounds.extract(pushedFilter, tableHandle.schema());
             if (range != null) {
                 return applyPushdown(tableHandle.scan(range.lo, range.hi), ctx);
+            }
+            if (usedIndex != null) {
+                BatchIterator indexed = indexLookup(tableHandle, ctx);
+                if (indexed != null) return indexed;
             }
         }
         return applyPushdown(
@@ -246,6 +262,170 @@ public class MiniDbScan extends TableScan implements MiniDbRel {
             out.add(node);
         }
     }
+
+    private BatchIterator indexLookup(TableHandle dataTable, ExecContext ctx) {
+        List<String> qualified = table.getQualifiedName();
+        String schemaName = qualified.size() >= 3 ? qualified.get(qualified.size() - 2) : ctx.currentSchema();
+        String tableName = qualified.get(qualified.size() - 1);
+        MiniDbCalciteTable calciteTable = table.unwrap(MiniDbCalciteTable.class);
+        if (calciteTable == null) return null;
+        TableSchema dataSchema = calciteTable.tableSchema();
+        IndexDef indexDef = null;
+        for (IndexDef def : dataSchema.indexes())
+            if (def.name().equals(usedIndex)) { indexDef = def; break; }
+        if (indexDef == null) return null;
+        TableHandle indexTable = ctx.storage().indexManager().getIndex(schemaName, tableName, usedIndex);
+        if (indexTable == null) return null;
+
+        List<RexNode> conjuncts = new ArrayList<>();
+        splitConjuncts(pushedFilter, conjuncts);
+        List<Integer> idxPositions = new ArrayList<>(indexDef.columns().size());
+        for (String col : indexDef.columns()) idxPositions.add(dataSchema.columnIndex(col));
+        List<Object> loPrefix = new ArrayList<>();
+        for (int colIdx : idxPositions) {
+            Object bound = null;
+            for (RexNode c : conjuncts) {
+                IndexBound b = extractIndexBound(c);
+                if (b != null && b.colIndex == colIdx) { bound = b.value; break; }
+            }
+            if (bound == null || "SEARCH".equals(bound) || "OR".equals(bound)) break;
+            loPrefix.add(bound);
+        }
+        if (loPrefix.isEmpty()) return null;
+
+        Set<List<Object>> matchedPks = new HashSet<>();
+        int pkCount = dataSchema.primaryKey().size();
+        try (BatchIterator it = indexTable.scan(loPrefix, loPrefix)) {
+            while (it.hasNext()) {
+                VectorSchemaRoot b = it.next();
+                for (int r = 0; r < b.getRowCount(); r++) {
+                    boolean prefixMatch = true;
+                    for (int c = 0; c < loPrefix.size(); c++) {
+                        Object v = b.getVector(c).getObject(r);
+                        if (v == null || !v.equals(loPrefix.get(c))) { prefixMatch = false; break; }
+                    }
+                    if (!prefixMatch) continue;
+                    List<Object> pk = new ArrayList<>(pkCount);
+                    for (int c = 0; c < pkCount; c++)
+                        pk.add(b.getVector(loPrefix.size() + c).getObject(r));
+                    matchedPks.add(pk);
+                }
+            }
+        }
+        if (matchedPks.isEmpty()) return BatchIterator.interruptible(BatchIterator.empty());
+
+        List<Object[]> rows = new ArrayList<>();
+        for (List<Object> pk : matchedPks) {
+            RowValue rv = dataTable.getByKey(pk);
+            if (rv != null && rv.kind() == RowValue.INSERT) rows.add(rv.values());
+        }
+        if (rows.isEmpty()) return BatchIterator.interruptible(BatchIterator.empty());
+        VectorSchemaRoot owned = rowsToRoot(rows, dataSchema, ctx);
+        VectorSchemaRoot out = null;
+        try {
+            List<RexNode> residual = new ArrayList<>();
+            for (RexNode c : conjuncts) {
+                IndexBound b = extractIndexBound(c);
+                if (b == null || !idxPositions.contains(b.colIndex)) residual.add(c);
+            }
+            RexNode residualFilter = residual.isEmpty() ? null
+                    : (residual.size() == 1 ? residual.get(0)
+                    : getCluster().getRexBuilder().makeCall(SqlStdOperatorTable.AND, residual));
+            VectorSchemaRoot filtered = applyFilter(owned, residualFilter, ctx);
+            if (filtered == null) return BatchIterator.interruptible(BatchIterator.empty());
+            if (filtered != owned) { owned.close(); owned = filtered; }
+            if (projectedColumns != null) {
+                VectorSchemaRoot projected = applyProject(owned, ctx);
+                if (projected != owned) { owned.close(); owned = projected; }
+            }
+            out = owned;
+            return singleBatch(out);
+        } finally { if (out == null) owned.close(); }
+    }
+
+    private static String selectIndex(RelOptTable relTable, RexNode pushedFilter) {
+        if (pushedFilter == null) return null;
+        MiniDbCalciteTable t = relTable.unwrap(MiniDbCalciteTable.class);
+        if (t == null) return null;
+        TableSchema schema = t.tableSchema();
+        if (schema.indexes().isEmpty()) return null;
+        List<RexNode> conjuncts = new ArrayList<>();
+        splitConjuncts(pushedFilter, conjuncts);
+        Set<Integer> boundCols = new HashSet<>();
+        for (RexNode c : conjuncts) {
+            IndexBound bound = extractIndexBound(c);
+            if (bound != null) boundCols.add(bound.colIndex);
+        }
+        if (boundCols.isEmpty()) return null;
+        String best = null;
+        int bestCount = 0;
+        for (IndexDef def : schema.indexes()) {
+            int count = 0;
+            for (String col : def.columns())
+                if (boundCols.contains(schema.columnIndex(col))) count++;
+            if (count > 0 && count == def.columns().size() && count > bestCount) {
+                best = def.name(); bestCount = count;
+            }
+        }
+        return best;
+    }
+
+    private static IndexBound extractIndexBound(RexNode node) {
+        if (node instanceof RexCall call) {
+            if (call.getKind() == SqlKind.EQUALS) return boundEqualityGeneral(call);
+            if (call.getKind() == SqlKind.SEARCH) return boundSearch(call);
+            if (call.getKind() == SqlKind.OR) return boundOrChain(call);
+        }
+        return null;
+    }
+
+    private static IndexBound boundEqualityGeneral(RexCall call) {
+        RexNode l = call.getOperands().get(0), r = call.getOperands().get(1);
+        RexInputRef ref; RexLiteral lit;
+        if (l instanceof RexInputRef a && r instanceof RexLiteral b) { ref = a; lit = b; }
+        else if (l instanceof RexLiteral a && r instanceof RexInputRef b) { ref = b; lit = a; }
+        else return null;
+        Object value = literalValue(lit);
+        return value == null ? null : new IndexBound(ref.getIndex(), value);
+    }
+
+    private static IndexBound boundSearch(RexCall call) {
+        RexNode l = call.getOperands().get(0), r = call.getOperands().get(1);
+        if (l instanceof RexInputRef ref && r instanceof RexLiteral lit) {
+            Sarg<?> sarg = lit.getValueAs(Sarg.class);
+            if (sarg != null && sarg.isPoints()) return new IndexBound(ref.getIndex(), "SEARCH");
+        }
+        return null;
+    }
+
+    private static IndexBound boundOrChain(RexCall call) {
+        Integer colIndex = null;
+        for (RexNode o : call.getOperands()) {
+            if (!(o instanceof RexCall c) || c.getKind() != SqlKind.EQUALS) return null;
+            IndexBound b = boundEqualityGeneral(c);
+            if (b == null) return null;
+            if (colIndex == null) colIndex = b.colIndex;
+            else if (colIndex != b.colIndex) return null;
+        }
+        return colIndex == null ? null : new IndexBound(colIndex, "OR");
+    }
+
+    private static Object literalValue(RexLiteral lit) {
+        // VARCHAR columns: LSM key encoding uses Comparable, but Arrow VarCharVector.getObject()
+        // returns org.apache.arrow.vector.util.Text which does NOT implement Comparable,
+        // so LSM range scan(lo,hi) would throw ClassCastException on Text comparison.
+        // Return null for VARCHAR to skip index selection — the query still works correctly
+        // via full scan. A future fix would encode VARCHAR keys as String in LSM.
+        SqlTypeName tn = lit.getTypeName();
+        if (tn == SqlTypeName.VARCHAR || tn == SqlTypeName.CHAR) return null;
+        // Calcite stores INTEGER literals as DECIMAL type. Use Number to extract,
+        // then convert to Integer to match IntVector.getObject(r) return types.
+        Number n = lit.getValueAs(Number.class);
+        if (n != null) return n.intValue();
+        return null;
+    }
+
+    private record IndexBound(int colIndex, Object value) {}
 
     /** 整数型字面量取数值(INT→Integer、BIGINT→Long);非整数型返回 null(回退扫描)。 */
     private static Object numericLiteralValue(RexLiteral lit) {

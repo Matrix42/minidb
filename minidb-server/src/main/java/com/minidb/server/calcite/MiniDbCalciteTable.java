@@ -34,6 +34,13 @@ public class MiniDbCalciteTable extends AbstractTable {
         this.catalog = catalog;
     }
 
+    public TableSchema tableSchema() {
+        // 从 catalog 取最新元数据:CREATE INDEX 等 DDL 会更新 catalog,但 MiniDbCalciteTable
+        // 被 CalciteSchema 缓存,构造时的 schema 可能不含 indexes 等新字段。
+        TableSchema latest = catalog.getTable(schema.schemaName(), schema.name());
+        return latest != null ? latest : schema;
+    }
+
     @Override
     public RelDataType getRowType(RelDataTypeFactory typeFactory) {
         RelDataTypeFactory.Builder builder = typeFactory.builder();

@@ -182,6 +182,10 @@ public class ExplainExecutor {
         if (node instanceof TableScan scan) {
             List<String> q = scan.getTable().getQualifiedName();
             String table = q.get(q.size() - 1);
+            // 二级索引:EXPLAIN 显示 index=<name>
+            if (node instanceof MiniDbScan mScan && mScan.usedIndex() != null) {
+                table += " index=" + mScan.usedIndex();
+            }
             name = name + "(" + table + ")";
         }
         return name;
