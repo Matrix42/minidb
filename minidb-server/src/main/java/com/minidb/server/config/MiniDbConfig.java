@@ -3,6 +3,7 @@ package com.minidb.server.config;
 import com.fasterxml.jackson.core.type.TypeReference;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.fasterxml.jackson.dataformat.yaml.YAMLFactory;
+import com.minidb.server.transaction.TransactionIsolation;
 import java.io.IOException;
 import java.io.UncheckedIOException;
 import java.nio.file.Files;
@@ -45,6 +46,9 @@ public final class MiniDbConfig {
     /** 监听端口,conf/config.yaml 的 server.port。 */
     public static final int DEFAULT_SERVER_PORT = 8899;
 
+    /** 默认事务隔离级别,conf/config.yaml 的 server.isolation-level。 */
+    public static final TransactionIsolation DEFAULT_ISOLATION_LEVEL = TransactionIsolation.SERIALIZABLE;
+
     private static final ObjectMapper YAML = new ObjectMapper(new YAMLFactory());
 
     private final long compactionTargetSizeBytes;
@@ -58,11 +62,12 @@ public final class MiniDbConfig {
     private final int lsmBloomBitsPerKey;
     private final int serverQueryThreads;
     private final int serverPort;
+    private final TransactionIsolation isolationLevel;
 
     private MiniDbConfig(long compactionTargetSizeBytes, int compactionAutoPartThreshold,
                          long lsmMemtableSizeBytes, int lsmL0FileLimit, int lsmLevelSizeMultiplier,
                          boolean lsmWalFsync, long lsmBackgroundIntervalMs, int lsmBloomBitsPerKey,
-                         int serverQueryThreads, int serverPort) {
+                         int serverQueryThreads, int serverPort, TransactionIsolation isolationLevel) {
         this.compactionTargetSizeBytes = compactionTargetSizeBytes;
         this.compactionAutoPartThreshold = compactionAutoPartThreshold;
         this.lsmMemtableSizeBytes = lsmMemtableSizeBytes;
@@ -73,6 +78,7 @@ public final class MiniDbConfig {
         this.lsmBloomBitsPerKey = lsmBloomBitsPerKey;
         this.serverQueryThreads = serverQueryThreads;
         this.serverPort = serverPort;
+        this.isolationLevel = isolationLevel;
     }
 
     public long compactionTargetSizeBytes() {
@@ -117,6 +123,11 @@ public final class MiniDbConfig {
         return serverPort;
     }
 
+    /** 事务隔离级别,conf/config.yaml 的 server.isolation-level。 */
+    public TransactionIsolation isolationLevel() {
+        return isolationLevel;
+    }
+
     public static MiniDbConfig load(Path dataDir) {
         long targetBytes = DEFAULT_COMPACTION_TARGET_SIZE_BYTES;
         int autoThreshold = DEFAULT_COMPACTION_AUTO_PART_THRESHOLD;
@@ -128,6 +139,7 @@ public final class MiniDbConfig {
         int lsmBloom = DEFAULT_LSM_BLOOM_BITS_PER_KEY;
         int queryThreads = DEFAULT_SERVER_QUERY_THREADS;
         int serverPort = DEFAULT_SERVER_PORT;
+        TransactionIsolation isolationLevel = DEFAULT_ISOLATION_LEVEL;
         Path file = dataDir.resolve("config.yaml");
         if (Files.exists(file)) {
             Map<String, Object> root = readYaml(file);
@@ -174,9 +186,13 @@ public final class MiniDbConfig {
             if (port != null && port > 0) {
                 serverPort = port;
             }
+            String isoStr = asString(server == null ? null : server.get("isolation-level"));
+            if (isoStr != null) {
+                isolationLevel = TransactionIsolation.fromString(isoStr);
+            }
         }
         return new MiniDbConfig(targetBytes, autoThreshold,
-                lsmMemtable, lsmL0, lsmMultiplier, lsmFsync, lsmInterval, lsmBloom, queryThreads, serverPort);
+                lsmMemtable, lsmL0, lsmMultiplier, lsmFsync, lsmInterval, lsmBloom, queryThreads, serverPort, isolationLevel);
     }
 
     private static Map<String, Object> readYaml(Path file) {
@@ -203,5 +219,9 @@ public final class MiniDbConfig {
 
     private static Boolean asBoolean(Object value) {
         return value instanceof Boolean b ? b : null;
+    }
+
+    private static String asString(Object value) {
+        return value instanceof CharSequence s ? s.toString() : null;
     }
 }
