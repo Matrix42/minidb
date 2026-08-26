@@ -172,7 +172,8 @@ public class MiniDbCatalog {
             throw new IllegalArgumentException("table already exists: " + newName);
         }
         TableSchema renamed = new TableSchema(old.schemaName(), newName, old.columns(),
-                old.primaryKey(), old.uniqueKeys(), old.foreignKeys(), old.storageFormat());
+                old.primaryKey(), old.uniqueKeys(), old.foreignKeys(), old.storageFormat(),
+                old.tableType(), old.indexes());
         tables.remove(oldKey);
         tables.put(newKey, renamed);
         notifyChange();

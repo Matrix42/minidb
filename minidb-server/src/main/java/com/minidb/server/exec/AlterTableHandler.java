@@ -8,6 +8,7 @@ import com.minidb.storage.common.BatchIterator;
 import com.minidb.storage.common.ColumnMeta;
 import com.minidb.storage.common.ColumnType;
 import com.minidb.storage.common.ForeignKey;
+import com.minidb.storage.common.IndexDef;
 import com.minidb.storage.common.TableHandle;
 import com.minidb.storage.common.TableSchema;
 import java.math.BigDecimal;
@@ -116,7 +117,19 @@ public class AlterTableHandler {
         List<ColumnMeta> newCols = new ArrayList<>(oldSchema.columns());
         ColumnMeta c = newCols.get(idx);
         newCols.set(idx, new ColumnMeta(newName, c.type(), c.precision(), c.scale(), c.nullable()));
-        storage.alterTable(schemaName, tableName, withColumns(oldSchema, newCols));
+        // 索引定义中同步重命名列
+        List<IndexDef> newIndexes = new ArrayList<>();
+        for (IndexDef idf : oldSchema.indexes()) {
+            List<String> renamedCols = new ArrayList<>();
+            for (String col : idf.columns()) {
+                renamedCols.add(col.equalsIgnoreCase(oldName) ? newName : col);
+            }
+            newIndexes.add(new IndexDef(idf.name(), idf.unique(), renamedCols));
+        }
+        TableSchema newSchema = new TableSchema(schemaName, tableName, newCols,
+                oldSchema.primaryKey(), oldSchema.uniqueKeys(), oldSchema.foreignKeys(),
+                oldSchema.storageFormat(), oldSchema.tableType(), newIndexes);
+        storage.alterTable(schemaName, tableName, newSchema);
     }
 
     private void handleRenameTable(SqlAlterTable alter) {
@@ -170,7 +183,8 @@ public class AlterTableHandler {
             foreignKeys.add(new ForeignKey(cols, refSchema, refTable, refCols));
         }
         TableSchema newSchema = new TableSchema(schemaName, tableName, oldSchema.columns(),
-                primaryKey, uniqueKeys, foreignKeys, oldSchema.storageFormat());
+                primaryKey, uniqueKeys, foreignKeys, oldSchema.storageFormat(),
+                oldSchema.tableType(), oldSchema.indexes());
         ConstraintChecker.validateTableSatisfies(
                 new ExecContext(storage, allocator, schemaName), oldTable, newSchema);
         storage.alterTable(schemaName, tableName, newSchema);
@@ -297,7 +311,8 @@ public class AlterTableHandler {
 
     private TableSchema withColumns(TableSchema old, List<ColumnMeta> newCols) {
         return new TableSchema(old.schemaName(), old.name(), newCols,
-                old.primaryKey(), old.uniqueKeys(), old.foreignKeys(), old.storageFormat());
+                old.primaryKey(), old.uniqueKeys(), old.foreignKeys(), old.storageFormat(),
+                old.tableType(), old.indexes());
     }
 
     /** 从 SqlDataTypeSpec 解析列定义(与 QueryExecutor.handleCreate 的列解析一致)。 */
@@ -346,6 +361,15 @@ public class AlterTableHandler {
             if (uk.stream().anyMatch(c -> c.equalsIgnoreCase(columnName))) {
                 throw new IllegalArgumentException("column \"" + columnName
                         + "\" is part of unique constraint; cannot " + operation);
+            }
+        }
+        // 索引列:rename 允许(同步更新索引定义),drop/alter type 禁止。
+        if (!"rename".equals(operation)) {
+            for (IndexDef idx : schema.indexes()) {
+                if (idx.columns().stream().anyMatch(c -> c.equalsIgnoreCase(columnName))) {
+                    throw new IllegalArgumentException("column \"" + columnName
+                            + "\" is used by index \"" + idx.name() + "\"; cannot " + operation);
+                }
             }
         }
         for (ForeignKey fk : schema.foreignKeys()) {
