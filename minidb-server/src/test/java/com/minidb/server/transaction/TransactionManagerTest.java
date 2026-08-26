@@ -111,4 +111,42 @@ class TransactionManagerTest {
         // T1 读 A → T2 写 A 并提交 → T1 提交时检测到读集有冲突
         assertDoesNotThrow(() -> tm.commit(t3.txId()));
     }
+
+    @Test
+    void serializableReadWriteConflict(@TempDir Path tmpDir) {
+        TxLog txLog = new TxLog(tmpDir.resolve("txlog.log"));
+        TransactionManager tm = new TransactionManager(TransactionIsolation.SERIALIZABLE, txLog);
+
+        // T1 读取列 A，不提交
+        TxHandle t1 = tm.begin();
+        tm.recordRead(t1.txId(), "public.t.c1");
+
+        // T2 写入列 A 并提交
+        TxHandle t2 = tm.begin();
+        tm.recordWrite(t2.txId(), "public.t.c1");
+        tm.commit(t2.txId());
+
+        // T1 提交时检测到冲突：T1 的 snapshot 在 T2 之前，但 T2 已写入 A
+        IllegalStateException ex = assertThrows(IllegalStateException.class,
+                () -> tm.commit(t1.txId()));
+        assertTrue(ex.getMessage().contains("serialization conflict"));
+    }
+
+    @Test
+    void rollbackClearsLastWriteTx(@TempDir Path tmpDir) {
+        TxLog txLog = new TxLog(tmpDir.resolve("txlog.log"));
+        TransactionManager tm = new TransactionManager(TransactionIsolation.SERIALIZABLE, txLog);
+
+        // T1 读取列 A
+        TxHandle t1 = tm.begin();
+        tm.recordRead(t1.txId(), "public.t.c1");
+
+        // T2 写入列 A 但回滚
+        TxHandle t2 = tm.begin();
+        tm.recordWrite(t2.txId(), "public.t.c1");
+        tm.rollback(t2.txId());
+
+        // T1 提交不应该检测到冲突（T2 已回滚，lastWriteTx 被清理）
+        assertDoesNotThrow(() -> tm.commit(t1.txId()));
+    }
 }

@@ -49,6 +49,10 @@ public class TransactionManager {
         return handle;
     }
 
+    /**
+     * 计算事务开始时的快照点。
+     * @param txId 当前事务 ID（预留，未来可能用于基于 txId 的精确快照计算）
+     */
     private long computeSnapshot(long txId) {
         return switch (isolationLevel) {
             case READ_UNCOMMITTED -> -1L;
@@ -93,9 +97,16 @@ public class TransactionManager {
             throw new IllegalStateException("transaction " + txId + " is not active");
         }
 
+        // 清理 lastWriteTx，防止已回滚事务的写入影响后续冲突检测
+        TxAccessSet access = accessSets.remove(txId);
+        if (access != null) {
+            for (String key : access.writeSet) {
+                lastWriteTx.remove(key, txId);
+            }
+        }
+
         handle.markAborted();
         txStatuses.put(txId, TxStatus.ABORTED);
-        accessSets.remove(txId);
         activeTxCount.decrementAndGet();
         tryTruncateTxLog();
     }
