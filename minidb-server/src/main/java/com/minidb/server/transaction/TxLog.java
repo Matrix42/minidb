@@ -26,12 +26,9 @@ public class TxLog implements AutoCloseable {
     private static final int PAYLOAD_SIZE = 9; // txId(8) + status(1)
     private static final int HEADER_SIZE = 8;  // checksum(4) + length(4)
 
-    private final Path path;
-    private final CRC32 crc = new CRC32();
     private FileChannel channel;
 
     public TxLog(Path path) {
-        this.path = path;
         try {
             Files.createDirectories(path.getParent());
             this.channel = FileChannel.open(path,
@@ -54,7 +51,7 @@ public class TxLog implements AutoCloseable {
             payload.put(status);
             payload.flip();
 
-            crc.reset();
+            CRC32 crc = new CRC32();
             crc.update(payload.array());
             int checksum = (int) crc.getValue();
 
@@ -96,7 +93,7 @@ public class TxLog implements AutoCloseable {
                     }
                     ByteBuffer body = ByteBuffer.allocate(length);
                     readFully(body);
-                    crc.reset();
+                    CRC32 crc = new CRC32();
                     crc.update(body.array());
                     if ((int) crc.getValue() != checksum) {
                         break; // checksum 不匹配，停止
