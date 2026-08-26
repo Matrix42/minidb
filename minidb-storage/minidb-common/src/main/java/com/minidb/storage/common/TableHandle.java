@@ -20,7 +20,36 @@ public interface TableHandle extends AutoCloseable {
     default BatchIterator scan(List<Object> rangeLo, List<Object> rangeHi) {
         return scan();
     }
+
+    /**
+     * 快照读:只返回 snapshotTxId 之前已提交的行。
+     * snapshotTxId == -1 表示 READ_UNCOMMITTED(不过滤)。
+     * 默认回退全量扫描;LSMTable 覆写以支持快照隔离。
+     */
+    default BatchIterator scan(long snapshotTxId) {
+        return scan();
+    }
+
     void writePart(VectorSchemaRoot batch, Operation op);
+
+    /**
+     * 事务写入:带 txId 的写操作。默认回退非事务路径。
+     */
+    default void writePart(VectorSchemaRoot batch, Operation op, long txId) {
+        writePart(batch, op);
+    }
+
+    /**
+     * 提交事务:将 tx-private 写入合并到主存储。
+     * 默认空操作;事务感知表覆写。
+     */
+    default void commitTx(long txId) {}
+
+    /**
+     * 回滚事务:丢弃 tx-private 写入。
+     * 默认空操作;事务感知表覆写。
+     */
+    default void rollbackTx(long txId) {}
     long rowCount();
     int partCount();
     int compact(long targetSizeBytes);
