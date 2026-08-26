@@ -3,6 +3,7 @@ package com.minidb.server.storage;
 import com.minidb.server.catalog.InformationSchemaCatalog;
 import com.minidb.server.catalog.MiniDbCatalog;
 import com.minidb.server.config.MiniDbConfig;
+import com.minidb.server.transaction.TxLog;
 import com.minidb.storage.arrow.ArrowPartFormat;
 import com.minidb.storage.arrow.IpcFileTableStorage;
 import com.minidb.storage.common.PartFormat;
@@ -23,8 +24,10 @@ import java.nio.file.Files;
 import java.nio.file.Path;
 import java.util.ArrayList;
 import java.util.EnumMap;
+import java.util.HashSet;
 import java.util.List;
 import java.util.Map;
+import java.util.Set;
 import java.util.concurrent.ConcurrentHashMap;
 import org.apache.arrow.memory.BufferAllocator;
 import org.apache.arrow.vector.VectorSchemaRoot;
@@ -49,6 +52,7 @@ public class StorageManager implements AutoCloseable {
     private final Map<String, TableHandle> tables = new ConcurrentHashMap<>();
     private final LSMBackgroundExecutor lsmExecutor;
     private final IndexManager indexManager;
+    private final TxLog txLog;
 
     public StorageManager(MiniDbCatalog catalog, BufferAllocator allocator, Path dataDir) {
         this(catalog, allocator, dataDir, MiniDbConfig.load(dataDir));
@@ -71,6 +75,7 @@ public class StorageManager implements AutoCloseable {
         lsmExecutor.start();
         this.indexManager = new IndexManager(catalog, config, allocator,
                 formats, tableStorage, lsmExecutor);
+        this.txLog = new TxLog(dataDir.resolve("txlog.log"));
     }
 
     public MiniDbConfig config() {
@@ -105,10 +110,13 @@ public class StorageManager implements AutoCloseable {
         return indexManager;
     }
 
-    /** 启动:先恢复中断的 compaction,再恢复元数据,并为每张表挂「目录句柄」(按主键有无分发 LSMTable/SimpleTable)。 */
+    /** 启动:先恢复中断的 compaction,再恢复元数据,然后恢复事务日志,最后为每张表挂「目录句柄」
+     * 并执行事务感知恢复(LSMTable 重放 WAL 中已提交事务的变更,SimpleTable 清理 .tx/ 目录)。 */
     public void loadAll() {
         recoverCompaction();
         restoreCatalog();
+        // 恢复事务日志,获取已提交事务的 txId 集合,用于下游 LSMTable/SimpleTable 恢复
+        Set<Long> committedTxIds = txLog.recoverCommitted();
         for (String schema : catalog.schemaNames()) {
             if (InformationSchemaCatalog.isSystemSchema(schema)) {
                 continue;
@@ -118,14 +126,19 @@ public class StorageManager implements AutoCloseable {
                 String sk = storageKey(schema, tableName);
                 TableHandle table = createTableHandle(ts);
                 tables.put(sk, table);
-                if (table instanceof LSMTable) {
-                    lsmExecutor.register(sk, (LSMTable) table);
+                if (table instanceof LSMTable lsm) {
+                    lsm.recover(committedTxIds);
+                    lsmExecutor.register(sk, lsm);
+                } else if (table instanceof SimpleTable simple) {
+                    simple.recoverTxDirs(committedTxIds);
                 }
                 if (!ts.indexes().isEmpty()) {
                     indexManager.rebuildFromDisk(schema, tableName, ts);
                 }
             }
         }
+        // 恢复完成后截断事务日志(所有活跃事务已结束)
+        txLog.truncate();
         LOG.info("loaded {} table(s)", tables.size());
     }
 
@@ -375,6 +388,7 @@ public class StorageManager implements AutoCloseable {
             }
         }
         lsmExecutor.close();
+        txLog.close();
     }
 
     // ---- 内部辅助 ----
