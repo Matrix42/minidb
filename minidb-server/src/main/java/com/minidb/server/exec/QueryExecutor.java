@@ -2,6 +2,8 @@ package com.minidb.server.exec;
 import com.minidb.storage.common.BatchIterator;
 
 import com.minidb.parser.ddl.SqlAlterTable;
+import com.minidb.parser.ddl.SqlCreateIndex;
+import com.minidb.parser.ddl.SqlDropIndex;
 import com.minidb.parser.ddl.SqlForeignKeyConstraint;
 import com.minidb.parser.ddl.SqlTableOptions;
 import com.minidb.server.calcite.CalciteContext;
@@ -9,7 +11,9 @@ import com.minidb.storage.common.ArrowTypes;
 import com.minidb.storage.common.ColumnMeta;
 import com.minidb.storage.common.ColumnType;
 import com.minidb.storage.common.ForeignKey;
+import com.minidb.storage.common.IndexDef;
 import com.minidb.storage.common.StorageFormat;
+import com.minidb.storage.common.TableHandle;
 import com.minidb.server.catalog.InformationSchemaCatalog;
 import com.minidb.storage.common.TableType;
 import com.minidb.server.catalog.MiniDbCatalog;
@@ -171,6 +175,12 @@ public class QueryExecutor {
         }
         if (ddl instanceof SqlAlterTable alter) {
             return new AlterTableHandler(storage, allocator).handle(alter, currentSchema);
+        }
+        if (ddl instanceof SqlCreateIndex create) {
+            return handleCreateIndex(create, currentSchema);
+        }
+        if (ddl instanceof SqlDropIndex drop) {
+            return handleDropIndex(drop, currentSchema);
         }
         throw new IllegalArgumentException("unsupported DDL: " + ddl.getKind());
     }
@@ -457,6 +467,106 @@ public class QueryExecutor {
         String schemaName = parts.size() > 1 ? parts.get(0) : currentSchema;
         String tableName = parts.get(parts.size() - 1);
         storage.truncateTable(schemaName, tableName);
+        return new QueryResult.Update(0);
+    }
+
+    private QueryResult handleCreateIndex(SqlCreateIndex ddl, String currentSchema) {
+        List<String> parts = ddl.table().names;
+        String schemaName = parts.size() > 1 ? parts.get(0) : currentSchema;
+        String tableName = parts.get(parts.size() - 1);
+        String indexName = ddl.indexName().getSimple();
+        TableSchema data = catalog.getTable(schemaName, tableName);
+        if (data == null) {
+            throw new IllegalArgumentException("table not found: " + tableName);
+        }
+        // 1. 主键必须存在
+        if (data.primaryKey().isEmpty()) {
+            throw new IllegalArgumentException(
+                    "table without primary key cannot have index: " + tableName);
+        }
+        // 2. 表类型不能是 SIMPLE(SimpleTable 无点查能力,索引无意义)
+        if (data.tableType() == TableType.SIMPLE) {
+            throw new IllegalArgumentException(
+                    "table type SIMPLE cannot have index: " + tableName);
+        }
+        // 3. 规范化列名(大小写不敏感)并校验列存在、类型、重复
+        List<String> colNames = new ArrayList<>();
+        for (SqlNode node : ddl.columnList()) {
+            String raw = ((SqlIdentifier) node).getSimple();
+            ColumnMeta cm = data.column(raw); // 不匹配会抛异常
+            colNames.add(cm.name()); // 用规范名
+        }
+        // 4. 列类型白名单
+        for (String col : colNames) {
+            ColumnType type = data.column(col).type();
+            if (type != ColumnType.SMALLINT && type != ColumnType.INTEGER
+                    && type != ColumnType.BIGINT && type != ColumnType.VARCHAR) {
+                throw new IllegalArgumentException(
+                        "column type " + type + " not supported for index: " + col);
+            }
+        }
+        // 5. 列不能重复
+        if (colNames.stream().distinct().count() != colNames.size()) {
+            throw new IllegalArgumentException(
+                    "duplicate columns in index definition");
+        }
+        // 6. 索引名表内唯一(大小写不敏感)
+        for (IndexDef existing : data.indexes()) {
+            if (existing.name().equalsIgnoreCase(indexName)) {
+                throw new IllegalArgumentException(
+                        "index already exists: " + indexName + " on table " + tableName);
+            }
+        }
+        // 7. 创建句柄 → 灌数据 → 落元数据;失败时清理半成品
+        IndexDef def = new IndexDef(indexName, ddl.unique(), colNames);
+        TableHandle dataTable = storage.getTable(schemaName, tableName);
+        TableHandle indexTable = storage.indexManager().createIndex(
+                schemaName, tableName, def, data);
+        try {
+            storage.indexManager().populateFromTable(
+                    schemaName, tableName, def, dataTable, indexTable);
+        } catch (RuntimeException e) {
+            // populate 失败(如存量数据违反 UNIQUE 约束),清理半成品再 rethrow
+            storage.indexManager().dropIndex(schemaName, tableName, indexName);
+            throw e;
+        }
+        // 追加索引到元数据并持久化
+        List<IndexDef> updated = new ArrayList<>(data.indexes());
+        updated.add(def);
+        catalog.alterTable(schemaName, tableName, data.withIndexes(updated));
+        return new QueryResult.Update(0);
+    }
+
+    private QueryResult handleDropIndex(SqlDropIndex ddl, String currentSchema) {
+        List<String> parts = ddl.table().names;
+        String schemaName = parts.size() > 1 ? parts.get(0) : currentSchema;
+        String tableName = parts.get(parts.size() - 1);
+        String indexName = ddl.indexName().getSimple();
+        TableSchema data = catalog.getTable(schemaName, tableName);
+        if (data == null) {
+            throw new IllegalArgumentException("table not found: " + tableName);
+        }
+        // 按名(大小写不敏感)找 def
+        IndexDef target = null;
+        for (IndexDef def : data.indexes()) {
+            if (def.name().equalsIgnoreCase(indexName)) {
+                target = def;
+                break;
+            }
+        }
+        if (target == null) {
+            if (ddl.ifExists()) {
+                return new QueryResult.Update(0);
+            }
+            throw new IllegalArgumentException(
+                    "index not found: " + indexName + " on table " + tableName);
+        }
+        // 删句柄 + 目录
+        storage.indexManager().dropIndex(schemaName, tableName, target.name());
+        // 从元数据去除此索引
+        List<IndexDef> updated = new ArrayList<>(data.indexes());
+        updated.remove(target);
+        catalog.alterTable(schemaName, tableName, data.withIndexes(updated));
         return new QueryResult.Update(0);
     }
 

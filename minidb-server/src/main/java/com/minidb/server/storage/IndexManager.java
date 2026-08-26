@@ -99,7 +99,7 @@ public class IndexManager {
      * 创建索引表句柄,目录位于数据表目录下的 {@code .indexes/<name>}。
      * 目录必须不存在;调用方负责后续 populate。
      */
-    TableHandle createIndex(String schemaName, String tableName, IndexDef def, TableSchema data) {
+    public TableHandle createIndex(String schemaName, String tableName, IndexDef def, TableSchema data) {
         Path idxDir = indexDir(schemaName, tableName, def.name());
         if (Files.exists(idxDir)) {
             throw new IllegalArgumentException("index directory already exists: " + idxDir);
@@ -122,8 +122,8 @@ public class IndexManager {
      * LSMTable 的 scan() 返回超集语义(对索引表 key 无裁剪),但这里写入的是精确键,
      * 因此无超集问题。
      */
-    void populateFromTable(String schemaName, String tableName, IndexDef def,
-                           TableHandle dataTable, TableHandle indexTable) {
+    public void populateFromTable(String schemaName, String tableName, IndexDef def,
+                                   TableHandle dataTable, TableHandle indexTable) {
         TableSchema data = dataTable.schema();
         List<Integer> idxPositions = new ArrayList<>(def.columns().size());
         for (String col : def.columns()) {
@@ -160,7 +160,7 @@ public class IndexManager {
         }
     }
 
-    void dropIndex(String schemaName, String tableName, String indexName) {
+    public void dropIndex(String schemaName, String tableName, String indexName) {
         String outer = storageKey(schemaName, tableName);
         String inner = key(indexName);
         Map<String, TableHandle> map = indexes.get(outer);
@@ -171,7 +171,7 @@ public class IndexManager {
         deleteRecursively(indexDir(schemaName, tableName, indexName));
     }
 
-    TableHandle getIndex(String schemaName, String tableName, String indexName) {
+    public TableHandle getIndex(String schemaName, String tableName, String indexName) {
         Map<String, TableHandle> map = indexes.get(storageKey(schemaName, tableName));
         return map == null ? null : map.get(key(indexName));
     }
