@@ -1,5 +1,7 @@
 package com.minidb.server.transaction;
 
+import java.util.Locale;
+
 /**
  * SQL 标准事务隔离级别,支持连字符和蛇形命名两种字符串形式。
  */
@@ -13,7 +15,7 @@ public enum TransactionIsolation {
      * 从字符串解析隔离级别,支持 {@code read-uncommitted} / {@code read_uncommitted} 等变体。
      */
     public static TransactionIsolation fromString(String s) {
-        return switch (s.toLowerCase(java.util.Locale.ROOT)) {
+        return switch (s.toLowerCase(Locale.ROOT)) {
             case "read-uncommitted", "read_uncommitted" -> READ_UNCOMMITTED;
             case "read-committed", "read_committed" -> READ_COMMITTED;
             case "repeatable-read", "repeatable_read" -> REPEATABLE_READ;
