@@ -176,21 +176,21 @@ public class IndexManager {
         return map == null ? null : map.get(key(indexName));
     }
 
-    void onInsert(TableSchema data, VectorSchemaRoot dataBatch) {
+    public void onInsert(TableSchema data, VectorSchemaRoot dataBatch) {
         applyToIndexes(data, (indexTable, idxPositions, pkPositions) -> {
             List<Object[]> buffer = extractIndexRows(dataBatch, idxPositions, pkPositions);
             writeBatch(indexTable, buffer, TableHandle.Operation.INSERT);
         });
     }
 
-    void onDelete(TableSchema data, VectorSchemaRoot dataBatch) {
+    public void onDelete(TableSchema data, VectorSchemaRoot dataBatch) {
         applyToIndexes(data, (indexTable, idxPositions, pkPositions) -> {
             List<Object[]> buffer = extractIndexRows(dataBatch, idxPositions, pkPositions);
             writeBatch(indexTable, buffer, TableHandle.Operation.DELETE);
         });
     }
 
-    void onUpdate(TableSchema data, VectorSchemaRoot oldBatch, VectorSchemaRoot newBatch) {
+    public void onUpdate(TableSchema data, VectorSchemaRoot oldBatch, VectorSchemaRoot newBatch) {
         applyToIndexes(data, (indexTable, idxPositions, pkPositions) -> {
             int rows = oldBatch.getRowCount();
             List<Object[]> toDelete = new ArrayList<>(rows);

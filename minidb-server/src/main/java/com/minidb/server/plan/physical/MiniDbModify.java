@@ -91,6 +91,15 @@ public class MiniDbModify extends TableModify implements MiniDbRel {
                 affected += batch.getRowCount();
                 try {
                     target.writePart(copy, TableHandle.Operation.INSERT);
+                    // 先写数据后写索引:索引失败时数据已落盘,下次 DDL 重建可恢复。
+                    // 注意:不能直接查 target.schema().indexes()——handleCreateIndex
+                    // 调 catalog.alterTable 更新了 catalog 元数据,但 target 句柄 schema
+                    // 是创建时的快照,不含 indexes;需查 catalog 最新元数据。
+                    TableSchema ts = ctx.storage().catalog().getTable(
+                            target.schema().schemaName(), target.schema().name());
+                    if (ts != null && !ts.indexes().isEmpty()) {
+                        ctx.storage().indexManager().onInsert(ts, copy);
+                    }
                 } finally {
                     copy.close();
                 }
@@ -113,6 +122,10 @@ public class MiniDbModify extends TableModify implements MiniDbRel {
      */
     private void lsmModify(ExecContext ctx, TableHandle target, BatchIterator input) {
         affected = 0;
+        // 用 catalog 而非 target.schema() 查索引:handleCreateIndex 后
+        // catalog 元数据已更新但 target 句柄的 schema 仍是创建时的快照。
+        TableSchema ts = ctx.storage().catalog().getTable(
+                target.schema().schemaName(), target.schema().name());
         TableHandle.Operation op = getOperation() == Operation.UPDATE
                 ? TableHandle.Operation.UPDATE : TableHandle.Operation.DELETE;
         try {
@@ -134,6 +147,9 @@ public class MiniDbModify extends TableModify implements MiniDbRel {
                     throw e;
                 }
                 target.writePart(matched, op);
+                if (ts != null && !ts.indexes().isEmpty()) {
+                    ctx.storage().indexManager().onDelete(ts, matched);
+                }
                 affected = matched.getRowCount();
                 matched.close();
             } else {
@@ -162,6 +178,10 @@ public class MiniDbModify extends TableModify implements MiniDbRel {
                     }
                     out.setRowCount(batch.getRowCount());
                     target.writePart(out, op);
+                    if (ts != null && !ts.indexes().isEmpty()) {
+                        // batch 是输入批(前 numTableCols 列为旧值),out 是新值批
+                        ctx.storage().indexManager().onUpdate(ts, batch, out);
+                    }
                     affected += batch.getRowCount();
                     out.close();
                 }
@@ -310,6 +330,8 @@ public class MiniDbModify extends TableModify implements MiniDbRel {
      * UPDATE and DELETE must remove the matched rows from the table; the input
      * only produces the matched rows, so we read all parts, keep unmatched rows
      * and replace (UPDATE) or drop (DELETE) matched ones, then rewrite the parts.
+     *
+     * <p>SimpleTable 不支持索引(建索引时已拒绝),无需索引维护挂钩。</p>
      */
     private void rewriteTable(ExecContext ctx, SimpleTable target, BatchIterator input) {
         int numTableCols = target.schema().columns().size();
