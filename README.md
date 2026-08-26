@@ -7,6 +7,7 @@
 - 自研 JDBC 驱动（`jdbc:minidb://host:port`），基于自定义 Netty wire 协议
 - Calcite 驱动的 SQL：CREATE/DROP TABLE、INSERT（VALUES 与 ...SELECT 两种形式）、UPDATE/DELETE/TRUNCATE、SELECT（WHERE / ORDER BY / LIMIT / OFFSET）
 - 查询能力：JOIN（INNER/LEFT/RIGHT/FULL）、聚合（GROUP BY + COUNT/SUM/AVG/MIN/MAX + DISTINCT）、集合运算（UNION/INTERSECT/EXCEPT）、窗口函数（SUM/AVG/COUNT/MIN/MAX over + ROW_NUMBER/RANK/DENSE_RANK/LEAD/LAG/FIRST_VALUE/LAST_VALUE）、CTE（WITH，含递归 WITH RECURSIVE）
+- 二级索引：CREATE INDEX / DROP INDEX、UNIQUE 索引、查询自动走索引、EXPLAIN 显示 index=
 - Schema 支持：CREATE/DROP SCHEMA、`schema.table` 限定名、`USE SCHEMA` 切换当前 schema（每连接隔离），所有表默认属于 `public` schema
 - 数据以 Arrow 列式批次存于内存，持久化为 Arrow IPC 文件（`data/<schema>/<table>.arrow`）
 - VolcanoPlanner + 自研 ConverterRule 生成物理算子，批式向量化执行
@@ -57,6 +58,79 @@ while (rs.next()) {
 ```
 
 > arrow的类：org.apache.arrow.memory.util.MemoryUtil 使用了Unsafe
+
+## SQL 语法示例
+
+### 二级索引
+
+```sql
+-- 创建索引
+CREATE INDEX idx_a ON t (a);
+CREATE UNIQUE INDEX idx_ab ON t (a, b);
+
+-- 删除索引
+DROP INDEX idx_a ON t;
+DROP INDEX IF EXISTS idx_a ON t;
+
+-- 查询自动走索引（EXPLAIN 显示 index=）
+EXPLAIN SELECT * FROM t WHERE a = 10;
+-- 输出: Scan(t index=idx_a)
+```
+
+### 约束与 ALTER
+
+```sql
+-- 主键 + 唯一约束 + 外键
+CREATE TABLE t (
+  id INTEGER PRIMARY KEY,
+  name VARCHAR NOT NULL,
+  dept_id INTEGER REFERENCES dept(id)
+);
+CREATE TABLE t (id INTEGER, a INTEGER, UNIQUE (a));
+
+-- ALTER TABLE
+ALTER TABLE t ADD COLUMN b INTEGER;
+ALTER TABLE t DROP COLUMN b;
+ALTER TABLE t RENAME COLUMN a TO a2;
+ALTER TABLE t ALTER COLUMN a VARCHAR;
+ALTER TABLE t SET NOT NULL a;
+ALTER TABLE t DROP NOT NULL a;
+ALTER TABLE t ADD CONSTRAINT uq_name UNIQUE (name);
+ALTER TABLE t RENAME TO t2;
+```
+
+### Schema 操作
+
+```sql
+CREATE SCHEMA s;
+USE SCHEMA s;
+DROP SCHEMA s CASCADE;
+```
+
+### 高级查询
+
+```sql
+-- JOIN
+SELECT * FROM t1 JOIN t2 ON t1.id = t2.id;
+SELECT * FROM t1 LEFT JOIN t2 ON t1.id = t2.id;
+
+-- 聚合
+SELECT dept, COUNT(*), AVG(salary) FROM emp GROUP BY dept HAVING COUNT(*) > 5;
+
+-- 窗口函数
+SELECT name, salary, ROW_NUMBER() OVER (ORDER BY salary DESC) FROM emp;
+SELECT name, SUM(sales) OVER (PARTITION BY dept ORDER BY month) FROM sales;
+
+-- 递归 CTE
+WITH RECURSIVE nums(n) AS (
+  SELECT 1 UNION ALL SELECT n + 1 FROM nums WHERE n < 10
+) SELECT * FROM nums;
+
+-- 集合运算
+SELECT id FROM t1 UNION SELECT id FROM t2;
+SELECT id FROM t1 INTERSECT SELECT id FROM t2;
+SELECT id FROM t1 EXCEPT SELECT id FROM t2;
+```
 
 ## 支持的列类型
 
