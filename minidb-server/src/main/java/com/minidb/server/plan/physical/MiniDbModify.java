@@ -536,6 +536,23 @@ public class MiniDbModify extends TableModify implements MiniDbRel {
                 }
             }
         }
+        // UPDATE 唯一性:rewrite 后的新表内容里主键/UNIQUE 键不得重复(SimpleTable 无索引,
+        // 不能像 LSM 那样走 validateUpdateUnique,只能对完整新快照做批内查重)。
+        if (getOperation() == Operation.UPDATE) {
+            try {
+                validateUniqueAcross(newBatches, target, target.schema().primaryKey(), "primary key");
+                for (List<String> uniqueCols : target.schema().uniqueKeys()) {
+                    validateUniqueAcross(newBatches, target, uniqueCols, "unique");
+                }
+            } catch (RuntimeException e) {
+                // 校验失败:释放已构造的新快照批与 matched,避免 Arrow 内存泄漏。
+                for (VectorSchemaRoot nb : newBatches) {
+                    nb.close();
+                }
+                matched.close();
+                throw e;
+            }
+        }
         if (ctx.tx() != null) {
             // 事务路径:整表 rewrite 不删 base(否则并发事务读到空表,违反隔离性),
             // 而是把新快照写进 .tx/<txId>/ 并打 rewrite 标记;commit 时替换 base,
@@ -556,6 +573,31 @@ public class MiniDbModify extends TableModify implements MiniDbRel {
             }
         }
         matched.close();
+    }
+
+    /**
+     * 对 rewrite 出的完整新表内容做主键/唯一键查重(含 null 的键不参与,主键列 NOT NULL
+     * 由 TableSchema 保证故恒参与)。写盘前校验避免把矛盾数据落盘。
+     */
+    private void validateUniqueAcross(List<VectorSchemaRoot> batches, TableHandle target,
+                                      List<String> columns, String constraintName) {
+        if (columns.isEmpty()) {
+            return;
+        }
+        List<Integer> idxs = new ArrayList<>(columns.size());
+        for (String column : columns) {
+            idxs.add(target.schema().columnIndex(column));
+        }
+        Set<List<Object>> seen = new HashSet<>();
+        for (VectorSchemaRoot batch : batches) {
+            for (int i = 0; i < batch.getRowCount(); i++) {
+                List<Object> key = keyOf(batch, i, idxs);
+                if (key != null && !seen.add(key)) {
+                    throw new IllegalArgumentException(
+                            constraintName + " constraint violation: " + columns);
+                }
+            }
+        }
     }
 
     private VectorSchemaRoot materializeInput(BatchIterator input, ExecContext ctx) {
