@@ -10,6 +10,7 @@ import com.minidb.storage.common.TableHandle;
 import com.minidb.server.exec.ConstraintChecker;
 import com.minidb.server.exec.ExecContext;
 import com.minidb.server.exec.RowCopier;
+import com.minidb.server.transaction.TransactionManager;
 import com.minidb.storage.common.IndexDef;
 import com.minidb.storage.common.SimpleTable;
 import com.minidb.storage.lsm.LSMTable;
@@ -61,6 +62,9 @@ public class MiniDbModify extends TableModify implements MiniDbRel {
         // current schema.
         String schemaName = n >= 3 ? qualified.get(n - 2) : ctx.currentSchema();
         TableHandle target = ctx.getTable(schemaName, tableName);
+        // SERIALIZABLE 隔离级别:写入路径必须登记写集(recordWrite),否则 lastWriteTx 恒空,
+        // 提交时的读写/写写冲突检测全部漏检(见 TransactionManager.checkSerializableConflict)。
+        recordWriteSet(ctx, schemaName, tableName);
         BatchIterator input = ((MiniDbRel) getInput()).execute(ctx);
         if (getOperation() == Operation.INSERT) {
             appendRows(ctx, target, input);
@@ -597,5 +601,24 @@ public class MiniDbModify extends TableModify implements MiniDbRel {
         }
         out.setRowCount(rows);
         return out;
+    }
+
+    /**
+     * SERIALIZABLE 隔离级别:把被修改表的所有列写入事务写集。MiniDbScan.recordReadSet
+     * 按列粒度登记读集,写集必须与读集同粒度(键格式 schema.table.column),否则同一列
+     * 的读写冲突无法匹配。非事务或非 SERIALIZABLE 时 recordWrite 内部短路。
+     */
+    private void recordWriteSet(ExecContext ctx, String schemaName, String tableName) {
+        if (!ctx.inTransaction()) {
+            return;
+        }
+        TableSchema schema = ctx.storage().catalog().getTable(schemaName, tableName);
+        if (schema == null) {
+            return;
+        }
+        TransactionManager tm = ctx.storage().transactionManager();
+        for (ColumnMeta col : schema.columns()) {
+            tm.recordWrite(ctx.tx().txId(), schemaName + "." + tableName + "." + col.name());
+        }
     }
 }
