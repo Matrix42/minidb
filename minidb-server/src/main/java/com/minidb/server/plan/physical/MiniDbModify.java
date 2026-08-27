@@ -491,10 +491,13 @@ public class MiniDbModify extends TableModify implements MiniDbRel {
         for (int i = 0; i < matched.getRowCount(); i++) {
             matchRow.putIfAbsent(rowKey(matched, i, numTableCols), i);
         }
-        // 读所有 part,rebuild 成新 part。
+        // 读所有 part,rebuild 成新 part。事务内需读「自己的快照」(含本事务此前 rewrite),
+        // 否则第二次 UPDATE/DELETE 会丢失第一次的变更。
         List<VectorSchemaRoot> newBatches = new ArrayList<>();
         affected = 0;
-        try (BatchIterator it = target.scan()) {
+        try (BatchIterator it = ctx.tx() != null
+                ? target.scan(ctx.tx().snapshotTxId(), ctx.tx().txId())
+                : target.scan()) {
             while (it.hasNext()) {
                 VectorSchemaRoot old = it.next();
                 VectorSchemaRoot nb = target.newBatchRoot();
@@ -533,16 +536,24 @@ public class MiniDbModify extends TableModify implements MiniDbRel {
                 }
             }
         }
-        // 删旧 part,写新 part。
-        target.clearParts();
-        for (VectorSchemaRoot nb : newBatches) {
-            // 事务写入:将 txId 传给存储层
-            if (ctx.tx() != null) {
+        if (ctx.tx() != null) {
+            // 事务路径:整表 rewrite 不删 base(否则并发事务读到空表,违反隔离性),
+            // 而是把新快照写进 .tx/<txId>/ 并打 rewrite 标记;commit 时替换 base,
+            // rollback 时丢弃。自身事务读 scan(snapshotTxId, txId) 会走新快照。
+            target.markRewrite(ctx.tx().txId());
+            // 同一事务多次改写:先清掉旧快照 part,再写基于最新快照的新 part。
+            target.clearRewriteParts(ctx.tx().txId());
+            for (VectorSchemaRoot nb : newBatches) {
                 target.writePart(nb, TableHandle.Operation.INSERT, ctx.tx().txId());
-            } else {
-                target.writePart(nb);
+                nb.close();
             }
-            nb.close();
+        } else {
+            // 非事务路径:删旧 part,写新 part。
+            target.clearParts();
+            for (VectorSchemaRoot nb : newBatches) {
+                target.writePart(nb);
+                nb.close();
+            }
         }
         matched.close();
     }

@@ -11,6 +11,7 @@ import java.util.Comparator;
 import java.util.List;
 import java.util.Map;
 import java.util.Set;
+import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.atomic.AtomicInteger;
 import org.apache.arrow.memory.ArrowBuf;
 import org.apache.arrow.memory.BufferAllocator;
@@ -32,6 +33,9 @@ public class SimpleTable implements TableHandle {
 
     /** 事务临时目录名前缀:事务写入暂存于 .tx/<txId>/ 下,提交时移到正式目录。 */
     private static final String TX_DIR_PREFIX = ".tx";
+    /** rewrite 标记文件名:置于 .tx/<txId>/ 下,表示该目录存的是整表新快照(UPDATE/DELETE 的
+     *  事务路径),提交时替换 base 而非追加;也供崩溃恢复识别 rewrite 类型提交。 */
+    private static final String REWRITE_MARKER = ".rewrite";
 
     private final TableSchema schema;
     private final BufferAllocator allocator;
@@ -39,6 +43,8 @@ public class SimpleTable implements TableHandle {
     private final PartFormat format;
     private final Schema arrowSchema;
     private final AtomicInteger partSeq;
+    // 事务内做了整表 rewrite 的事务集合(其 .tx/<txId>/ 是完整新快照)。
+    private final Set<Long> rewriteTxs = ConcurrentHashMap.newKeySet();
 
     public SimpleTable(TableSchema schema, BufferAllocator allocator, Path tableDir,
                        PartFormat format) {
@@ -105,7 +111,28 @@ public class SimpleTable implements TableHandle {
     }
 
     private BatchIterator scanAll(int[] projectedColumns) {
-        List<Path> parts = partFiles();
+        return scanParts(partFiles(), projectedColumns);
+    }
+
+    /** 事务内读自身写入:rewrite 事务读整表新快照;增量 INSERT 事务读 base + 自身临时 part。 */
+    @Override
+    public BatchIterator scan(long snapshotTxId, long txId) {
+        if (txId == 0) {
+            return scan(); // 非事务:读 base(已提交数据)
+        }
+        List<Path> ownParts = txParts(txId);
+        if (rewriteTxs.contains(txId)) {
+            // 完整新快照覆盖 base
+            return scanParts(ownParts, null);
+        }
+        // 增量 INSERT:base + 自身临时 part(自己的写可见,ACID-C)
+        List<Path> merged = new ArrayList<>();
+        merged.addAll(partFiles());
+        merged.addAll(ownParts);
+        return scanParts(merged, null);
+    }
+
+    private BatchIterator scanParts(List<Path> parts, int[] projectedColumns) {
         return new BatchIterator() {
             int idx = 0;
             final List<VectorSchemaRoot> read = new ArrayList<>();
@@ -132,6 +159,30 @@ public class SimpleTable implements TableHandle {
                 read.clear();
             }
         };
+    }
+
+    /** 事务临时目录 .tx/<txId>/ 下的 part 文件(空目录返回空表)。 */
+    private List<Path> txParts(long txId) {
+        List<Path> parts = new ArrayList<>();
+        Path txDir = tableDir.resolve(TX_DIR_PREFIX).resolve(String.valueOf(txId));
+        if (!Files.exists(txDir)) {
+            return parts;
+        }
+        try (DirectoryStream<Path> ds = Files.newDirectoryStream(txDir)) {
+            for (Path p : ds) {
+                if (Files.isDirectory(p)) {
+                    continue;
+                }
+                String name = p.getFileName().toString();
+                if (!name.equals(REWRITE_MARKER) && name.endsWith(partSuffix())) {
+                    parts.add(p);
+                }
+            }
+        } catch (IOException e) {
+            throw new UncheckedIOException(e);
+        }
+        parts.sort(Comparator.comparing(p -> p.getFileName().toString()));
+        return parts;
     }
 
     /** 把一个 batch 直接落成一个新 part 文件。 */
@@ -191,14 +242,27 @@ public class SimpleTable implements TableHandle {
 
     @Override
     public void commitTx(long txId) {
-        // 将 .tx/<txId>/ 下的临时 part 文件移到正式目录,使用新序号避免与现有 part 冲突
+        // 将 .tx/<txId>/ 下的临时 part 文件移到正式目录,使用新序号避免与现有 part 冲突。
+        // rewrite 事务(整表新快照):先用新快照替换 base,再把快照移入;增量事务仅追加。
         Path txDir = tableDir.resolve(TX_DIR_PREFIX).resolve(String.valueOf(txId));
         if (!Files.exists(txDir)) {
+            rewriteTxs.remove(txId);
             return;
         }
+        boolean rewrite = rewriteTxs.remove(txId)
+                || Files.exists(txDir.resolve(REWRITE_MARKER));
         try {
+            if (rewrite) {
+                // 替换 base:删旧 part 后移入新快照。若崩溃在「删旧」与「移入」之间,
+                // tx 目录仍完整 + TxLog 已记录 COMMIT,recoverTxDirs 会重做本方法补交。
+                clearParts();
+            }
             try (DirectoryStream<Path> ds = Files.newDirectoryStream(txDir)) {
                 for (Path part : ds) {
+                    if (part.getFileName().toString().equals(REWRITE_MARKER)) {
+                        Files.deleteIfExists(part);
+                        continue;
+                    }
                     // 用 partSeq 分配新序号,避免临时目录内 part 名与正式目录冲突
                     int seq = partSeq.incrementAndGet();
                     Path target = tableDir.resolve(String.format("part-%06d.%s", seq, format.fileExtension()));
@@ -212,8 +276,42 @@ public class SimpleTable implements TableHandle {
         }
     }
 
+    /** 标记事务 txId 的 .tx/ 目录为整表 rewrite 快照(供 scan/commit/rollback 识别)。幂等。 */
+    public void markRewrite(long txId) {
+        rewriteTxs.add(txId);
+        try {
+            Path txDir = tableDir.resolve(TX_DIR_PREFIX).resolve(String.valueOf(txId));
+            Files.createDirectories(txDir);
+            Path marker = txDir.resolve(REWRITE_MARKER);
+            if (!Files.exists(marker)) {
+                Files.createFile(marker);
+            }
+        } catch (IOException e) {
+            throw new UncheckedIOException(e);
+        }
+    }
+
+    /** 清空事务 txId 临时目录下的 part(保留 rewrite 标记),供同一事务的多次 UPDATE/DELETE
+     *  迭代替换快照:每次 rewrite 都基于自身上一版快照重生,再写新 part。 */
+    public void clearRewriteParts(long txId) {
+        Path txDir = tableDir.resolve(TX_DIR_PREFIX).resolve(String.valueOf(txId));
+        if (!Files.exists(txDir)) {
+            return;
+        }
+        try (DirectoryStream<Path> ds = Files.newDirectoryStream(txDir)) {
+            for (Path p : ds) {
+                if (!p.getFileName().toString().equals(REWRITE_MARKER)) {
+                    Files.deleteIfExists(p);
+                }
+            }
+        } catch (IOException e) {
+            throw new UncheckedIOException(e);
+        }
+    }
+
     @Override
     public void rollbackTx(long txId) {
+        rewriteTxs.remove(txId);
         // 丢弃事务临时目录:删除 .tx/<txId>/ 整个目录树
         Path txDir = tableDir.resolve(TX_DIR_PREFIX).resolve(String.valueOf(txId));
         if (Files.exists(txDir)) {
