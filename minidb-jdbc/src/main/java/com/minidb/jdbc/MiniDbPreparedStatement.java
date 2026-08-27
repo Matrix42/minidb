@@ -68,10 +68,11 @@ public class MiniDbPreparedStatement extends MiniDbStatement implements Prepared
         }
         // Time 必须在 Date 之前检查,因为 Time 继承自 Date
         if (value instanceof Time t) {
-            // 用 UTC 渲染,避免服务器把本地时间当成 UTC 存储导致时区偏移
-            java.text.SimpleDateFormat tf = new java.text.SimpleDateFormat("HH:mm:ss");
-            tf.setTimeZone(java.util.TimeZone.getTimeZone("UTC"));
-            return "TIME '" + tf.format(t) + "'";
+            // 用 toLocalTime() 取「当日钟面时间」(与 TimeMilliVector 的毫秒语义一致),
+            // 不能用 UTC 格式化 getTime():那会把本地 10:30 按 epoch 错渲染成 02:30。
+            java.time.LocalTime lt = t.toLocalTime();
+            return String.format(java.util.Locale.ROOT, "TIME '%02d:%02d:%02d'",
+                    lt.getHour(), lt.getMinute(), lt.getSecond());
         }
         if (value instanceof Boolean || value instanceof Number) {
             return value.toString();

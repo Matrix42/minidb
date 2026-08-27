@@ -107,7 +107,8 @@ class MiniDbResultSetMetaDataTest {
             assertEquals((short) 123, rs.getShort(1));
             assertEquals(1.5f, rs.getFloat(2));
             assertEquals(0, new BigDecimal("1.23").compareTo(rs.getBigDecimal(3)));
-            assertEquals(45296000L, rs.getTime(4).getTime());
+            // getTime() 回当日时刻;断言本地时区表示(=12:34:56),不依赖具体 epoch 毫秒。
+            assertEquals(java.time.LocalTime.of(12, 34, 56), rs.getTime(4).toLocalTime());
             assertArrayEquals(new byte[]{1, 2, 3}, rs.getBytes(5));
         }
     }
@@ -120,7 +121,8 @@ class MiniDbResultSetMetaDataTest {
             assertEquals((short) 123, (short) rs.getObject(1));
             assertEquals(1.5f, (float) rs.getObject(2));
             assertEquals(0, new BigDecimal("1.23").compareTo((BigDecimal) rs.getObject(3)));
-            assertEquals(45296000L, ((Time) rs.getObject(4)).getTime());
+            assertEquals(java.time.LocalTime.of(12, 34, 56),
+                    ((Time) rs.getObject(4)).toLocalTime());
             assertArrayEquals(new byte[]{1, 2, 3}, (byte[]) rs.getObject(5));
         }
     }

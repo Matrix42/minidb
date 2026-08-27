@@ -64,7 +64,7 @@ class PreparedStatementTest {
             }
             try (ResultSet rs = s.executeQuery("SELECT tm FROM t")) {
                 assertTrue(rs.next());
-                assertEquals("10:30:00", rs.getTime(1).toString());
+                assertEquals(java.time.LocalTime.of(10, 30, 0), rs.getTime(1).toLocalTime());
                 assertFalse(rs.next());
             }
         } finally {

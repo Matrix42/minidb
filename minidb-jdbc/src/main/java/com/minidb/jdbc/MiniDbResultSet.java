@@ -524,9 +524,12 @@ public class MiniDbResultSet implements ResultSet {
         ValueVector v = vector(columnIndex);
         if (isNull(v)) return null;
         if (v instanceof TimeMilliVector tv) {
-            // TimeMilliVector 存的是从零点开始的毫秒数,new Time(millisOfDay) 按 UTC epoch
-            // millis 解释:toString() 用本地时区显示,getTime() 返回原始 epoch millis 值。
-            return new Time(tv.get(cursor));
+            // TimeMilliVector 存的是当日毫秒数(12:00 → 43200000),不能直接 new Time(millisOfDay)
+            // 按 UTC epoch millis 解释——那会让非 UTC 时区的 toString() 偏移(UTC+8 显示 20:00:00)。
+            // 用 LocalTime.ofNanoOfDay 构造,getTime() 返回的是「今日此刻的 epoch 毫秒」,
+            // toString()/toLocalTime() 均回到正确的当日时刻。
+            long millisOfDay = tv.get(cursor);
+            return Time.valueOf(java.time.LocalTime.ofNanoOfDay(millisOfDay * 1_000_000L));
         }
         throw new SQLException("not a time column");
     }
