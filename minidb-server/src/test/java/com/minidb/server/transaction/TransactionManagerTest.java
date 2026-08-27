@@ -60,12 +60,31 @@ class TransactionManagerTest {
     }
 
     @Test
-    void commitWritesTxLog(@TempDir Path tmpDir) {
+    void commitRecordSurvivesTruncationCheck(@TempDir Path tmpDir) {
         Path logFile = tmpDir.resolve("txlog.log");
         TxLog txLog = new TxLog(logFile);
         TransactionManager tm = new TransactionManager(TransactionIsolation.SERIALIZABLE, txLog);
 
-        // 保持一个活跃事务，防止 commit 后 activeTxCount==0 触发 truncate 清空日志
+        // 无并发干预:提交后 activeTxCount 归零,但因已写出 COMMIT,进程内不再截断日志
+        // (截断竞态修复),这条 COMMIT 必须保留供崩溃恢复。
+        TxHandle tx = tm.begin();
+        long txId = tx.txId();
+        tm.commit(txId);
+        assertEquals(0, tm.activeTxCount());
+
+        // 重新打开验证 COMMIT 仍在日志中
+        TxLog reopened = new TxLog(logFile);
+        Set<Long> committed = reopened.recoverCommitted();
+        reopened.close();
+        assertTrue(committed.contains(txId));
+    }
+
+    @Test
+    void commitWritesTxLog(@TempDir Path tmpDir) {
+        Path logFile = tmpDir.resolve("txlog.log");
+        TxLog txLog = new TxLog(logFile);
+        TransactionManager tm = new TransactionManager(TransactionIsolation.SERIALIZABLE, txLog);
+        // 保持一个活跃事务，防止 commit 后 activeTxCount==0 触发截断清空日志
         TxHandle keepAlive = tm.begin();
 
         TxHandle tx = tm.begin();

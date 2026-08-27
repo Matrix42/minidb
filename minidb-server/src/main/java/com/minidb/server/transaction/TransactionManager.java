@@ -3,6 +3,7 @@ package com.minidb.server.transaction;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.atomic.AtomicInteger;
 import java.util.concurrent.atomic.AtomicLong;
+import java.util.concurrent.locks.ReentrantLock;
 
 public class TransactionManager {
 
@@ -12,6 +13,14 @@ public class TransactionManager {
     private final TransactionIsolation isolationLevel;
     private final TxLog txLog;
     private final AtomicInteger activeTxCount = new AtomicInteger(0);
+    // 截断串行化锁：COMMIT 记录的 append 与 activeTxCount 的 decrement/truncate 判定必须
+    // 原子发生。否则并发提交下,一个事务刚 append 完 COMMIT、尚未 decrement,另一个路径
+    // 看到的 activeTxCount 已归零并把日志截断,已提交记录随之丢失。
+    private final ReentrantLock truncateLock = new ReentrantLock();
+    // 自上次截断以来是否有提交发生。一旦有 COMMIT 写入日志,后续 commit/rollback 归零时
+    // 一律不再进程内截断(保证已提交决定的记录不丢);真正的截断交由 StorageManager.loadAll
+    // 在启动恢复完成后统一执行。
+    private volatile boolean committedSinceLastTruncate = false;
 
     // Serializable 专用
     private final ConcurrentHashMap<String, Long> lastWriteTx = new ConcurrentHashMap<>();
@@ -70,24 +79,32 @@ public class TransactionManager {
             throw new IllegalStateException("transaction " + txId + " is not active");
         }
 
-        // Serializable 冲突检测
-        if (isolationLevel == TransactionIsolation.SERIALIZABLE) {
-            checkSerializableConflict(txId);
+        // 截断串行化：append COMMIT 与 decrement/truncate 在同一临界区，阻断
+        // 「append 后被并发路径截断」的竞态（见 truncateLock 字段说明）。
+        truncateLock.lock();
+        try {
+            // Serializable 冲突检测
+            if (isolationLevel == TransactionIsolation.SERIALIZABLE) {
+                checkSerializableConflict(txId);
+            }
+
+            // 写全局事务日志（决定性步骤）
+            txLog.append(txId, TxLog.STATUS_COMMIT);
+            committedSinceLastTruncate = true;
+
+            // 标记状态
+            handle.markCommitted();
+            txStatuses.put(txId, TxStatus.COMMITTED);
+
+            // 清理
+            accessSets.remove(txId);
+            activeTxCount.decrementAndGet();
+
+            // 截断检查（随锁串行化，避免与 append/decrement 交错）
+            tryTruncateTxLog();
+        } finally {
+            truncateLock.unlock();
         }
-
-        // 写全局事务日志（决定性步骤）
-        txLog.append(txId, TxLog.STATUS_COMMIT);
-
-        // 标记状态
-        handle.markCommitted();
-        txStatuses.put(txId, TxStatus.COMMITTED);
-
-        // 清理
-        accessSets.remove(txId);
-        activeTxCount.decrementAndGet();
-
-        // 截断检查
-        tryTruncateTxLog();
     }
 
     /** 回滚事务：标记 ABORTED。调用方负责在各表上调用 rollbackTx(txId)。 */
@@ -107,8 +124,13 @@ public class TransactionManager {
 
         handle.markAborted();
         txStatuses.put(txId, TxStatus.ABORTED);
-        activeTxCount.decrementAndGet();
-        tryTruncateTxLog();
+        truncateLock.lock();
+        try {
+            activeTxCount.decrementAndGet();
+            tryTruncateTxLog();
+        } finally {
+            truncateLock.unlock();
+        }
     }
 
     public TxStatus statusOf(long txId) {
@@ -141,6 +163,7 @@ public class TransactionManager {
         TxAccessSet access = accessSets.get(txId);
         if (access == null) return;
 
+        // 读写冲突：本事务读过的列被快照之后开始的事务写过。
         for (String col : access.readSet) {
             Long writerTx = lastWriteTx.get(col);
             if (writerTx != null && writerTx != txId && access.snapshotTxId < writerTx) {
@@ -150,10 +173,23 @@ public class TransactionManager {
                                 + " wrote it after snapshot " + access.snapshotTxId);
             }
         }
+        // 写写冲突:本事务写过的列被快照之后开始/提交的事务写过——txId 单调递增,
+        // writerTx > snapshotTxId 意即对方在本事务快照之后提交或仍活跃(lost update)。
+        for (String col : access.writeSet) {
+            Long writerTx = lastWriteTx.get(col);
+            if (writerTx != null && writerTx != txId && access.snapshotTxId < writerTx) {
+                throw new IllegalStateException(
+                        "serialization conflict: transaction " + txId
+                                + " wrote " + col + " but transaction " + writerTx
+                                + " also wrote it after snapshot " + access.snapshotTxId);
+            }
+        }
     }
 
     private void tryTruncateTxLog() {
-        if (activeTxCount.get() == 0) {
+        // 一旦有提交记录入日志就停止进程内截断,把权威截断留给启动恢复(StorageManager.loadAll),
+        // 避免并发提交/回滚把 COMMIT 记录截掉(见 truncateLock 字段说明)。
+        if (activeTxCount.get() == 0 && !committedSinceLastTruncate) {
             txLog.truncate();
         }
     }
