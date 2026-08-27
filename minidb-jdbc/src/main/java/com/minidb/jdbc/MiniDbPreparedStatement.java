@@ -37,26 +37,72 @@ public class MiniDbPreparedStatement extends MiniDbStatement implements Prepared
         this.template = template;
     }
 
-    private String render() {
+    /** 渲染参数化 SQL:正确识别字符串字面量('...' 内含 SQL 转义 ''),避免把字面量内
+     *  的 ? 误当占位符,并跳过注释里的 ?。包内可见供测试。 */
+    String render() {
         StringBuilder out = new StringBuilder();
         int paramIndex = 1;
-        for (int i = 0; i < template.length(); i++) {
+        int i = 0;
+        int len = template.length();
+        while (i < len) {
             char c = template.charAt(i);
-            if (c == '?') {
+            if (c == '\'') {
+                // 字符串字面量:跳过,同时正确处理 SQL 转义引号(''),不把字面量内/转义处的
+                // 字符当占位符。
+                i = appendStringLiteral(out, i);
+            } else if (c == '-' && i + 1 < len && template.charAt(i + 1) == '-') {
+                // 行注释:原样复制到行尾,内部的 ? 不替换。
+                int nl = template.indexOf('\n', i + 2);
+                int end = nl < 0 ? len : nl;
+                out.append(template, i, end);
+                i = end;
+            } else if (c == '/' && i + 1 < len && template.charAt(i + 1) == '*') {
+                // 块注释:原样复制到结束,内部 ? 不替换。
+                int close = template.indexOf("*/", i + 2);
+                int end = close < 0 ? len : close + 2;
+                out.append(template, i, end);
+                i = end;
+            } else if (c == '?') {
                 Object value = params.get(paramIndex++);
                 out.append(literal(value));
-            } else if (c == '\'') {
-                int end = template.indexOf('\'', i + 1);
-                if (end < 0) {
-                    end = template.length() - 1;
-                }
-                out.append(template, i, end + 1);
-                i = end;
+                i++;
             } else {
                 out.append(c);
+                i++;
             }
         }
         return out.toString();
+    }
+
+    /** 从 template[i]('）复制一个完整字符串字面量到 out,返回字面量结束后的下标。
+     *  按 SQL 规则处理转义引号('')与反斜杠转义(\\'),避免在字面量内部/转义处截断。 */
+    private int appendStringLiteral(StringBuilder out, int start) {
+        int i = start;
+        int len = template.length();
+        out.append(template.charAt(i)); // 开引号
+        i++;
+        while (i < len) {
+            char c = template.charAt(i);
+            if (c == '\\' && i + 1 < len) {
+                out.append(c).append(template.charAt(i + 1));
+                i += 2;
+                continue;
+            }
+            if (c == '\'') {
+                if (i + 1 < len && template.charAt(i + 1) == '\'') {
+                    // SQL 转义引号:两个相邻单引号 = 字面量内的一个单引号,原样保留且不闭串
+                    out.append("''");
+                    i += 2;
+                    continue;
+                }
+                // 闭引号:吞掉后返回下一个下标,避免外层把闭引号再当新串开端。
+                out.append('\'');
+                return i + 1;
+            }
+            out.append(c);
+            i++;
+        }
+        return i;
     }
 
     private String literal(Object value) {
