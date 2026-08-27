@@ -173,11 +173,17 @@ public class MiniDbResultSet implements ResultSet {
         if (v instanceof Float8Vector fv) {
             return fv.get(cursor);
         }
+        if (v instanceof Float4Vector fv) {
+            return fv.get(cursor);
+        }
         if (v instanceof IntVector iv) {
             return iv.get(cursor);
         }
         if (v instanceof BigIntVector bv) {
             return bv.get(cursor);
+        }
+        if (v instanceof SmallIntVector sv) {
+            return sv.get(cursor);
         }
         throw new SQLException("not a double column");
     }
@@ -191,6 +197,22 @@ public class MiniDbResultSet implements ResultSet {
         if (v instanceof BitVector bv) {
             return bv.get(cursor) == 1;
         }
+        // JDBC 规范:数值列 0=false,非 0=true。
+        if (v instanceof IntVector iv) {
+            return iv.get(cursor) != 0;
+        }
+        if (v instanceof BigIntVector bv) {
+            return bv.get(cursor) != 0L;
+        }
+        if (v instanceof SmallIntVector sv) {
+            return sv.get(cursor) != 0;
+        }
+        if (v instanceof Float8Vector fv) {
+            return fv.get(cursor) != 0d;
+        }
+        if (v instanceof Float4Vector fv) {
+            return fv.get(cursor) != 0f;
+        }
         throw new SQLException("not a boolean column");
     }
 
@@ -203,7 +225,8 @@ public class MiniDbResultSet implements ResultSet {
         if (v instanceof VarCharVector vv) {
             return new String(vv.get(cursor));
         }
-        throw new SQLException("not a varchar column");
+        // JDBC 规范 getString 是通用 getter:非 VARCHAR 列按 getObject 的语义转字符串。
+        return String.valueOf(getObject(columnIndex));
     }
 
     @Override
@@ -418,6 +441,10 @@ public class MiniDbResultSet implements ResultSet {
         if (isNull(v)) return null;
         if (v instanceof DecimalVector dv) return dv.getObject(cursor);
         if (v instanceof Float8Vector fv) return BigDecimal.valueOf(fv.get(cursor));
+        if (v instanceof Float4Vector fv) return BigDecimal.valueOf(fv.get(cursor));
+        if (v instanceof BigIntVector bv) return BigDecimal.valueOf(bv.get(cursor));
+        if (v instanceof IntVector iv) return BigDecimal.valueOf(iv.get(cursor));
+        if (v instanceof SmallIntVector sv) return BigDecimal.valueOf(sv.get(cursor));
         throw new SQLException("not a decimal column");
     }
 
@@ -441,12 +468,27 @@ public class MiniDbResultSet implements ResultSet {
 
     @Override
     public byte getByte(int columnIndex) throws SQLException {
-        throw new SQLFeatureNotSupportedException();
+        ValueVector v = vector(columnIndex);
+        if (isNull(v)) return 0;
+        long value;
+        if (v instanceof SmallIntVector sv) {
+            value = sv.get(cursor);
+        } else if (v instanceof IntVector iv) {
+            value = iv.get(cursor);
+        } else if (v instanceof BigIntVector bv) {
+            value = bv.get(cursor);
+        } else {
+            throw new SQLException("not an integer column");
+        }
+        if (value < Byte.MIN_VALUE || value > Byte.MAX_VALUE) {
+            throw new SQLException("value out of range for byte: " + value);
+        }
+        return (byte) value;
     }
 
     @Override
     public byte getByte(String columnLabel) throws SQLException {
-        throw new SQLFeatureNotSupportedException();
+        return getByte(findColumn(columnLabel));
     }
 
     @Override
