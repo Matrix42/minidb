@@ -999,7 +999,6 @@ public class MiniDbScan extends TableScan implements MiniDbRel {
      */
     private void recordReadSet(ExecContext ctx, String schemaName, String tableName) {
         if (!ctx.inTransaction()) return;
-        List<String> qualified = table.getQualifiedName();
         MiniDbCalciteTable calciteTable = table.unwrap(MiniDbCalciteTable.class);
         if (calciteTable == null) return;
         TableSchema dataSchema = calciteTable.tableSchema();
