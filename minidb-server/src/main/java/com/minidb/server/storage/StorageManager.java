@@ -3,6 +3,7 @@ package com.minidb.server.storage;
 import com.minidb.server.catalog.InformationSchemaCatalog;
 import com.minidb.server.catalog.MiniDbCatalog;
 import com.minidb.server.config.MiniDbConfig;
+import com.minidb.server.transaction.TransactionManager;
 import com.minidb.server.transaction.TxLog;
 import com.minidb.storage.arrow.ArrowPartFormat;
 import com.minidb.storage.arrow.IpcFileTableStorage;
@@ -53,6 +54,7 @@ public class StorageManager implements AutoCloseable {
     private final LSMBackgroundExecutor lsmExecutor;
     private final IndexManager indexManager;
     private final TxLog txLog;
+    private final TransactionManager transactionManager;
 
     public StorageManager(MiniDbCatalog catalog, BufferAllocator allocator, Path dataDir) {
         this(catalog, allocator, dataDir, MiniDbConfig.load(dataDir));
@@ -76,6 +78,7 @@ public class StorageManager implements AutoCloseable {
         this.indexManager = new IndexManager(catalog, config, allocator,
                 formats, tableStorage, lsmExecutor);
         this.txLog = new TxLog(dataDir.resolve("txlog.log"));
+        this.transactionManager = new TransactionManager(config.isolationLevel(), txLog);
     }
 
     public MiniDbConfig config() {
@@ -108,6 +111,10 @@ public class StorageManager implements AutoCloseable {
 
     public IndexManager indexManager() {
         return indexManager;
+    }
+
+    public TransactionManager transactionManager() {
+        return transactionManager;
     }
 
     /** 启动:先恢复中断的 compaction,再恢复元数据,然后恢复事务日志,最后为每张表挂「目录句柄」

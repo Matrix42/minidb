@@ -91,7 +91,12 @@ public class MiniDbModify extends TableModify implements MiniDbRel {
                 copy.setRowCount(batch.getRowCount());
                 affected += batch.getRowCount();
                 try {
-                    target.writePart(copy, TableHandle.Operation.INSERT);
+                    // 事务写入:将 txId 传给存储层,由存储层决定写入 tx-private 还是主存储。
+                    if (ctx.tx() != null) {
+                        target.writePart(copy, TableHandle.Operation.INSERT, ctx.tx().txId());
+                    } else {
+                        target.writePart(copy, TableHandle.Operation.INSERT);
+                    }
                     // 先写数据后写索引:索引失败时数据已落盘,下次 DDL 重建可恢复。
                     // 注意:不能直接查 target.schema().indexes()——handleCreateIndex
                     // 调 catalog.alterTable 更新了 catalog 元数据,但 target 句柄 schema
@@ -147,7 +152,12 @@ public class MiniDbModify extends TableModify implements MiniDbRel {
                     matched.close();
                     throw e;
                 }
-                target.writePart(matched, op);
+                // 事务写入:将 txId 传给存储层
+                if (ctx.tx() != null) {
+                    target.writePart(matched, op, ctx.tx().txId());
+                } else {
+                    target.writePart(matched, op);
+                }
                 if (ts != null && !ts.indexes().isEmpty()) {
                     ctx.storage().indexManager().onDelete(ts, matched);
                 }
@@ -181,7 +191,12 @@ public class MiniDbModify extends TableModify implements MiniDbRel {
                         out.setRowCount(batch.getRowCount());
                         // UNIQUE 索引校验:新值不能与已有行冲突(排除本行,旧值仍存于索引表)
                         validateUpdateUnique(ctx, ts, target, batch, out);
-                        target.writePart(out, op);
+                        // 事务写入:将 txId 传给存储层
+                        if (ctx.tx() != null) {
+                            target.writePart(out, op, ctx.tx().txId());
+                        } else {
+                            target.writePart(out, op);
+                        }
                         if (ts != null && !ts.indexes().isEmpty()) {
                             // batch 是输入批(前 numTableCols 列为旧值),out 是新值批
                             ctx.storage().indexManager().onUpdate(ts, batch, out);
@@ -503,7 +518,12 @@ public class MiniDbModify extends TableModify implements MiniDbRel {
         // 删旧 part,写新 part。
         target.clearParts();
         for (VectorSchemaRoot nb : newBatches) {
-            target.writePart(nb);
+            // 事务写入:将 txId 传给存储层
+            if (ctx.tx() != null) {
+                target.writePart(nb, TableHandle.Operation.INSERT, ctx.tx().txId());
+            } else {
+                target.writePart(nb);
+            }
             nb.close();
         }
         matched.close();

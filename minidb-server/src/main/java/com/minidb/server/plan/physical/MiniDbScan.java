@@ -7,7 +7,9 @@ import com.minidb.server.catalog.InformationSchemaCatalog;
 import com.minidb.server.exec.ExecContext;
 import com.minidb.server.exec.InformationSchema;
 import com.minidb.server.exec.RowCopier;
+import com.minidb.server.transaction.TransactionManager;
 import com.minidb.storage.common.ArrowTypes;
+import com.minidb.storage.common.ColumnMeta;
 import com.minidb.storage.common.BatchIterator;
 import com.minidb.storage.common.ColumnType;
 import com.minidb.storage.common.RowValue;
@@ -147,9 +149,11 @@ public class MiniDbScan extends TableScan implements MiniDbRel {
             }
         }
         TableHandle tableHandle;
+        String schemaName;
+        String tableName;
         if (n >= 3) {
-            String schemaName = qualified.get(n - 2);
-            String tableName = qualified.get(n - 1);
+            schemaName = qualified.get(n - 2);
+            tableName = qualified.get(n - 1);
             if (InformationSchemaCatalog.isSystemSchema(schemaName)) {
                 return applyPushdown(
                         singleBatch(InformationSchema.materialize(
@@ -160,7 +164,18 @@ public class MiniDbScan extends TableScan implements MiniDbRel {
             tableHandle = ctx.getTable(schemaName, tableName);
         } else {
             // promoted table like [minidb, t] — resolve via current schema
-            tableHandle = ctx.getTable(qualified.get(n - 1));
+            schemaName = ctx.currentSchema();
+            tableName = qualified.get(n - 1);
+            tableHandle = ctx.getTable(tableName);
+        }
+        // 快照读:事务中跳过 PointLookup/RangeBounds/indexLookup 优化,
+        // 因为它们没有快照感知变体,直接用 snapshot scan 后再 applyPushdown 过滤/投影。
+        if (ctx.inTransaction() && ctx.tx().snapshotTxId() >= 0) {
+            BatchIterator source = tableHandle.scan(ctx.tx().snapshotTxId());
+            BatchIterator result = applyPushdown(source, ctx);
+            // Serializable:记录读集(按 schema.table.column 粒度)
+            recordReadSet(ctx, schemaName, tableName);
+            return result;
         }
         // 主键等值点查:WHERE pk = literal / pk IN (...) / pk = v1 OR pk = v2
         // (全部主键列绑定)时走 LSM 的 Bloom + getByKey,避免全表扫描 + 逐行
@@ -975,5 +990,33 @@ public class MiniDbScan extends TableScan implements MiniDbRel {
 
     /** 比较条件:列索引 + 规范化 kind + 数值。 */
     private record BoundCmp(int colIndex, SqlKind kind, Object value) {
+    }
+
+    /**
+     * Serializable 隔离级别:记录扫描的列到读集。
+     * 键格式为 schema.table.column,按列粒度记录以支持 SSI 冲突检测。
+     * 非事务或非 Serializable 时 TransactionManager.recordRead 内部短路,无开销。
+     */
+    private void recordReadSet(ExecContext ctx, String schemaName, String tableName) {
+        if (!ctx.inTransaction()) return;
+        List<String> qualified = table.getQualifiedName();
+        MiniDbCalciteTable calciteTable = table.unwrap(MiniDbCalciteTable.class);
+        if (calciteTable == null) return;
+        TableSchema dataSchema = calciteTable.tableSchema();
+        TransactionManager tm = ctx.storage().transactionManager();
+        if (projectedColumns != null) {
+            // 只记录实际读的列
+            for (int colIdx : projectedColumns) {
+                if (colIdx < dataSchema.columns().size()) {
+                    String colName = dataSchema.columns().get(colIdx).name();
+                    tm.recordRead(ctx.tx().txId(), schemaName + "." + tableName + "." + colName);
+                }
+            }
+        } else {
+            // 全列扫描:记录所有列
+            for (ColumnMeta col : dataSchema.columns()) {
+                tm.recordRead(ctx.tx().txId(), schemaName + "." + tableName + "." + col.name());
+            }
+        }
     }
 }
