@@ -134,7 +134,21 @@ public class MiniDbConnection implements Connection {
 
     @Override
     public boolean isValid(int timeout) {
-        return !isClosed();
+        if (isClosed()) {
+            return false;
+        }
+        // timeout==0 表示「对本调用不设超时」,按 JDBC 惯例只做本地状态判断。
+        if (timeout <= 0) {
+            return true;
+        }
+        // 主动探测连通性:发一个轻量查询,服务端宕机但未感知时也应返回 false,
+        // 否则连接池会把失效连接分发给用户。失败(异常)一律视为失效。
+        try (Statement stmt = createStatement();
+             java.sql.ResultSet rs = stmt.executeQuery("SELECT 1")) {
+            return true;
+        } catch (SQLException e) {
+            return false;
+        }
     }
 
     private void checkClosed() throws SQLException {
