@@ -109,6 +109,9 @@ public class MiniDbPreparedStatement extends MiniDbStatement implements Prepared
         if (value == null) {
             return "NULL";
         }
+        if (value instanceof RawSql raw) {
+            return raw.sql();
+        }
         if (value instanceof String s) {
             return "'" + s.replace("'", "''") + "'";
         }
@@ -296,17 +299,42 @@ public class MiniDbPreparedStatement extends MiniDbStatement implements Prepared
 
     @Override
     public void setDate(int parameterIndex, Date x, Calendar cal) throws SQLException {
-        setDate(parameterIndex, x);
+        if (x == null) {
+            params.put(parameterIndex, null);
+            return;
+        }
+        // 用调用方指定的时区解释日期:cal 的时区决定「哪天」。
+        SimpleDateFormat df = new SimpleDateFormat("yyyy-MM-dd");
+        df.setTimeZone(cal.getTimeZone());
+        params.put(parameterIndex, new RawSql("DATE '" + df.format(x) + "'"));
     }
 
     @Override
     public void setTime(int parameterIndex, Time x, Calendar cal) throws SQLException {
-        setTime(parameterIndex, x);
+        if (x == null) {
+            params.put(parameterIndex, null);
+            return;
+        }
+        // 用 cal 时区把时刻换算成钟面时间(与无 Calendar 版本 toLocalTime 语义一致,但时区可变)。
+        Calendar c = Calendar.getInstance(cal.getTimeZone());
+        c.setTimeInMillis(x.getTime());
+        params.put(parameterIndex, new RawSql(String.format(java.util.Locale.ROOT,
+                "TIME '%02d:%02d:%02d'",
+                c.get(java.util.Calendar.HOUR_OF_DAY),
+                c.get(java.util.Calendar.MINUTE),
+                c.get(java.util.Calendar.SECOND))));
     }
 
     @Override
     public void setTimestamp(int parameterIndex, Timestamp x, Calendar cal) throws SQLException {
-        setTimestamp(parameterIndex, x);
+        if (x == null) {
+            params.put(parameterIndex, null);
+            return;
+        }
+        // 用 cal 时区格式化时间戳:服务端按字面钟面时刻存储,故须按调用方时区取钟面时间。
+        SimpleDateFormat sdf = new SimpleDateFormat("yyyy-MM-dd HH:mm:ss");
+        sdf.setTimeZone(cal.getTimeZone());
+        params.put(parameterIndex, new RawSql("TIMESTAMP '" + sdf.format(x) + "'"));
     }
 
     @Override
@@ -418,4 +446,7 @@ public class MiniDbPreparedStatement extends MiniDbStatement implements Prepared
     public void setNClob(int parameterIndex, Reader reader) throws SQLException {
         throw new SQLFeatureNotSupportedException();
     }
+
+    /** 已渲染成 SQL 字面量的参数(带 Calendar 的重载按调用方时区预格式化),渲染阶段直出。 */
+    private record RawSql(String sql) {}
 }

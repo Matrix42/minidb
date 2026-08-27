@@ -2,6 +2,11 @@ package com.minidb.jdbc;
 
 import org.junit.jupiter.api.Test;
 
+import java.sql.Time;
+import java.sql.Timestamp;
+import java.util.Calendar;
+import java.util.TimeZone;
+
 import static org.junit.jupiter.api.Assertions.assertEquals;
 
 /**
@@ -49,5 +54,28 @@ class PreparedStatementRenderTest {
         MiniDbPreparedStatement stmt = ps("SELECT ? AS a\n-- ? in comment");
         stmt.setInt(1, 5);
         assertEquals("SELECT 5 AS a\n-- ? in comment", stmt.render());
+    }
+
+    @Test
+    void calendarTimeOverloadUsesGivenTimeZone() throws Exception {
+        // 用 Calendar 指定 UTC 时区:本地(UTC+8)10:00 的 Time 在 UTC 下钟面为 02:00。
+        MiniDbPreparedStatement stmt = ps("INSERT INTO t VALUES (?)");
+        Time t = Time.valueOf("10:00:00");
+        Calendar utc = Calendar.getInstance(TimeZone.getTimeZone("UTC"));
+        stmt.setTime(1, t, utc);
+        assertEquals("INSERT INTO t VALUES (TIME '02:00:00')", stmt.render());
+    }
+
+    @Test
+    void calendarTimestampOverloadUsesGivenTimeZone() throws Exception {
+        MiniDbPreparedStatement stmt = ps("INSERT INTO t VALUES (?)");
+        // 2025-01-02 03:04:05(本地) 在 UTC 下钟面为前一天 19:04:05。
+        Timestamp ts = Timestamp.valueOf("2025-01-02 03:04:05");
+        TimeZone tz = TimeZone.getTimeZone("Asia/Shanghai");
+        Calendar cal = Calendar.getInstance(tz);
+        // 直接按 UTC 渲染的结果与上面不同,验证 Calendar 生效。
+        stmt.setTimestamp(1, ts, cal);
+        String rendered = stmt.render();
+        assertEquals("INSERT INTO t VALUES (TIMESTAMP '2025-01-02 03:04:05')", rendered);
     }
 }
