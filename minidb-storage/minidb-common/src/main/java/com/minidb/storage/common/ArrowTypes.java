@@ -125,8 +125,11 @@ public final class ArrowTypes {
     }
 
     public static Field field(ColumnMeta meta) {
+        // field 可空性由 ColumnMeta.nullable 决定:NOT NULL/主键列(TableSchema 已强制)
+        // 报 non-nullable FieldType,JDBC getMetaData().isNullable 才能正确反馈可空性。
         return new Field(meta.name(),
-                new FieldType(true, arrowTypeOf(meta.type(), meta.precision(), meta.scale()),
+                new FieldType(Boolean.TRUE.equals(meta.nullable()),
+                        arrowTypeOf(meta.type(), meta.precision(), meta.scale()),
                         null, Map.of(TYPE_NAME_METADATA, meta.type().name())),
                 List.of());
     }

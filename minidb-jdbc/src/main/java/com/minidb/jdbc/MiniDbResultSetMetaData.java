@@ -107,7 +107,11 @@ public class MiniDbResultSetMetaData implements ResultSetMetaData {
 
     @Override
     public int isNullable(int column) {
-        return ResultSetMetaData.columnNullable;
+        // 依据 Arrow Field 的可空性:NOT NULL/主键列(元数据已把 field 标为 non-nullable)
+        // 报 columnNoNulls;否则 columnNullable。
+        return fields.get(column - 1).isNullable()
+                ? ResultSetMetaData.columnNullable
+                : ResultSetMetaData.columnNoNulls;
     }
 
     @Override
@@ -127,13 +131,42 @@ public class MiniDbResultSetMetaData implements ResultSetMetaData {
 
     @Override
     public int getColumnDisplaySize(int column) {
+        // 近似显示宽度,供 GUI 工具列宽/排序使用。
+        ArrowType type = fields.get(column - 1).getType();
+        if (type instanceof ArrowType.Int i) {
+            return switch (i.getBitWidth()) {
+                case 16 -> 6;
+                case 32 -> 11;
+                default -> 20;
+            };
+        }
+        if (type instanceof ArrowType.Decimal d) {
+            return d.getPrecision() + 2; // 符号 + 小数点
+        }
+        if (type instanceof ArrowType.FloatingPoint f) {
+            return f.getPrecision() == FloatingPointPrecision.SINGLE ? 13 : 22;
+        }
+        if (type instanceof ArrowType.Bool) return 5;
+        if (type instanceof ArrowType.Date) return 10;
+        if (type instanceof ArrowType.Time) return 8;
+        if (type instanceof ArrowType.Timestamp) return 23;
+        // VARCHAR / Binary 等变长:给出默认列宽
         return 40;
     }
 
     @Override
     public int getPrecision(int column) {
         ArrowType type = fields.get(column - 1).getType();
-        return type instanceof ArrowType.Decimal decimal ? decimal.getPrecision() : 0;
+        if (type instanceof ArrowType.Decimal d) {
+            return d.getPrecision();
+        }
+        if (type instanceof ArrowType.Int i) {
+            return i.getBitWidth() == 16 ? 5 : i.getBitWidth() == 32 ? 10 : 19;
+        }
+        if (type instanceof ArrowType.FloatingPoint f) {
+            return f.getPrecision() == FloatingPointPrecision.SINGLE ? 7 : 15;
+        }
+        return 0;
     }
 
     @Override
@@ -149,7 +182,8 @@ public class MiniDbResultSetMetaData implements ResultSetMetaData {
 
     @Override
     public boolean isCaseSensitive(int column) {
-        return true;
+        // 只有文本列(Utf8)大小写敏感;数值/布尔/日期列不适用。
+        return fields.get(column - 1).getType() instanceof ArrowType.Utf8;
     }
 
     @Override
@@ -164,7 +198,10 @@ public class MiniDbResultSetMetaData implements ResultSetMetaData {
 
     @Override
     public boolean isSigned(int column) {
-        return true;
+        ArrowType type = fields.get(column - 1).getType();
+        return type instanceof ArrowType.Int
+                || type instanceof ArrowType.FloatingPoint
+                || type instanceof ArrowType.Decimal;
     }
 
     @Override
@@ -184,7 +221,33 @@ public class MiniDbResultSetMetaData implements ResultSetMetaData {
 
     @Override
     public String getColumnClassName(int column) {
-        return Object.class.getName();
+        Field f = fields.get(column - 1);
+        switch (f.getType().getTypeID()) {
+            case Int: {
+                int bw = ((ArrowType.Int) f.getType()).getBitWidth();
+                return bw == 16 ? Short.class.getName()
+                        : bw == 32 ? Integer.class.getName() : Long.class.getName();
+            }
+            case FloatingPoint:
+                return ((ArrowType.FloatingPoint) f.getType()).getPrecision()
+                        == FloatingPointPrecision.SINGLE ? Float.class.getName() : Double.class.getName();
+            case Decimal:
+                return java.math.BigDecimal.class.getName();
+            case Utf8:
+                return String.class.getName();
+            case Bool:
+                return Boolean.class.getName();
+            case Date:
+                return java.sql.Date.class.getName();
+            case Time:
+                return java.sql.Time.class.getName();
+            case Timestamp:
+                return java.sql.Timestamp.class.getName();
+            case Binary:
+                return byte[].class.getName();
+            default:
+                return Object.class.getName();
+        }
     }
 
     @Override

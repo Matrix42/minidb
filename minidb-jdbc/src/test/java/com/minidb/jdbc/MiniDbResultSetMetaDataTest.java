@@ -133,8 +133,52 @@ class MiniDbResultSetMetaDataTest {
             MiniDbResultSetMetaData md = new MiniDbResultSetMetaData(root);
             assertEquals(10, md.getPrecision(3)); // c_decimal DECIMAL(10,2)
             assertEquals(2, md.getScale(3));
-            assertEquals(0, md.getPrecision(1)); // SMALLINT → 0
+            // SMALLINT(16-bit) 十进制精度为 5 位(-32768..32767)。
+            assertEquals(5, md.getPrecision(1));
             assertEquals(0, md.getScale(1));
+        }
+    }
+
+    @Test
+    void columnClassNamesAreTypeSpecific() throws Exception {
+        try (VectorSchemaRoot root = newRoot()) {
+            MiniDbResultSetMetaData md = new MiniDbResultSetMetaData(root);
+            assertEquals(Short.class.getName(), md.getColumnClassName(1));
+            assertEquals(Float.class.getName(), md.getColumnClassName(2));
+            assertEquals(BigDecimal.class.getName(), md.getColumnClassName(3));
+            assertEquals(Time.class.getName(), md.getColumnClassName(4));
+            assertEquals(byte[].class.getName(), md.getColumnClassName(5));
+        }
+    }
+
+    @Test
+    void caseSensitivityAndSignedAreTypeSpecific() throws Exception {
+        try (VectorSchemaRoot root = newRoot()) {
+            MiniDbResultSetMetaData md = new MiniDbResultSetMetaData(root);
+            // 全是数值/时间/二进制列 → 均非大小写敏感
+            for (int i = 1; i <= 5; i++) {
+                assertEquals(false, md.isCaseSensitive(i), "column " + i + " 应非大小写敏感");
+            }
+            // SMALLINT/REAL/DECIMAL 都是有符号数值
+            assertEquals(true, md.isSigned(1));
+            assertEquals(true, md.isSigned(2));
+            assertEquals(true, md.isSigned(3));
+            assertEquals(false, md.isSigned(4), "TIME 应无符号语义");
+            assertEquals(false, md.isSigned(5), "VARBINARY 应无符号语义");
+        }
+    }
+
+    @Test
+    void isNullableReflectsFieldNullability() throws Exception {
+        // 非空列:主键/非 NOT NULL 列(Arrow Field nullable=false)
+        Field notNull = new Field("pk", new FieldType(false, new ArrowType.Int(32, true), null, null), List.of());
+        FieldVector v = notNull.createVector(allocator);
+        v.setInitialCapacity(1);
+        v.allocateNew();
+        v.setValueCount(1);
+        try (VectorSchemaRoot root = VectorSchemaRoot.of(v)) {
+            MiniDbResultSetMetaData md = new MiniDbResultSetMetaData(root);
+            assertEquals(java.sql.ResultSetMetaData.columnNoNulls, md.isNullable(1), "NOT NULL 列应报 columnNoNulls");
         }
     }
 }
