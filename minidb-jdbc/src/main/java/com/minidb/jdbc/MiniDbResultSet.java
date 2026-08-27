@@ -140,6 +140,9 @@ public class MiniDbResultSet implements ResultSet {
         if (v instanceof BigIntVector bv) {
             return (int) bv.get(cursor);
         }
+        if (v instanceof SmallIntVector sv) {
+            return sv.get(cursor);
+        }
         throw new SQLException("not an integer column");
     }
 
@@ -154,6 +157,9 @@ public class MiniDbResultSet implements ResultSet {
         }
         if (v instanceof IntVector iv) {
             return iv.get(cursor);
+        }
+        if (v instanceof SmallIntVector sv) {
+            return sv.get(cursor);
         }
         throw new SQLException("not a bigint column");
     }
@@ -475,7 +481,11 @@ public class MiniDbResultSet implements ResultSet {
     public Time getTime(int columnIndex) throws SQLException {
         ValueVector v = vector(columnIndex);
         if (isNull(v)) return null;
-        if (v instanceof TimeMilliVector tv) return new Time(tv.get(cursor));
+        if (v instanceof TimeMilliVector tv) {
+            // TimeMilliVector 存的是从零点开始的毫秒数,new Time(millisOfDay) 按 UTC epoch
+            // millis 解释:toString() 用本地时区显示,getTime() 返回原始 epoch millis 值。
+            return new Time(tv.get(cursor));
+        }
         throw new SQLException("not a time column");
     }
 

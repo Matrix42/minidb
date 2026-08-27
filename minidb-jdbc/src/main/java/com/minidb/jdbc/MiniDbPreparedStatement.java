@@ -20,9 +20,11 @@ import java.sql.SQLFeatureNotSupportedException;
 import java.sql.SQLXML;
 import java.sql.Time;
 import java.sql.Timestamp;
+import java.text.SimpleDateFormat;
 import java.util.Calendar;
 import java.util.HashMap;
 import java.util.Map;
+import java.util.TimeZone;
 
 public class MiniDbPreparedStatement extends MiniDbStatement implements PreparedStatement {
 
@@ -64,6 +66,13 @@ public class MiniDbPreparedStatement extends MiniDbStatement implements Prepared
         if (value instanceof String s) {
             return "'" + s.replace("'", "''") + "'";
         }
+        // Time 必须在 Date 之前检查,因为 Time 继承自 Date
+        if (value instanceof Time t) {
+            // 用 UTC 渲染,避免服务器把本地时间当成 UTC 存储导致时区偏移
+            java.text.SimpleDateFormat tf = new java.text.SimpleDateFormat("HH:mm:ss");
+            tf.setTimeZone(java.util.TimeZone.getTimeZone("UTC"));
+            return "TIME '" + tf.format(t) + "'";
+        }
         if (value instanceof Boolean || value instanceof Number) {
             return value.toString();
         }
@@ -71,7 +80,19 @@ public class MiniDbPreparedStatement extends MiniDbStatement implements Prepared
             return "DATE '" + d + "'";
         }
         if (value instanceof Timestamp ts) {
-            return "TIMESTAMP '" + ts + "'";
+            // 用 UTC 渲染,避免服务器把本地时间当成 UTC 存储导致时区偏移
+            SimpleDateFormat sdf = new SimpleDateFormat("yyyy-MM-dd HH:mm:ss");
+            sdf.setTimeZone(TimeZone.getTimeZone("UTC"));
+            return "TIMESTAMP '" + sdf.format(ts) + "'";
+        }
+        if (value instanceof byte[] bytes) {
+            StringBuilder hex = new StringBuilder(bytes.length * 2 + 3);
+            hex.append("X'");
+            for (byte b : bytes) {
+                hex.append(String.format("%02X", b & 0xFF));
+            }
+            hex.append("'");
+            return hex.toString();
         }
         throw new IllegalArgumentException("unsupported parameter type: " + value);
     }
@@ -148,17 +169,17 @@ public class MiniDbPreparedStatement extends MiniDbStatement implements Prepared
 
     @Override
     public void setByte(int parameterIndex, byte x) throws SQLException {
-        throw new SQLFeatureNotSupportedException();
+        params.put(parameterIndex, x);
     }
 
     @Override
     public void setShort(int parameterIndex, short x) throws SQLException {
-        throw new SQLFeatureNotSupportedException();
+        params.put(parameterIndex, x);
     }
 
     @Override
     public void setFloat(int parameterIndex, float x) throws SQLException {
-        throw new SQLFeatureNotSupportedException();
+        params.put(parameterIndex, x);
     }
 
     @Override
@@ -168,12 +189,12 @@ public class MiniDbPreparedStatement extends MiniDbStatement implements Prepared
 
     @Override
     public void setBytes(int parameterIndex, byte[] x) throws SQLException {
-        throw new SQLFeatureNotSupportedException();
+        params.put(parameterIndex, x);
     }
 
     @Override
     public void setTime(int parameterIndex, Time x) throws SQLException {
-        throw new SQLFeatureNotSupportedException();
+        params.put(parameterIndex, x);
     }
 
     @Override
@@ -233,7 +254,7 @@ public class MiniDbPreparedStatement extends MiniDbStatement implements Prepared
 
     @Override
     public void setTime(int parameterIndex, Time x, Calendar cal) throws SQLException {
-        throw new SQLFeatureNotSupportedException();
+        setTime(parameterIndex, x);
     }
 
     @Override
