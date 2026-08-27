@@ -87,6 +87,9 @@ public class MiniDbStatement implements Statement {
         if (!closed) {
             closed = true;
             closeCurrent();
+            if (connection != null) {
+                connection.statementClosed(this);
+            }
         }
     }
 

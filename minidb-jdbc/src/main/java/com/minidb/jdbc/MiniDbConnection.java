@@ -19,12 +19,17 @@ import java.sql.Statement;
 import java.sql.Struct;
 import java.util.Map;
 import java.util.Properties;
+import java.util.Set;
+import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.Executor;
 
 public class MiniDbConnection implements Connection {
 
     private final MiniDbClient client;
     private final String url;
+    // 本连接创建过、尚未关闭的 Statement/PreparedStatement。JDBC 规范要求关闭 Connection
+    // 连带关闭其创建的所有 Statement(及其 ResultSet)。并发关闭遍历需线程安全。
+    private final Set<Statement> openStatements = ConcurrentHashMap.newKeySet();
     private boolean closed;
     private int transactionIsolation = Connection.TRANSACTION_SERIALIZABLE;
     private boolean autoCommit = true;
@@ -41,19 +46,37 @@ public class MiniDbConnection implements Connection {
     @Override
     public Statement createStatement() throws SQLException {
         checkClosed();
-        return new MiniDbStatement(this, client);
+        MiniDbStatement stmt = new MiniDbStatement(this, client);
+        openStatements.add(stmt);
+        return stmt;
     }
 
     @Override
     public PreparedStatement prepareStatement(String sql) throws SQLException {
         checkClosed();
-        return new MiniDbPreparedStatement(this, client, sql);
+        MiniDbPreparedStatement stmt = new MiniDbPreparedStatement(this, client, sql);
+        openStatements.add(stmt);
+        return stmt;
+    }
+
+    /** Statement 主动 close() 时从此连接注销(包内可见,供 MiniDbStatement 回调)。 */
+    void statementClosed(Statement statement) {
+        openStatements.remove(statement);
     }
 
     @Override
     public void close() throws SQLException {
         if (!closed) {
             closed = true;
+            // 先关闭所有 statement(连带其 ResultSet 与 Arrow 资源),再关闭 client。
+            for (Statement stmt : openStatements) {
+                try {
+                    stmt.close();
+                } catch (SQLException ignored) {
+                    // 尽力关闭,不因单个 statement 失败而中断其余清理
+                }
+            }
+            openStatements.clear();
             client.close();
         }
     }
