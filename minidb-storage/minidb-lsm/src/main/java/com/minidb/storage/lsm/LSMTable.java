@@ -117,10 +117,10 @@ public class LSMTable implements TableHandle {
                 }
                 memTable.put(key, rv);
             }
-            // 如果接近阈值，直接 flush
-            if (memTable.needsFlush()) {
-                flushMemTable();
-            }
+            // 不在此 flush:无参 recover() 重放的是全部 WAL(含未提交事务条目),若在此
+            // flush 会把未提交数据永久固化进 SSTable,破坏原子性(bug #4)。事务感知恢复
+            // 由 recover(committedTxIds) 完成——届时只重放已提交条目,再按需 flush。
+            // 无事务环境(测试直连):数据保留在 memTable,查询仍可见,不依赖此处 flush。
         }
     }
 
@@ -261,11 +261,35 @@ public class LSMTable implements TableHandle {
 
     @Override
     public BatchIterator scan(long snapshotTxId) {
+        return scan(snapshotTxId, 0L);
+    }
+
+    @Override
+    public BatchIterator scan(long snapshotTxId, long txId) {
         if (snapshotTxId < 0) {
             return scan(); // READ_UNCOMMITTED：不过滤
         }
-        return new MergeIterator(memTablesSnapshot(), txMemTables, sstManager,
-                schema, format, allocator, null, null, snapshotTxId).scan();
+        // 快照读:合并 shared MemTable + 当前事务自己的 tx-private MemTable(优先级最高)。
+        // 已提交事务的数据已经由 commitTx() 合并进 shared MemTable;txMemTables 此刻
+        // 只含未提交(ACTIVE)事务的私有表——自己的可见(合并),他人的不可见(不合并)。
+        return new MergeIterator(snapshotWithOwnWrites(txId), sstManager,
+                schema, format, allocator, null, null).scan();
+    }
+
+    /**
+     * 事务快照读的 memTable 列表:[自己事务的私有表(最新,优先)] + [shared + 待落盘]。
+     * 自己的写必须覆盖共享基础数据(读自己的写,ACID-C);txId==0 表非事务路径,无自有写。
+     */
+    private List<MemTable> snapshotWithOwnWrites(long txId) {
+        List<MemTable> shared = memTablesSnapshot();
+        MemTable own = txId == 0 ? null : txMemTables.get(txId);
+        if (own == null) {
+            return shared;
+        }
+        List<MemTable> merged = new ArrayList<>(shared.size() + 1);
+        merged.add(own);
+        merged.addAll(shared);
+        return merged;
     }
 
     /**
