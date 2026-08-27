@@ -272,8 +272,15 @@ public class LSMTable implements TableHandle {
      * 事务恢复:从 WAL 恢复已提交事务的数据,跳过未提交事务的条目。
      * 保留旧 {@link #recover()} 向后兼容(无事务时使用)。
      */
+    /**
+     * 事务感知恢复：构造函数已调用无参 recover() 加载 SSTable 元数据 + 重放全部 WAL，
+     * 这里只补做 WAL 过滤——丢弃未提交事务的条目，仅保留已提交的。
+     * 不重复加载 SSTable 元数据（避免 levels map 出现重复条目）。
+     */
     public void recover(Set<Long> committedTxIds) {
-        sstManager.loadExisting(tableDir, schema, format, allocator);
+        // 重建 memTable：清空构造函数 recover() 放置的条目（含未提交事务数据），
+        // 只重放已提交事务的 WAL 条目。
+        this.memTable = new MemTable(schema, flushThresholdBytes);
         List<WAL.Entry> entries = wal.recover(committedTxIds);
         for (WAL.Entry entry : entries) {
             List<Object> key = new ArrayList<>(entry.key());
