@@ -650,7 +650,7 @@ public class MiniDbDatabaseMetaData implements DatabaseMetaData {
     @Override
     public ResultSet getTables(String catalog, String schemaPattern, String tableNamePattern, String[] types) throws SQLException {
         MiniDbStatement stmt = (MiniDbStatement) connection.createStatement();
-        return new MiniDbResultSet(stmt, connection.client().tables(schemaPattern, tableNamePattern, types));
+        return new MiniDbResultSet(stmt, connection.client().tables(schemaPattern, tableNamePattern, types), true);
     }
 
     @Override
@@ -674,13 +674,13 @@ public class MiniDbDatabaseMetaData implements DatabaseMetaData {
         tableType.setSafe(1, "VIEW".getBytes(StandardCharsets.UTF_8));
         tableType.setSafe(2, "SYSTEM TABLE".getBytes(StandardCharsets.UTF_8));
         tableType.setValueCount(3);
-        return new MiniDbResultSet(stmt, VectorSchemaRoot.of(tableType));
+        return new MiniDbResultSet(stmt, VectorSchemaRoot.of(tableType), true);
     }
 
     @Override
     public ResultSet getColumns(String catalog, String schemaPattern, String tableNamePattern, String columnNamePattern) throws SQLException {
         MiniDbStatement stmt = (MiniDbStatement) connection.createStatement();
-        return new MiniDbResultSet(stmt, connection.client().columns(schemaPattern, tableNamePattern, columnNamePattern));
+        return new MiniDbResultSet(stmt, connection.client().columns(schemaPattern, tableNamePattern, columnNamePattern), true);
     }
 
     @Override
@@ -851,7 +851,7 @@ public class MiniDbDatabaseMetaData implements DatabaseMetaData {
     @Override
     public ResultSet getSchemas(String catalog, String schemaPattern) throws SQLException {
         MiniDbStatement stmt = (MiniDbStatement) connection.createStatement();
-        return new MiniDbResultSet(stmt, connection.client().schemas(schemaPattern));
+        return new MiniDbResultSet(stmt, connection.client().schemas(schemaPattern), true);
     }
 
     @Override

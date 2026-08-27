@@ -53,12 +53,21 @@ public class MiniDbResultSet implements ResultSet {
     private boolean lastBatch;
     private int rowNumber;
     private boolean exhausted;
+    // DatabaseMetaData 内部创建的 Statement:用户拿不到引用,关闭 ResultSet 时一并关闭
+    // (否则每次 getTables/getColumns/getSchemas/getTableTypes 泄漏一个 Statement)。
+    private final boolean closeStatementOnClose;
 
     public MiniDbResultSet(MiniDbStatement statement, VectorSchemaRoot root) {
+        this(statement, root, false);
+    }
+
+    public MiniDbResultSet(MiniDbStatement statement, VectorSchemaRoot root,
+                           boolean closeStatementOnClose) {
         this.statement = statement;
         this.client = null;
         this.root = root;
         this.lastBatch = true;
+        this.closeStatementOnClose = closeStatementOnClose;
         this.metaData = new MiniDbResultSetMetaData(root);
     }
 
@@ -70,6 +79,7 @@ public class MiniDbResultSet implements ResultSet {
         this.cursorId = cursor.cursorId();
         this.fetchSize = cursor.fetchSize();
         this.lastBatch = cursor.lastBatch();
+        this.closeStatementOnClose = false;
         this.metaData = new MiniDbResultSetMetaData(this.root);
     }
 
@@ -358,6 +368,13 @@ public class MiniDbResultSet implements ResultSet {
             root.close();
             if (client != null && !lastBatch) {
                 client.closeCursor(cursorId);
+            }
+            if (closeStatementOnClose && statement != null) {
+                try {
+                    statement.close();
+                } catch (SQLException ignored) {
+                    // 尽力关闭
+                }
             }
         }
     }
