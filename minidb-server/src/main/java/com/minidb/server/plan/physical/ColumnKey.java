@@ -50,6 +50,10 @@ final class ColumnKey {
         if (!(o instanceof ColumnKey other)) {
             return false;
         }
+        // 列数不同必不相等:否则下面按本对象 cols 长度迭代会越界或漏比较。
+        if (cols.length != other.cols.length) {
+            return false;
+        }
         for (int k = 0; k < cols.length; k++) {
             ValueVector lv = root.getVector(cols[k]);
             ValueVector rv = other.root.getVector(other.cols[k]);
