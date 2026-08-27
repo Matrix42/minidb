@@ -398,14 +398,26 @@ public class MiniDbResultSet implements ResultSet {
 
     @Override
     public <T> T getObject(int columnIndex, Class<T> type) throws SQLException {
-        Object o = getObject(columnIndex);
-        return type.cast(o);
+        try {
+            Object o = getObject(columnIndex);
+            return type.cast(o);
+        } catch (ClassCastException e) {
+            // JDBC 规范:类型不匹配应抛 SQLException,而非运行时 ClassCastException,
+            // 否则调用方 catch(SQLException) 会漏掉。
+            throw new SQLException("cannot convert column " + columnIndex
+                    + " to " + type.getName(), e);
+        }
     }
 
     @Override
     public <T> T getObject(String columnLabel, Class<T> type) throws SQLException {
-        Object o = getObject(columnLabel);
-        return type.cast(o);
+        try {
+            Object o = getObject(columnLabel);
+            return type.cast(o);
+        } catch (ClassCastException e) {
+            throw new SQLException("cannot convert column " + columnLabel
+                    + " to " + type.getName(), e);
+        }
     }
 
     // --- Unsupported: scrolling, updates, streams, advanced types ---

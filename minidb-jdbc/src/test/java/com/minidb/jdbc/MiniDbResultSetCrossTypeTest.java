@@ -162,4 +162,18 @@ class MiniDbResultSetCrossTypeTest {
             }
         }
     }
+
+    @Test
+    void getObjectWithIncompatibleClassThrowsSqlException() throws Exception {
+        try (VectorSchemaRoot root = newRoot("i", Types.MinorType.INT, 123)) {
+            MiniDbResultSet rs = new MiniDbResultSet(null, root);
+            rs.next();
+            try {
+                rs.getObject(1, java.sql.Date.class);
+                throw new AssertionError("expected SQLException for incompatible type");
+            } catch (SQLException expected) {
+                // expected
+            }
+        }
+    }
 }
