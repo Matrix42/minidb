@@ -62,11 +62,23 @@ public class MiniDbClient implements AutoCloseable {
             new ConcurrentHashMap<>();
     private final AtomicLong nextRequestId = new AtomicLong(1);
     private volatile boolean connected = false;
+    // 是否已通过 close()/finalize() 释放资源,防止重复释放。
+    private volatile boolean released = false;
 
     private Channel channel;
 
     public MiniDbClient() {
         this(DEFAULT_TIMEOUT_SECONDS);
+    }
+
+    /**
+     * 兜底:用户忘记 close() 而让 client 被 GC 时,释放 EventLoopGroup 与 RootAllocator,
+     * 避免堆外内存与 Netty 线程永久泄漏。转发 close()(其已做幂等)。
+     */
+    @SuppressWarnings("removal")
+    @Override
+    protected void finalize() {
+        close();
     }
 
     /**
@@ -295,6 +307,10 @@ public class MiniDbClient implements AutoCloseable {
 
     @Override
     public void close() {
+        if (released) {
+            return;
+        }
+        released = true;
         connected = false;
         if (channel != null) {
             channel.writeAndFlush(new Message.CloseRequest());
