@@ -74,6 +74,10 @@ public class QueryExecutor {
         this.calcite = new CalciteContext(catalog);
     }
 
+    public StorageManager storage() {
+        return storage;
+    }
+
     public QueryResult execute(String sql) {
         return execute(sql, MiniDbCatalog.DEFAULT_SCHEMA);
     }

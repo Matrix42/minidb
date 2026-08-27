@@ -8,6 +8,10 @@ import com.minidb.server.exec.MetadataExecutor;
 import com.minidb.server.exec.Paginator;
 import com.minidb.server.exec.QueryExecutor;
 import com.minidb.server.exec.QueryResult;
+import com.minidb.server.transaction.TransactionIsolation;
+import com.minidb.server.transaction.TransactionManager;
+import com.minidb.server.transaction.TxHandle;
+import com.minidb.server.transaction.TxStatus;
 import io.netty.buffer.ByteBuf;
 import io.netty.channel.ChannelHandlerContext;
 import io.netty.channel.SimpleChannelInboundHandler;
@@ -37,6 +41,7 @@ public class SessionHandler extends SimpleChannelInboundHandler<Message> {
     private final QueryExecutor executor;
     private final MetadataExecutor metadata;
     private final ExecutorService queryPool;
+    private final TransactionManager txManager;
     private String currentSchema = MiniDbCatalog.DEFAULT_SCHEMA;
     // Active cursors keyed by the ExecuteRequest id that opened them. A
     // SessionHandler is per-channel and only touched by the Netty event loop
@@ -44,12 +49,16 @@ public class SessionHandler extends SimpleChannelInboundHandler<Message> {
     private final Map<Long, Paginator> cursors = new HashMap<>();
     /** 未完成的查询 Future,用于 channelInactive 时 cancel(true) 中断线程。 */
     private final Set<Future<?>> outstanding = ConcurrentHashMap.newKeySet();
+    /** 当前活跃事务,仅事件循环线程访问。 */
+    private TxHandle tx;
+    private boolean autoCommit = true;
 
     public SessionHandler(QueryExecutor executor, MetadataExecutor metadata,
-                         ExecutorService queryPool) {
+                         ExecutorService queryPool, TransactionManager txManager) {
         this.executor = executor;
         this.metadata = metadata;
         this.queryPool = queryPool;
+        this.txManager = txManager;
     }
 
     @Override
@@ -77,17 +86,33 @@ public class SessionHandler extends SimpleChannelInboundHandler<Message> {
                     req.schemaPattern(), req.tableNamePattern(), req.columnNamePattern()));
         } else if (msg instanceof Message.CloseRequest) {
             ctx.close();
+        } else if (msg instanceof Message.BeginRequest) {
+            handleBegin(ctx);
+        } else if (msg instanceof Message.CommitRequest req) {
+            handleCommit(ctx, req);
+        } else if (msg instanceof Message.RollbackRequest req) {
+            handleRollback(ctx, req);
+        } else if (msg instanceof Message.SetAutoCommitRequest req) {
+            handleSetAutoCommit(ctx, req);
         }
     }
 
     private void handleExecute(ChannelHandlerContext ctx, Message.ExecuteRequest req) {
         LOG.debug("executing: {}", req.sql());
-        // 快照 currentSchema:查询执行在 worker 线程,不在事件循环线程。
+        // 快照 currentSchema + tx:查询执行在 worker 线程,不在事件循环线程。
         String schema = currentSchema;
+        TxHandle currentTx = tx;
+        // 事务内刷新 READ_COMMITTED 快照(每语句执行前)
+        if (currentTx != null && currentTx.status() == TxStatus.ACTIVE
+                && txManager.isolationLevel() == TransactionIsolation.READ_COMMITTED) {
+            currentTx.refreshSnapshot(txManager.latestCommittedTxId());
+        }
         Future<?> future = queryPool.submit(() -> {
             long start = System.nanoTime();
             try {
-                QueryResult result = executor.executeCursor(req.sql(), schema);
+                QueryResult result = currentTx != null
+                        ? executor.executeCursor(req.sql(), schema, currentTx)
+                        : executor.executeCursor(req.sql(), schema);
                 // 客户端断开(channelInactive→cancel)时线程被中断,丢弃结果。
                 if (Thread.currentThread().isInterrupted()) {
                     closeResult(result);
@@ -102,6 +127,104 @@ public class SessionHandler extends SimpleChannelInboundHandler<Message> {
             }
         });
         outstanding.add(future);
+    }
+
+    // ---- 事务生命周期 ----
+
+    private void handleBegin(ChannelHandlerContext ctx) {
+        if (tx != null && tx.status() == TxStatus.ACTIVE) {
+            ctx.writeAndFlush(Message.CommitResponse.error(-1, "transaction already in progress"));
+            return;
+        }
+        tx = txManager.begin();
+        ctx.writeAndFlush(Message.CommitResponse.ok(0));
+    }
+
+    private void handleCommit(ChannelHandlerContext ctx, Message.CommitRequest req) {
+        if (tx == null || tx.status() != TxStatus.ACTIVE) {
+            ctx.writeAndFlush(Message.CommitResponse.error(req.requestId(), "no active transaction"));
+            return;
+        }
+        long txId = tx.txId();
+        queryPool.submit(() -> {
+            try {
+                // 1. 事务管理器 commit（写全局日志 + 冲突检测）
+                txManager.commit(txId);
+                // 2. 各表 commitTx（合并数据）
+                for (var table : executor.storage().allTableHandles()) {
+                    table.commitTx(txId);
+                }
+                ctx.executor().execute(() ->
+                        ctx.writeAndFlush(Message.CommitResponse.ok(req.requestId())));
+                tx = null;
+            } catch (Exception e) {
+                txManager.rollback(txId);
+                // 各表 rollbackTx
+                for (var table : executor.storage().allTableHandles()) {
+                    try {
+                        table.rollbackTx(txId);
+                    } catch (Exception ignored) {
+                        // 尽力清理
+                    }
+                }
+                tx = null;
+                ctx.executor().execute(() ->
+                        ctx.writeAndFlush(Message.CommitResponse.error(req.requestId(), e.getMessage())));
+            }
+        });
+    }
+
+    private void handleRollback(ChannelHandlerContext ctx, Message.RollbackRequest req) {
+        if (tx == null || tx.status() != TxStatus.ACTIVE) {
+            ctx.writeAndFlush(Message.CommitResponse.error(req.requestId(), "no active transaction"));
+            return;
+        }
+        long txId = tx.txId();
+        queryPool.submit(() -> {
+            try {
+                txManager.rollback(txId);
+                // 各表 rollbackTx
+                for (var table : executor.storage().allTableHandles()) {
+                    table.rollbackTx(txId);
+                }
+                ctx.executor().execute(() ->
+                        ctx.writeAndFlush(Message.CommitResponse.ok(req.requestId())));
+                tx = null;
+            } catch (Exception e) {
+                tx = null;
+                ctx.executor().execute(() ->
+                        ctx.writeAndFlush(Message.CommitResponse.error(req.requestId(), e.getMessage())));
+            }
+        });
+    }
+
+    private void handleSetAutoCommit(ChannelHandlerContext ctx, Message.SetAutoCommitRequest req) {
+        if (req.autoCommit() == this.autoCommit) {
+            ctx.writeAndFlush(Message.CommitResponse.ok(req.requestId()));
+            return;
+        }
+        if (req.autoCommit()) {
+            // false → true：若在事务中，隐式提交
+            if (tx != null && tx.status() == TxStatus.ACTIVE) {
+                try {
+                    long txId = tx.txId();
+                    txManager.commit(txId);
+                    for (var table : executor.storage().allTableHandles()) {
+                        table.commitTx(txId);
+                    }
+                    tx = null;
+                } catch (Exception e) {
+                    tx = null;
+                    ctx.writeAndFlush(Message.CommitResponse.error(req.requestId(), e.getMessage()));
+                    return;
+                }
+            }
+        } else {
+            // true → false：隐式 begin
+            tx = txManager.begin();
+        }
+        this.autoCommit = req.autoCommit();
+        ctx.writeAndFlush(Message.CommitResponse.ok(req.requestId()));
     }
 
     /** 在事件循环线程处理查询结果。 */
@@ -251,6 +374,23 @@ public class SessionHandler extends SimpleChannelInboundHandler<Message> {
 
     @Override
     public void channelInactive(ChannelHandlerContext ctx) throws Exception {
+        // 连接断开:自动 rollback 活跃事务
+        if (tx != null && tx.status() == TxStatus.ACTIVE) {
+            try {
+                long txId = tx.txId();
+                txManager.rollback(txId);
+                for (var table : executor.storage().allTableHandles()) {
+                    try {
+                        table.rollbackTx(txId);
+                    } catch (Exception ignored) {
+                        // 尽力清理
+                    }
+                }
+            } catch (Exception e) {
+                LOG.warn("failed to rollback transaction on disconnect", e);
+            }
+            tx = null;
+        }
         // 客户端断开:取消所有未完成的查询(cancel(true)中断 worker 线程)。
         for (Future<?> f : outstanding) {
             f.cancel(true);

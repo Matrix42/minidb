@@ -69,7 +69,8 @@ public class MiniDbServer implements AutoCloseable {
                     protected void initChannel(SocketChannel ch) {
                         ch.pipeline().addLast(new MessageDecoder());
                         ch.pipeline().addLast(new MessageEncoder());
-                        ch.pipeline().addLast(new SessionHandler(executor, metadata, queryPool));
+                        ch.pipeline().addLast(new SessionHandler(executor, metadata, queryPool,
+                                storage.transactionManager()));
                     }
                 });
         channel = bootstrap.bind(port).sync().channel();

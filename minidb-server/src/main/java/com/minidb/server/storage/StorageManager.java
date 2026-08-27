@@ -117,6 +117,11 @@ public class StorageManager implements AutoCloseable {
         return transactionManager;
     }
 
+    /** 返回所有已加载的表句柄,供事务提交/回滚时遍历。 */
+    public java.util.Collection<TableHandle> allTableHandles() {
+        return tables.values();
+    }
+
     /** 启动:先恢复中断的 compaction,再恢复元数据,然后恢复事务日志,最后为每张表挂「目录句柄」
      * 并执行事务感知恢复(LSMTable 重放 WAL 中已提交事务的变更,SimpleTable 清理 .tx/ 目录)。 */
     public void loadAll() {
