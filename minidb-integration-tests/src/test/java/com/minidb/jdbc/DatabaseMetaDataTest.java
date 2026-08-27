@@ -141,4 +141,34 @@ class DatabaseMetaDataTest {
             server.close();
         }
     }
+
+    @Test
+    void supportsFlagsReportRealCapabilities() throws Exception {
+        Path dataDir = Files.createTempDirectory("minidb-meta");
+        MiniDbServer server = new MiniDbServer();
+        server.start(0, dataDir);
+        String url = "jdbc:minidb://127.0.0.1:" + server.port();
+        try (Connection c = DriverManager.getConnection(url);
+             Statement s = c.createStatement()) {
+            DatabaseMetaData md = c.getMetaData();
+            // 实际支持的能力必须报 true,否则 DataGrip/DBeaver 会据此禁用功能
+            assertTrue(md.supportsGroupBy());
+            assertTrue(md.supportsOuterJoins());
+            assertTrue(md.supportsFullOuterJoins());
+            assertTrue(md.supportsUnion());
+            assertTrue(md.supportsUnionAll());
+            assertTrue(md.supportsSubqueriesInComparisons());
+            assertTrue(md.supportsSubqueriesInExists());
+            assertTrue(md.supportsSubqueriesInIns());
+            assertTrue(md.supportsSchemasInDataManipulation());
+            assertTrue(md.supportsIntegrityEnhancementFacility());
+            // LIKE ESCAPE 与 getSearchStringEscape() 一致
+            assertTrue(md.supportsLikeEscapeClause());
+            assertEquals("\\", md.getSearchStringEscape());
+            // 多表 JOIN 无上限(0 = 无限制),不得误报为 1
+            assertEquals(0, md.getMaxTablesInSelect());
+        } finally {
+            server.close();
+        }
+    }
 }

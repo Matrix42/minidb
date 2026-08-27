@@ -264,12 +264,12 @@ public class MiniDbDatabaseMetaData implements DatabaseMetaData {
 
     @Override
     public boolean supportsGroupBy() {
-        return false;
+        return true;
     }
 
     @Override
     public boolean supportsGroupByUnrelated() {
-        return false;
+        return true;
     }
 
     @Override
@@ -279,7 +279,8 @@ public class MiniDbDatabaseMetaData implements DatabaseMetaData {
 
     @Override
     public boolean supportsLikeEscapeClause() {
-        return false;
+        // 与 getSearchStringEscape() 返回 "\" 一致:MiniDB 支持 LIKE ... ESCAPE。
+        return true;
     }
 
     @Override
@@ -329,22 +330,22 @@ public class MiniDbDatabaseMetaData implements DatabaseMetaData {
 
     @Override
     public boolean supportsIntegrityEnhancementFacility() {
-        return false;
+        return true;
     }
 
     @Override
     public boolean supportsOuterJoins() {
-        return false;
+        return true;
     }
 
     @Override
     public boolean supportsFullOuterJoins() {
-        return false;
+        return true;
     }
 
     @Override
     public boolean supportsLimitedOuterJoins() {
-        return false;
+        return true;
     }
 
     @Override
@@ -374,7 +375,7 @@ public class MiniDbDatabaseMetaData implements DatabaseMetaData {
 
     @Override
     public boolean supportsSchemasInDataManipulation() {
-        return false;
+        return true;
     }
 
     @Override
@@ -384,12 +385,12 @@ public class MiniDbDatabaseMetaData implements DatabaseMetaData {
 
     @Override
     public boolean supportsSchemasInTableDefinitions() {
-        return false;
+        return true;
     }
 
     @Override
     public boolean supportsSchemasInIndexDefinitions() {
-        return false;
+        return true;
     }
 
     @Override
@@ -444,37 +445,37 @@ public class MiniDbDatabaseMetaData implements DatabaseMetaData {
 
     @Override
     public boolean supportsSubqueriesInComparisons() {
-        return false;
+        return true;
     }
 
     @Override
     public boolean supportsSubqueriesInExists() {
-        return false;
+        return true;
     }
 
     @Override
     public boolean supportsSubqueriesInIns() {
-        return false;
+        return true;
     }
 
     @Override
     public boolean supportsSubqueriesInQuantifieds() {
-        return false;
+        return true;
     }
 
     @Override
     public boolean supportsCorrelatedSubqueries() {
-        return false;
+        return true;
     }
 
     @Override
     public boolean supportsUnion() {
-        return false;
+        return true;
     }
 
     @Override
     public boolean supportsUnionAll() {
-        return false;
+        return true;
     }
 
     @Override
@@ -594,7 +595,8 @@ public class MiniDbDatabaseMetaData implements DatabaseMetaData {
 
     @Override
     public int getMaxTablesInSelect() {
-        return 1;
+        // MiniDB 无表数上限(多表 JOIN 正常)。0 = 无限制。
+        return 0;
     }
 
     @Override
