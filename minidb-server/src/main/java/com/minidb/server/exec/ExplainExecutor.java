@@ -89,6 +89,10 @@ public class ExplainExecutor {
                 // ANALYZE discards data, only measures; batch cleanup is handled
                 // by the iterator close() cascade through the operator chain.
             }
+        } finally {
+            // 关闭 ExecContext 释放 CSE 缓存批:计划含公共子表达式时 execute 会物化缓存批,
+            // 迭代器 close 只关数据路径,不释放 ctx 的 CSE 缓存,长期运行会泄漏 Arrow 内存。
+            ctx.close();
         }
         analyzeRows(plan, null, rows, sink);
         return new QueryResult.Rows(buildRoot(rows));
