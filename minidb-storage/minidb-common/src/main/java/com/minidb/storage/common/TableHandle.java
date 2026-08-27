@@ -30,6 +30,14 @@ public interface TableHandle extends AutoCloseable {
         return scan();
     }
 
+    /**
+     * 事务快照读 + 自己的写入可见:txId 标识当前事务,其 tx-private 写入(含未提交)
+     * 必须对自身可见。默认回退 scan(snapshotTxId);LSMTable 覆写合并自有私有表。
+     */
+    default BatchIterator scan(long snapshotTxId, long txId) {
+        return scan(snapshotTxId);
+    }
+
     void writePart(VectorSchemaRoot batch, Operation op);
 
     /**

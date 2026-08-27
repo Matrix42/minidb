@@ -171,7 +171,9 @@ public class MiniDbScan extends TableScan implements MiniDbRel {
         // 快照读:事务中跳过 PointLookup/RangeBounds/indexLookup 优化,
         // 因为它们没有快照感知变体,直接用 snapshot scan 后再 applyPushdown 过滤/投影。
         if (ctx.inTransaction() && ctx.tx().snapshotTxId() >= 0) {
-            BatchIterator source = tableHandle.scan(ctx.tx().snapshotTxId());
+            // 传 txId:事务内的扫描必须同时看到「快照点之前的已提交数据」和「自己的
+            // 未提交写入」(读自己的写,ACID-C),否则 BEGIN 后 INSERT 再 SELECT 看不到新行。
+            BatchIterator source = tableHandle.scan(ctx.tx().snapshotTxId(), ctx.tx().txId());
             BatchIterator result = applyPushdown(source, ctx);
             // Serializable:记录读集(按 schema.table.column 粒度)
             recordReadSet(ctx, schemaName, tableName);
