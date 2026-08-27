@@ -3,7 +3,9 @@ package com.minidb.server.exec;
 import com.minidb.storage.common.ArrowTypes;
 import com.minidb.storage.common.ColumnMeta;
 import com.minidb.storage.common.ColumnType;
+import com.minidb.server.catalog.InformationSchemaCatalog;
 import com.minidb.server.catalog.MiniDbCatalog;
+import com.minidb.server.catalog.ViewDefinition;
 import com.minidb.storage.common.TableSchema;
 import java.sql.Types;
 import java.util.ArrayList;
@@ -55,30 +57,58 @@ public class MetadataExecutor {
     }
 
     public VectorSchemaRoot tables(String schemaPattern, String tableNamePattern, String[] types) {
-        if (!acceptsType(types)) {
-            return emptyRoot(tableFields());
-        }
         Pattern schemaLike = compileLike(schemaPattern);
         Pattern tableLike = compileLike(tableNamePattern);
         List<String> schemas = new ArrayList<>(catalog.schemaNames());
         schemas.sort(String::compareTo);
-        List<String[]> rows = new ArrayList<>(); // [schema, table]
+        List<String[]> rows = new ArrayList<>(); // [schema, table, type]
+        boolean includeTables = acceptsType(types, "TABLE");
+        boolean includeViews = acceptsType(types, "VIEW");
+        boolean includeSystem = acceptsType(types, "SYSTEM TABLE");
+
         for (String schema : schemas) {
             if (schemaLike != null && !schemaLike.matcher(schema).matches()) continue;
-            List<String> tableNames = new ArrayList<>(catalog.tableNames(schema));
-            tableNames.sort(String::compareTo);
-            for (String table : tableNames) {
-                if (tableLike != null && !tableLike.matcher(table).matches()) continue;
-                rows.add(new String[]{schema, table});
+            boolean isInfoSchema = InformationSchemaCatalog.SCHEMA_NAME.equals(schema);
+
+            if (includeTables && !isInfoSchema) {
+                List<String> tableNames = new ArrayList<>(catalog.tableNames(schema));
+                tableNames.sort(String::compareTo);
+                for (String table : tableNames) {
+                    if (tableLike != null && !tableLike.matcher(table).matches()) continue;
+                    rows.add(new String[]{schema, table, "TABLE"});
+                }
+            }
+
+            if (includeSystem && isInfoSchema) {
+                List<String> tableNames = new ArrayList<>(catalog.tableNames(schema));
+                tableNames.sort(String::compareTo);
+                for (String table : tableNames) {
+                    if (tableLike != null && !tableLike.matcher(table).matches()) continue;
+                    rows.add(new String[]{schema, table, "SYSTEM TABLE"});
+                }
+            }
+
+            if (includeViews && !isInfoSchema) {
+                List<ViewDefinition> viewList = catalog.views(schema);
+                List<String> viewNames = new ArrayList<>();
+                for (ViewDefinition v : viewList) {
+                    viewNames.add(v.name());
+                }
+                viewNames.sort(String::compareTo);
+                for (String view : viewNames) {
+                    if (tableLike != null && !tableLike.matcher(view).matches()) continue;
+                    rows.add(new String[]{schema, view, "VIEW"});
+                }
             }
         }
         return buildTablesRoot(rows);
     }
 
-    private boolean acceptsType(String[] types) {
+    /** 检查 types 数组是否包含指定类型名。null/空数组表示全部接受。 */
+    private boolean acceptsType(String[] types, String typeName) {
         if (types == null || types.length == 0) return true;
         for (String t : types) {
-            if (t != null && t.equalsIgnoreCase("TABLE")) return true;
+            if (t != null && t.equalsIgnoreCase(typeName)) return true;
         }
         return false;
     }
@@ -98,7 +128,7 @@ public class MetadataExecutor {
         for (int i = 0; i < n; i++) {
             schem.setSafe(i, rows.get(i)[0].getBytes(java.nio.charset.StandardCharsets.UTF_8));
             name.setSafe(i, rows.get(i)[1].getBytes(java.nio.charset.StandardCharsets.UTF_8));
-            type.setSafe(i, "TABLE".getBytes(java.nio.charset.StandardCharsets.UTF_8));
+            type.setSafe(i, rows.get(i)[2].getBytes(java.nio.charset.StandardCharsets.UTF_8));
         }
         for (VarCharVector v : new VarCharVector[]{cat, schem, name, type, remarks, typeCat, typeSchem, typeName, selfRef, refGen}) {
             v.setValueCount(n);

@@ -663,13 +663,15 @@ public class MiniDbDatabaseMetaData implements DatabaseMetaData {
 
     @Override
     public ResultSet getTableTypes() throws SQLException {
-        // MiniDB 只有基表(无视图/系统表类型区分),TABLE_TYPE 恒为 "TABLE"。
+        // MiniDB 支持基表、视图、系统表(information_schema)。
         MiniDbStatement stmt = (MiniDbStatement) connection.createStatement();
         VarCharVector tableType =
                 new VarCharVector("TABLE_TYPE", connection.client().allocator());
         tableType.allocateNew();
         tableType.setSafe(0, "TABLE".getBytes(StandardCharsets.UTF_8));
-        tableType.setValueCount(1);
+        tableType.setSafe(1, "VIEW".getBytes(StandardCharsets.UTF_8));
+        tableType.setSafe(2, "SYSTEM TABLE".getBytes(StandardCharsets.UTF_8));
+        tableType.setValueCount(3);
         return new MiniDbResultSet(stmt, VectorSchemaRoot.of(tableType));
     }
 

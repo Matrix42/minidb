@@ -67,6 +67,7 @@ class MetadataExecutorTest {
                 // 前 3 行系统表,后 2 行用户表:sorted by schema then table
                 assertEquals("columns", new String(name.get(0)));
                 assertEquals("information_schema", new String(schem.get(0)));
+                assertEquals("SYSTEM TABLE", new String(type.get(0)));
                 assertEquals("t", new String(name.get(3)));
                 assertEquals("other", new String(schem.get(3)));
                 assertEquals("TABLE", new String(type.get(3)));

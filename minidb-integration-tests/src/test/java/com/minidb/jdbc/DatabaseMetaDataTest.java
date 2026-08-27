@@ -58,7 +58,10 @@ class DatabaseMetaDataTest {
             try (ResultSet rs = md.getTables(null, null, null, null)) {
                 while (rs.next()) {
                     tables.add(rs.getString("TABLE_SCHEM") + "." + rs.getString("TABLE_NAME"));
-                    assertEquals("TABLE", rs.getString("TABLE_TYPE"));
+                    // 系统表为 SYSTEM TABLE,用户表为 TABLE
+                    String type = rs.getString("TABLE_TYPE");
+                    assertTrue("TABLE".equals(type) || "SYSTEM TABLE".equals(type),
+                            "unexpected TABLE_TYPE: " + type);
                 }
             }
             assertTrue(tables.contains("public.users"));
@@ -105,9 +108,14 @@ class DatabaseMetaDataTest {
         try (Connection c = DriverManager.getConnection(url)) {
             DatabaseMetaData md = c.getMetaData();
             try (ResultSet rs = md.getTableTypes()) {
-                assertTrue(rs.next());
-                assertEquals("TABLE", rs.getString("TABLE_TYPE"));
-                assertFalse(rs.next());
+                Set<String> types = new HashSet<>();
+                while (rs.next()) {
+                    types.add(rs.getString("TABLE_TYPE"));
+                }
+                assertEquals(3, types.size());
+                assertTrue(types.contains("TABLE"));
+                assertTrue(types.contains("VIEW"));
+                assertTrue(types.contains("SYSTEM TABLE"));
             }
         } finally {
             server.close();
