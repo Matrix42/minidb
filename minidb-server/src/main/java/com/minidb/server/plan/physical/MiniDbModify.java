@@ -189,6 +189,8 @@ public class MiniDbModify extends TableModify implements MiniDbRel {
                             }
                         }
                         out.setRowCount(batch.getRowCount());
+                        // 外键校验:UPDATE 的新值必须引用存在的父行(与 INSERT 同一套校验)。
+                        validateForeignKeys(ctx, target, out);
                         // UNIQUE 索引校验:新值不能与已有行冲突(排除本行,旧值仍存于索引表)
                         validateUpdateUnique(ctx, ts, target, batch, out);
                         // 事务写入:将 txId 传给存储层
@@ -467,6 +469,18 @@ public class MiniDbModify extends TableModify implements MiniDbRel {
                 throw e;
             }
         }
+        // UPDATE:校验更新后的外键值仍引用存在的父行(SimpleTable 路径)。
+        if (getOperation() == Operation.UPDATE && !target.schema().foreignKeys().isEmpty()) {
+            VectorSchemaRoot updated = updatedRowsRoot(target, matched, numTableCols, updateCols);
+            try {
+                validateForeignKeys(ctx, target, updated);
+            } catch (RuntimeException e) {
+                updated.close();
+                matched.close();
+                throw e;
+            }
+            updated.close();
+        }
         // One representative matched row per original full-row value: identical
         // original rows always produce identical updated rows.
         Map<List<Object>, Integer> matchRow = new HashMap<>();
@@ -555,5 +569,33 @@ public class MiniDbModify extends TableModify implements MiniDbRel {
             key.add(root.getVector(j).getObject(row));
         }
         return key;
+    }
+
+    /**
+     * 把 UPDATE 的输入批([表列] + [更新值])物化成「更新后的全表行」批,供外键校验复用
+     * 与 INSERT 相同的 {@link #validateForeignKeys} 逻辑。matched 的每行对应一个被更新行。
+     */
+    private VectorSchemaRoot updatedRowsRoot(SimpleTable target, VectorSchemaRoot matched,
+                                             int numTableCols, List<String> updateCols) {
+        List<Integer> updateIdx = new ArrayList<>(updateCols.size());
+        for (String col : updateCols) {
+            updateIdx.add(target.schema().columnIndex(col));
+        }
+        int rows = matched.getRowCount();
+        VectorSchemaRoot out = target.newBatchRoot();
+        out.allocateNew();
+        for (int i = 0; i < rows; i++) {
+            for (int c = 0; c < numTableCols; c++) {
+                out.getFieldVectors().get(c)
+                        .copyFromSafe(i, i, matched.getFieldVectors().get(c));
+            }
+            for (int j = 0; j < updateCols.size(); j++) {
+                RowCopier.writeValue(
+                        out.getFieldVectors().get(updateIdx.get(j)), i,
+                        matched.getFieldVectors().get(numTableCols + j), i);
+            }
+        }
+        out.setRowCount(rows);
+        return out;
     }
 }
