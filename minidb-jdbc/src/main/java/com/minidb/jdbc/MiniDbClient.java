@@ -206,6 +206,39 @@ public class MiniDbClient implements AutoCloseable {
         }
     }
 
+    /** 分配一个新的请求 ID，供事务控制消息使用。 */
+    public long nextRequestId() {
+        return nextRequestId.getAndIncrement();
+    }
+
+    /**
+     * 发送事务控制消息（Begin/Commit/Rollback/SetAutoCommit）并同步等待响应。
+     * @param requestId 消息的请求 ID，需与 msg 内嵌的 requestId 一致
+     * @param msg 事务控制消息
+     */
+    public void sendAndWait(long requestId, Message msg) throws SQLException {
+        if (!connected) {
+            throw new SQLException("connection is closed");
+        }
+        CompletableFuture<ClientResult> fut = new CompletableFuture<>();
+        pending.put(requestId, fut);
+        if (!connected) {
+            pending.remove(requestId, fut);
+            throw new SQLException("connection is closed");
+        }
+        try {
+            channel.writeAndFlush(msg).sync();
+        } catch (Exception e) {
+            pending.remove(requestId, fut);
+            throw new SQLException("failed to send request", e);
+        }
+        try {
+            await(fut);
+        } finally {
+            pending.remove(requestId, fut);
+        }
+    }
+
     public VectorSchemaRoot schemas(String schemaPattern) throws SQLException {
         return sendMetadata(new Message.SchemasRequest(allocateRequestId(), schemaPattern));
     }
@@ -371,6 +404,18 @@ public class MiniDbClient implements AutoCloseable {
         protected void channelRead0(ChannelHandlerContext ctx, Message msg) {
             if (msg instanceof Message.HandshakeAck) {
                 handshake.complete(null);
+                return;
+            }
+            if (msg instanceof Message.CommitResponse r) {
+                CompletableFuture<ClientResult> f = pending.remove(r.requestId());
+                if (f == null) {
+                    return;
+                }
+                if (r.ok()) {
+                    f.complete(new ClientResult.Update(0));
+                } else {
+                    f.completeExceptionally(new SQLException(r.error()));
+                }
                 return;
             }
             if (msg instanceof Message.ExecuteResponse r) {

@@ -1,5 +1,6 @@
 package com.minidb.jdbc;
 
+import com.minidb.protocol.Message;
 import java.sql.Array;
 import java.sql.Blob;
 import java.sql.CallableStatement;
@@ -25,6 +26,8 @@ public class MiniDbConnection implements Connection {
     private final MiniDbClient client;
     private final String url;
     private boolean closed;
+    private int transactionIsolation = Connection.TRANSACTION_SERIALIZABLE;
+    private boolean autoCommit = true;
 
     public MiniDbConnection(MiniDbClient client, String url) {
         this.client = client;
@@ -65,20 +68,38 @@ public class MiniDbConnection implements Connection {
 
     @Override
     public boolean getAutoCommit() {
-        return true;
+        return autoCommit;
     }
 
     @Override
-    public void setAutoCommit(boolean autoCommit) {
-        // always true, no-op
+    public void setAutoCommit(boolean autoCommit) throws SQLException {
+        checkClosed();
+        if (this.autoCommit == autoCommit) {
+            return;
+        }
+        long id = client.nextRequestId();
+        client.sendAndWait(id, new Message.SetAutoCommitRequest(id, autoCommit));
+        this.autoCommit = autoCommit;
     }
 
     @Override
-    public void commit() {
+    public void commit() throws SQLException {
+        checkClosed();
+        if (autoCommit) {
+            return;
+        }
+        long id = client.nextRequestId();
+        client.sendAndWait(id, new Message.CommitRequest(id));
     }
 
     @Override
-    public void rollback() {
+    public void rollback() throws SQLException {
+        checkClosed();
+        if (autoCommit) {
+            return;
+        }
+        long id = client.nextRequestId();
+        client.sendAndWait(id, new Message.RollbackRequest(id));
     }
 
     @Override
@@ -127,11 +148,12 @@ public class MiniDbConnection implements Connection {
 
     @Override
     public void setTransactionIsolation(int level) {
+        this.transactionIsolation = level;
     }
 
     @Override
     public int getTransactionIsolation() {
-        return Connection.TRANSACTION_NONE;
+        return transactionIsolation;
     }
 
     @Override

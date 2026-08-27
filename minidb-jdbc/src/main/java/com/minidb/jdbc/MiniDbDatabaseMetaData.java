@@ -77,7 +77,7 @@ public class MiniDbDatabaseMetaData implements DatabaseMetaData {
 
     @Override
     public boolean supportsTransactions() {
-        return false;
+        return true;
     }
 
     @Override
@@ -289,7 +289,7 @@ public class MiniDbDatabaseMetaData implements DatabaseMetaData {
 
     @Override
     public boolean supportsMultipleTransactions() {
-        return false;
+        return true;
     }
 
     @Override
@@ -604,12 +604,15 @@ public class MiniDbDatabaseMetaData implements DatabaseMetaData {
 
     @Override
     public int getDefaultTransactionIsolation() {
-        return Connection.TRANSACTION_NONE;
+        return Connection.TRANSACTION_SERIALIZABLE;
     }
 
     @Override
     public boolean supportsTransactionIsolationLevel(int level) {
-        return level == Connection.TRANSACTION_NONE;
+        return level == Connection.TRANSACTION_READ_UNCOMMITTED
+            || level == Connection.TRANSACTION_READ_COMMITTED
+            || level == Connection.TRANSACTION_REPEATABLE_READ
+            || level == Connection.TRANSACTION_SERIALIZABLE;
     }
 
     @Override
