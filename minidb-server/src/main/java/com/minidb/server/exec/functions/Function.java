@@ -46,10 +46,16 @@ public final class Function {
         out.setValueCount(rows);
         try {
             matched.kernel().execute(args, out);
-        } finally {
+        } catch (RuntimeException e) {
+            // kernel 抛异常(如除零)时,args 与已分配的 out 都要释放,否则查询失败泄漏 Arrow 内存。
             for (ValueVector a : args) {
                 a.close();
             }
+            out.close();
+            throw e;
+        }
+        for (ValueVector a : args) {
+            a.close();
         }
         return out;
     }
