@@ -31,6 +31,8 @@ public class MiniDbConnection implements Connection {
     // 连带关闭其创建的所有 Statement(及其 ResultSet)。并发关闭遍历需线程安全。
     private final Set<Statement> openStatements = ConcurrentHashMap.newKeySet();
     private boolean closed;
+    // 当前 schema(JDBC 语义);默认 public。setSchema/getSchema 与服务端 USE SCHEMA 对接。
+    private String currentSchema = "public";
     private int transactionIsolation = Connection.TRANSACTION_SERIALIZABLE;
     private boolean autoCommit = true;
 
@@ -332,12 +334,24 @@ public class MiniDbConnection implements Connection {
     }
 
     @Override
-    public void setSchema(String schema) {
+    public void setSchema(String schema) throws SQLException {
+        checkClosed();
+        if (schema == null) {
+            throw new SQLException("schema must not be null");
+        }
+        // 服务端由 USE SCHEMA 负责校验存在性并切换此连接的 currentSchema。
+        // MiniDB 的 schema 名是简单标识符(服务端统一 lowercase 解析),直接透传裸名,
+        // 不加引号(服务端 USE SCHEMA 处理器不剥离引号)。执行成功才记录本地 schema。
+        try (Statement stmt = createStatement()) {
+            stmt.execute("USE SCHEMA " + schema);
+        }
+        this.currentSchema = schema;
     }
 
     @Override
-    public String getSchema() {
-        return null;
+    public String getSchema() throws SQLException {
+        checkClosed();
+        return currentSchema;
     }
 
     @Override
