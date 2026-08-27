@@ -54,6 +54,11 @@ public class SessionHandler extends SimpleChannelInboundHandler<Message> {
     private boolean autoCommit = true;
 
     public SessionHandler(QueryExecutor executor, MetadataExecutor metadata,
+                         ExecutorService queryPool) {
+        this(executor, metadata, queryPool, null);
+    }
+
+    public SessionHandler(QueryExecutor executor, MetadataExecutor metadata,
                          ExecutorService queryPool, TransactionManager txManager) {
         this.executor = executor;
         this.metadata = metadata;
@@ -103,7 +108,7 @@ public class SessionHandler extends SimpleChannelInboundHandler<Message> {
         String schema = currentSchema;
         TxHandle currentTx = tx;
         // 事务内刷新 READ_COMMITTED 快照(每语句执行前)
-        if (currentTx != null && currentTx.status() == TxStatus.ACTIVE
+        if (txManager != null && currentTx != null && currentTx.status() == TxStatus.ACTIVE
                 && txManager.isolationLevel() == TransactionIsolation.READ_COMMITTED) {
             currentTx.refreshSnapshot(txManager.latestCommittedTxId());
         }
@@ -375,7 +380,7 @@ public class SessionHandler extends SimpleChannelInboundHandler<Message> {
     @Override
     public void channelInactive(ChannelHandlerContext ctx) throws Exception {
         // 连接断开:自动 rollback 活跃事务
-        if (tx != null && tx.status() == TxStatus.ACTIVE) {
+        if (txManager != null && tx != null && tx.status() == TxStatus.ACTIVE) {
             try {
                 long txId = tx.txId();
                 txManager.rollback(txId);
