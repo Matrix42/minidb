@@ -49,8 +49,8 @@ public class SessionHandler extends SimpleChannelInboundHandler<Message> {
     private final Map<Long, Paginator> cursors = new HashMap<>();
     /** 未完成的查询 Future,用于 channelInactive 时 cancel(true) 中断线程。 */
     private final Set<Future<?>> outstanding = ConcurrentHashMap.newKeySet();
-    /** 当前活跃事务,仅事件循环线程访问。 */
-    private TxHandle tx;
+    /** 当前活跃事务,仅事件循环线程访问(commit/rollback 在 worker 线程写,需 volatile 保证可见)。 */
+    private volatile TxHandle tx;
     private boolean autoCommit = true;
 
     public SessionHandler(QueryExecutor executor, MetadataExecutor metadata,
@@ -141,6 +141,10 @@ public class SessionHandler extends SimpleChannelInboundHandler<Message> {
             ctx.writeAndFlush(Message.CommitResponse.error(-1, "transaction already in progress"));
             return;
         }
+        if (txManager == null) {
+            ctx.writeAndFlush(Message.CommitResponse.error(-1, "transactions disabled"));
+            return;
+        }
         tx = txManager.begin();
         ctx.writeAndFlush(Message.CommitResponse.ok(0));
     }
@@ -151,7 +155,7 @@ public class SessionHandler extends SimpleChannelInboundHandler<Message> {
             return;
         }
         long txId = tx.txId();
-        queryPool.submit(() -> {
+        Future<?> future = queryPool.submit(() -> {
             try {
                 // 1. 事务管理器 commit（写全局日志 + 冲突检测）
                 txManager.commit(txId);
@@ -163,8 +167,9 @@ public class SessionHandler extends SimpleChannelInboundHandler<Message> {
                         ctx.writeAndFlush(Message.CommitResponse.ok(req.requestId())));
                 tx = null;
             } catch (Exception e) {
-                txManager.rollback(txId);
-                // 各表 rollbackTx
+                // commit 一旦失败,状态可能已是 COMMITTED(全局日志已写);此时不能再调
+                // txManager.rollback(会因状态非 ACTIVE 而抛 IllegalStateException,掩盖原始异常)。
+                // 只尽力清理各表资源,并把原始错误回给客户端。
                 for (var table : executor.storage().allTableHandles()) {
                     try {
                         table.rollbackTx(txId);
@@ -177,6 +182,7 @@ public class SessionHandler extends SimpleChannelInboundHandler<Message> {
                         ctx.writeAndFlush(Message.CommitResponse.error(req.requestId(), e.getMessage())));
             }
         });
+        outstanding.add(future);
     }
 
     private void handleRollback(ChannelHandlerContext ctx, Message.RollbackRequest req) {
@@ -185,7 +191,7 @@ public class SessionHandler extends SimpleChannelInboundHandler<Message> {
             return;
         }
         long txId = tx.txId();
-        queryPool.submit(() -> {
+        Future<?> future = queryPool.submit(() -> {
             try {
                 txManager.rollback(txId);
                 // 各表 rollbackTx
@@ -201,6 +207,7 @@ public class SessionHandler extends SimpleChannelInboundHandler<Message> {
                         ctx.writeAndFlush(Message.CommitResponse.error(req.requestId(), e.getMessage())));
             }
         });
+        outstanding.add(future);
     }
 
     private void handleSetAutoCommit(ChannelHandlerContext ctx, Message.SetAutoCommitRequest req) {
@@ -209,20 +216,28 @@ public class SessionHandler extends SimpleChannelInboundHandler<Message> {
             return;
         }
         if (req.autoCommit()) {
-            // false → true：若在事务中，隐式提交
+            // false → true：若在事务中，隐式提交——走异步路径,与 handleCommit 一致,
+            // 避免表多/commit 慢时阻塞 Netty 事件循环。
             if (tx != null && tx.status() == TxStatus.ACTIVE) {
-                try {
-                    long txId = tx.txId();
-                    txManager.commit(txId);
-                    for (var table : executor.storage().allTableHandles()) {
-                        table.commitTx(txId);
+                long txId = tx.txId();
+                Future<?> future = queryPool.submit(() -> {
+                    try {
+                        txManager.commit(txId);
+                        for (var table : executor.storage().allTableHandles()) {
+                            table.commitTx(txId);
+                        }
+                        ctx.executor().execute(() ->
+                                ctx.writeAndFlush(Message.CommitResponse.ok(req.requestId())));
+                        tx = null;
+                    } catch (Exception e) {
+                        tx = null;
+                        ctx.executor().execute(() ->
+                                ctx.writeAndFlush(Message.CommitResponse.error(req.requestId(), e.getMessage())));
                     }
-                    tx = null;
-                } catch (Exception e) {
-                    tx = null;
-                    ctx.writeAndFlush(Message.CommitResponse.error(req.requestId(), e.getMessage()));
-                    return;
-                }
+                });
+                outstanding.add(future);
+                this.autoCommit = req.autoCommit();
+                return;
             }
         } else {
             // true → false：隐式 begin
