@@ -98,6 +98,9 @@ public class TransactionManager {
 
             // 清理
             accessSets.remove(txId);
+            // 事务句柄不再被任何后续路径引用(recordRead/recordWrite 仅在 ACTIVE 期调用),
+            // 移除避免长期运行累积泄漏;txStatuses 保留 COMMITTED 供 latestCommittedTxId 用。
+            txHandles.remove(txId);
             activeTxCount.decrementAndGet();
 
             // 截断检查（随锁串行化，避免与 append/decrement 交错）
@@ -124,6 +127,8 @@ public class TransactionManager {
 
         handle.markAborted();
         txStatuses.put(txId, TxStatus.ABORTED);
+        // 移除事务句柄(见 commit 的同类注释);txStatuses 保留 ABORTED 供 statusOf 用。
+        txHandles.remove(txId);
         truncateLock.lock();
         try {
             activeTxCount.decrementAndGet();
