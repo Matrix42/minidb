@@ -24,6 +24,7 @@ import com.minidb.server.plan.physical.MiniDbRel;
 import com.minidb.server.plan.Planner;
 import com.minidb.server.storage.StorageManager;
 import com.minidb.server.stats.StatsManager;
+import com.minidb.server.transaction.TxHandle;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Locale;
@@ -104,6 +105,23 @@ public class QueryExecutor {
 
     public QueryResult executeCursor(String sql) {
         return executeCursor(sql, MiniDbCatalog.DEFAULT_SCHEMA);
+    }
+
+    /** Like {@link #executeCursor(String, String)}, but runs inside a transaction. */
+    public QueryResult executeCursor(String sql, String currentSchema, TxHandle tx) {
+        String trimmed = sql.strip();
+        // ① 命令:ANALYZE/EXPLAIN/USE SCHEMA,Calcite 不解析,parse 前前缀拦截。
+        QueryResult command = tryHandleCommand(trimmed, currentSchema);
+        if (command != null) {
+            return command;
+        }
+        SqlNode parsed = calcite.parse(trimmed);
+        // ② DDL:CREATE/DROP/TRUNCATE,统一挂在 SqlDdl 基类下。
+        if (parsed instanceof SqlDdl ddl) {
+            return handleDdl(ddl, currentSchema);
+        }
+        // ③ DQL/DML:SELECT/INSERT/UPDATE/DELETE — 走事务感知路径。
+        return executeQuery(trimmed, currentSchema, tx);
     }
 
     /** 命令:Calcite 不解析(ANALYZE/EXPLAIN/USE SCHEMA),parse 前前缀拦截;非命令返回 null。 */
@@ -187,8 +205,13 @@ public class QueryExecutor {
 
     /** DQL/DML:SELECT/INSERT/UPDATE/DELETE,走 planner 规划 + 执行。 */
     private QueryResult executeQuery(String sql, String currentSchema) {
+        return executeQuery(sql, currentSchema, null);
+    }
+
+    /** DQL/DML with transaction handle — used when running inside a transaction. */
+    private QueryResult executeQuery(String sql, String currentSchema, TxHandle tx) {
         RelNode plan = planner.plan(sql, currentSchema);
-        ExecContext ctx = new ExecContext(storage, allocator, currentSchema);
+        ExecContext ctx = new ExecContext(storage, allocator, currentSchema, tx);
         if (plan instanceof MiniDbModify modify) {
             try (BatchIterator it = modify.execute(ctx)) {
                 while (it.hasNext()) {

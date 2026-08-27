@@ -1,6 +1,7 @@
 package com.minidb.server.exec;
 
 import com.minidb.server.catalog.MiniDbCatalog;
+import com.minidb.server.transaction.TxHandle;
 import com.minidb.storage.common.TableHandle;
 import com.minidb.server.storage.StorageManager;
 import java.util.ArrayList;
@@ -16,6 +17,8 @@ public class ExecContext {
     private final BufferAllocator allocator;
     private final RexInterpreter interpreter;
     private final String currentSchema;
+    // Transaction handle; null when the query runs outside a transaction (auto-commit).
+    private final TxHandle tx;
     // Transient tables for recursive CTE (WITH RECURSIVE). Keyed by the CTE
     // name; MiniDbRepeatUnion registers the current working rows here and the
     // recursive body's scan reads them back. Per-query, so a plain HashMap
@@ -26,13 +29,20 @@ public class ExecContext {
     private final Map<String, List<VectorSchemaRoot>> cseCache = new HashMap<>();
 
     public ExecContext(StorageManager storage, BufferAllocator allocator) {
-        this(storage, allocator, MiniDbCatalog.DEFAULT_SCHEMA);
+        this(storage, allocator, MiniDbCatalog.DEFAULT_SCHEMA, null);
     }
 
     public ExecContext(StorageManager storage, BufferAllocator allocator, String currentSchema) {
+        this(storage, allocator, currentSchema, null);
+    }
+
+    /** Construct an execution context with a transaction handle. */
+    public ExecContext(StorageManager storage, BufferAllocator allocator,
+                       String currentSchema, TxHandle tx) {
         this.storage = storage;
         this.allocator = allocator;
         this.currentSchema = currentSchema;
+        this.tx = tx;
         this.interpreter = new RexInterpreter(allocator);
     }
 
@@ -50,6 +60,16 @@ public class ExecContext {
 
     public String currentSchema() {
         return currentSchema;
+    }
+
+    /** Transaction handle, or null when running outside a transaction (auto-commit). */
+    public TxHandle tx() {
+        return tx;
+    }
+
+    /** Whether this execution context is running inside a transaction. */
+    public boolean inTransaction() {
+        return tx != null;
     }
 
     /**
