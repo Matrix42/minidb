@@ -29,6 +29,7 @@ import com.minidb.server.stats.StatsManager;
 import com.minidb.server.transaction.TxHandle;
 import java.util.ArrayList;
 import java.util.List;
+import java.util.Set;
 import java.util.Locale;
 import java.util.Map;
 import org.apache.arrow.memory.BufferAllocator;
@@ -81,6 +82,8 @@ public class QueryExecutor {
         this.calcite = new CalciteContext(catalog);
         this.mvManager = new MVManager(catalog, storage, allocator, planner);
     }
+
+    public MVManager mvManager() { return mvManager; }
 
     public StorageManager storage() {
         return storage;

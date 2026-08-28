@@ -30,6 +30,8 @@ public class MVManager {
         this.planner = planner;
     }
 
+    public IncrementalRefreshEngine refreshEngine() { return new IncrementalRefreshEngine(storage, allocator, planner); }
+
     public Set<String> getDependentMVs(String schemaName, String tableName) {
         return catalog.getDependentMVs(schemaName, tableName);
     }

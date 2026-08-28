@@ -6,12 +6,15 @@ import com.minidb.server.catalog.MiniDbCatalog;
 import com.minidb.server.exec.CursorHandle;
 import com.minidb.server.exec.MetadataExecutor;
 import com.minidb.server.exec.Paginator;
+import com.minidb.server.exec.IncrementalRefreshEngine;
+import com.minidb.server.exec.MVManager;
 import com.minidb.server.exec.QueryExecutor;
 import com.minidb.server.exec.QueryResult;
 import com.minidb.server.transaction.TransactionIsolation;
 import com.minidb.server.transaction.TransactionManager;
 import com.minidb.server.transaction.TxHandle;
 import com.minidb.server.transaction.TxStatus;
+import com.minidb.storage.common.MVDefinition;
 import io.netty.buffer.ByteBuf;
 import io.netty.channel.ChannelHandlerContext;
 import io.netty.channel.SimpleChannelInboundHandler;
@@ -248,6 +251,35 @@ public class SessionHandler extends SimpleChannelInboundHandler<Message> {
     }
 
     /** 在事件循环线程处理查询结果。 */
+    // ---- 物化视图增量刷新辅助 ----
+
+    private void refreshPendingMVs() {
+        if (tx == null || !tx.hasPendingMVRefresh()) return;
+        IncrementalRefreshEngine engine = executor.mvManager().refreshEngine();
+        for (TxHandle.MVDirtyEntry entry : tx.drainPendingMVRefresh()) {
+            try {
+                MVDefinition mvDef = executor.storage().catalog()
+                        .getMaterializedView(entry.mvSchemaName(), entry.mvName());
+                if (mvDef != null) {
+                    engine.refresh(mvDef, entry.delta(), entry.operation());
+                }
+            } catch (Exception e) {
+                LOG.warn("MV incremental refresh failed: {}.{}",
+                        entry.mvSchemaName(), entry.mvName(), e);
+            } finally {
+                try { entry.delta().close(); } catch (Exception ignored) { }
+            }
+        }
+    }
+
+    private void drainPendingMVRefresh() {
+        if (tx == null || !tx.hasPendingMVRefresh()) return;
+        for (TxHandle.MVDirtyEntry entry : tx.drainPendingMVRefresh()) {
+            try { entry.delta().close(); } catch (Exception ignored) { }
+        }
+    }
+
+
     private void handleResult(ChannelHandlerContext ctx, Message.ExecuteRequest req,
                               QueryResult result, long start) {
         long elapsedMs = (System.nanoTime() - start) / 1_000_000;
