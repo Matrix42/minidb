@@ -1,6 +1,7 @@
 package com.minidb.server.exec;
 
 import com.minidb.server.catalog.MiniDbCatalog;
+import com.minidb.server.exec.MVManager;
 import com.minidb.server.transaction.TxHandle;
 import com.minidb.storage.common.TableHandle;
 import com.minidb.server.storage.StorageManager;
@@ -26,22 +27,31 @@ public class ExecContext {
 
     // CSE 缓存:key 为子树 digest,value 为物化后的批列表
     private final Map<String, List<VectorSchemaRoot>> cseCache = new HashMap<>();
+    // 物化视图管理器（可为 null，仅 DML 路径需要）
+    private final MVManager mvManager;
 
     public ExecContext(StorageManager storage, BufferAllocator allocator) {
-        this(storage, allocator, MiniDbCatalog.DEFAULT_SCHEMA, null);
+        this(storage, allocator, MiniDbCatalog.DEFAULT_SCHEMA, null, null);
     }
 
     public ExecContext(StorageManager storage, BufferAllocator allocator, String currentSchema) {
-        this(storage, allocator, currentSchema, null);
+        this(storage, allocator, currentSchema, null, null);
     }
 
     /** Construct an execution context with a transaction handle. */
     public ExecContext(StorageManager storage, BufferAllocator allocator,
                        String currentSchema, TxHandle tx) {
+        this(storage, allocator, currentSchema, tx, null);
+    }
+
+    /** Full constructor with optional MV manager. */
+    public ExecContext(StorageManager storage, BufferAllocator allocator,
+                       String currentSchema, TxHandle tx, MVManager mvManager) {
         this.storage = storage;
         this.allocator = allocator;
         this.currentSchema = currentSchema;
         this.tx = tx;
+        this.mvManager = mvManager;
         this.interpreter = new RexInterpreter(allocator);
     }
 
@@ -69,6 +79,11 @@ public class ExecContext {
     /** Whether this execution context is running inside a transaction. */
     public boolean inTransaction() {
         return tx != null;
+    }
+
+    /** MV manager, or null when not available. */
+    public MVManager mvManager() {
+        return mvManager;
     }
 
     /**

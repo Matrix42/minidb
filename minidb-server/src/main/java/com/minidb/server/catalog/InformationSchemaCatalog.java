@@ -18,7 +18,7 @@ public final class InformationSchemaCatalog {
     }
 
     public static List<TableSchema> tables() {
-        return List.of(schemataSchema(), tablesSchema(), columnsSchema());
+        return List.of(schemataSchema(), tablesSchema(), columnsSchema(), materializedViewsSchema());
     }
 
     public static TableSchema schemataSchema() {
@@ -50,5 +50,15 @@ public final class InformationSchemaCatalog {
                 new ColumnMeta("DATA_TYPE", ColumnType.VARCHAR),
                 new ColumnMeta("NUMERIC_PRECISION", ColumnType.INTEGER),
                 new ColumnMeta("NUMERIC_SCALE", ColumnType.INTEGER)));
+    }
+
+    public static TableSchema materializedViewsSchema() {
+        return new TableSchema(SCHEMA_NAME, "materialized_views", List.of(
+                new ColumnMeta("MV_CATALOG", ColumnType.VARCHAR),
+                new ColumnMeta("MV_SCHEMA", ColumnType.VARCHAR),
+                new ColumnMeta("MV_NAME", ColumnType.VARCHAR),
+                new ColumnMeta("DEFINITION", ColumnType.VARCHAR),
+                new ColumnMeta("DEPENDENCIES", ColumnType.VARCHAR),
+                new ColumnMeta("IS_STALE", ColumnType.VARCHAR)));
     }
 }

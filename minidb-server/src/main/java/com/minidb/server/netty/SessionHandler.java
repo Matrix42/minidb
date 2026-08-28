@@ -166,6 +166,8 @@ public class SessionHandler extends SimpleChannelInboundHandler<Message> {
                 for (var table : executor.storage().allTableHandles()) {
                     table.commitTx(txId);
                 }
+                // 3. 增量刷新物化视图（事务已提交，数据可见）
+                refreshPendingMVs();
                 ctx.executor().execute(() ->
                         ctx.writeAndFlush(Message.CommitResponse.ok(req.requestId())));
                 tx = null;
@@ -201,6 +203,8 @@ public class SessionHandler extends SimpleChannelInboundHandler<Message> {
                 for (var table : executor.storage().allTableHandles()) {
                     table.rollbackTx(txId);
                 }
+                // 释放 pending MV refresh delta 数据
+                drainPendingMVRefresh();
                 ctx.executor().execute(() ->
                         ctx.writeAndFlush(Message.CommitResponse.ok(req.requestId())));
                 tx = null;

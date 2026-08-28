@@ -47,11 +47,11 @@ class InformationSchemaQueryTest {
         executor.execute("CREATE TABLE public.t (id INT, price DECIMAL(10,2))");
         QueryResult select = executor.execute("SELECT * FROM information_schema.tables");
         VectorSchemaRoot root = ((QueryResult.Rows) select).data();
-        // information_schema 自身 3 张系统表 + public.t
-        assertEquals(4, root.getRowCount());
+        // information_schema 自身 4 张系统表 + public.t
+        assertEquals(5, root.getRowCount());
         VarCharVector tableName = (VarCharVector) root.getVector("TABLE_NAME");
         // public 是最后的 schema,t 是最后一行
-        assertEquals("t", new String(tableName.get(3)));
+        assertEquals("t", new String(tableName.get(4)));
         root.close();
     }
 

@@ -266,7 +266,7 @@ public class QueryExecutor {
     /** DQL/DML with transaction handle — used when running inside a transaction. */
     private QueryResult executeQuery(String sql, String currentSchema, TxHandle tx) {
         RelNode plan = planner.plan(sql, currentSchema);
-        ExecContext ctx = new ExecContext(storage, allocator, currentSchema, tx);
+        ExecContext ctx = new ExecContext(storage, allocator, currentSchema, tx, mvManager);
         if (plan instanceof MiniDbModify modify) {
             try (BatchIterator it = modify.execute(ctx)) {
                 while (it.hasNext()) {
@@ -558,6 +558,13 @@ public class QueryExecutor {
                 return new QueryResult.Update(0);
             }
             throw new IllegalArgumentException("table not found: " + tableName);
+        }
+        // 检查物化视图依赖：有 MV 依赖此表则拒绝 DROP
+        Set<String> dependents = catalog.getDependentMVs(schemaName, tableName);
+        if (!dependents.isEmpty()) {
+            throw new IllegalArgumentException(
+                    "cannot drop table " + tableName + ": materialized views depend on it: "
+                            + dependents);
         }
         storage.dropTable(schemaName, tableName);
         return new QueryResult.Update(0);

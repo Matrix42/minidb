@@ -122,8 +122,7 @@ class MaterializedViewTest {
         executor.execute("CREATE MATERIALIZED VIEW mv AS SELECT id FROM t");
 
         // DROP TABLE 应该拒绝（有 MV 依赖）
-        // 注：当前未实现 DDL 守卫，先跳过
-        // assertThrows(IllegalArgumentException.class, () -> executor.execute("DROP TABLE t"));
+        assertThrows(IllegalArgumentException.class, () -> executor.execute("DROP TABLE t"));
     }
 
     @Test

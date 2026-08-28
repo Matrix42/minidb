@@ -56,17 +56,17 @@ class InformationSchemaTest {
     void materializeTables() {
         MiniDbCatalog catalog = catalog();
         VectorSchemaRoot root = InformationSchema.materialize(catalog, "tables", allocator);
-        // information_schema 自身 3 张系统表 + other.u + public.t
-        assertEquals(5, root.getRowCount());
+        // information_schema 自身 4 张系统表 + other.u + public.t
+        assertEquals(6, root.getRowCount());
         VarCharVector tableSchema = (VarCharVector) root.getVector("TABLE_SCHEMA");
         VarCharVector tableName = (VarCharVector) root.getVector("TABLE_NAME");
-        // 前 3 行是系统表(columns/schemata/tables),后 2 行是用户表
+        // 前 4 行是系统表(columns/materialized_views/schemata/tables),后 2 行是用户表
         assertEquals("information_schema", new String(tableSchema.get(0)));
         assertEquals("columns", new String(tableName.get(0)));
-        assertEquals("other", new String(tableSchema.get(3)));
-        assertEquals("u", new String(tableName.get(3)));
-        assertEquals("public", new String(tableSchema.get(4)));
-        assertEquals("t", new String(tableName.get(4)));
+        assertEquals("other", new String(tableSchema.get(4)));
+        assertEquals("u", new String(tableName.get(4)));
+        assertEquals("public", new String(tableSchema.get(5)));
+        assertEquals("t", new String(tableName.get(5)));
         root.close();
     }
 
@@ -74,8 +74,8 @@ class InformationSchemaTest {
     void materializeColumns() {
         MiniDbCatalog catalog = catalog();
         VectorSchemaRoot root = InformationSchema.materialize(catalog, "columns", allocator);
-        // 系统表 7+4+8=19 列 + other.u.name + public.t.id + public.t.price = 22 列
-        assertEquals(22, root.getRowCount());
+        // 系统表 7+4+8+6=25 列 + other.u.name + public.t.id + public.t.price = 28 列
+        assertEquals(28, root.getRowCount());
         VarCharVector columnName = (VarCharVector) root.getVector("COLUMN_NAME");
         IntVector ordinal = (IntVector) root.getVector("ORDINAL_POSITION");
         IntVector precision = (IntVector) root.getVector("NUMERIC_PRECISION");

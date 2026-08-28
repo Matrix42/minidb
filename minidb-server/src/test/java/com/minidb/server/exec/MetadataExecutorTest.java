@@ -59,20 +59,20 @@ class MetadataExecutorTest {
                     java.util.List.of(new com.minidb.storage.common.ColumnMeta("a", com.minidb.storage.common.ColumnType.BIGINT))));
             MetadataExecutor exec = new MetadataExecutor(cat, alloc);
             try (VectorSchemaRoot root = exec.tables(null, null, null)) {
-                // information_schema(3 张系统表) + other/t + public/users
-                assertEquals(5, root.getRowCount());
+                // information_schema(4 张系统表) + other/t + public/users
+                assertEquals(6, root.getRowCount());
                 VarCharVector name = (VarCharVector) root.getVector("TABLE_NAME");
                 VarCharVector schem = (VarCharVector) root.getVector("TABLE_SCHEM");
                 VarCharVector type = (VarCharVector) root.getVector("TABLE_TYPE");
-                // 前 3 行系统表,后 2 行用户表:sorted by schema then table
+                // 前 4 行系统表(columns/materialized_views/schemata/tables),后 2 行用户表
                 assertEquals("columns", new String(name.get(0)));
                 assertEquals("information_schema", new String(schem.get(0)));
                 assertEquals("SYSTEM TABLE", new String(type.get(0)));
-                assertEquals("t", new String(name.get(3)));
-                assertEquals("other", new String(schem.get(3)));
-                assertEquals("TABLE", new String(type.get(3)));
-                assertEquals("users", new String(name.get(4)));
-                assertEquals("public", new String(schem.get(4)));
+                assertEquals("t", new String(name.get(4)));
+                assertEquals("other", new String(schem.get(4)));
+                assertEquals("TABLE", new String(type.get(4)));
+                assertEquals("users", new String(name.get(5)));
+                assertEquals("public", new String(schem.get(5)));
             }
         }
     }
@@ -205,7 +205,7 @@ class MetadataExecutorTest {
             MiniDbCatalog cat = new MiniDbCatalog();
             MetadataExecutor exec = new MetadataExecutor(cat, alloc);
             try (VectorSchemaRoot root = exec.tables("information\\_schema", null, null)) {
-                assertEquals(3, root.getRowCount()); // schemata/tables/columns
+                assertEquals(4, root.getRowCount()); // schemata/tables/columns/materialized_views
                 VarCharVector name = (VarCharVector) root.getVector("TABLE_NAME");
                 assertEquals("columns", new String(name.get(0)));
             }

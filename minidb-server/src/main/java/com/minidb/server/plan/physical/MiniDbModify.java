@@ -9,7 +9,11 @@ import com.minidb.storage.common.BatchIterator;
 import com.minidb.storage.common.TableHandle;
 import com.minidb.server.exec.ConstraintChecker;
 import com.minidb.server.exec.ExecContext;
+import com.minidb.server.exec.IncrementalRefreshEngine;
+import com.minidb.server.exec.MVManager;
 import com.minidb.server.exec.RowCopier;
+import com.minidb.server.plan.Planner;
+import com.minidb.storage.common.MVDefinition;
 import com.minidb.server.transaction.TransactionManager;
 import com.minidb.storage.common.IndexDef;
 import com.minidb.storage.common.SimpleTable;
@@ -52,6 +56,19 @@ public class MiniDbModify extends TableModify implements MiniDbRel {
         return affected;
     }
 
+    /** 返回被修改的表的 schema 名（当前 schema 上下文）。 */
+    public String getTargetSchemaName(String currentSchema) {
+        List<String> qualified = table.getQualifiedName();
+        int n = qualified.size();
+        return n >= 3 ? qualified.get(n - 2) : currentSchema;
+    }
+
+    /** 返回被修改的表的裸名。 */
+    public String getTargetTableName() {
+        List<String> qualified = table.getQualifiedName();
+        return qualified.get(qualified.size() - 1);
+    }
+
     @Override
     public BatchIterator execute(ExecContext ctx) {
         List<String> qualified = table.getQualifiedName();
@@ -76,7 +93,51 @@ public class MiniDbModify extends TableModify implements MiniDbRel {
         }
         // 写数据直接落盘,顺带标记统计过期。
         ctx.storage().catalog().markStatsStale(schemaName, tableName);
+        // DML 后增量刷新物化视图：有依赖 MV 则全量刷新（简单正确）
+        refreshDependentMVs(ctx, schemaName, tableName);
         return BatchIterator.interruptible(BatchIterator.empty());
+    }
+
+    /** DML 后检查依赖此表的物化视图并全量刷新。 */
+    private void refreshDependentMVs(ExecContext ctx, String schemaName, String tableName) {
+        if (affected == 0) return;
+        MVManager mvManager = ctx.mvManager();
+        if (mvManager == null) return;
+        var dependents = mvManager.getDependentMVs(schemaName, tableName);
+        if (dependents.isEmpty()) return;
+        IncrementalRefreshEngine engine = mvManager.refreshEngine();
+        for (String mvKey : dependents) {
+            int dot = mvKey.indexOf('.');
+            String mvSchema = mvKey.substring(0, dot);
+            String mvName = mvKey.substring(dot + 1);
+            MVDefinition mvDef = ctx.storage().catalog()
+                    .getMaterializedView(mvSchema, mvName);
+            if (mvDef == null) continue;
+            // 全量刷新：TRUNCATE + 重算
+            MiniDbRel mvPlan = (MiniDbRel)
+                    new Planner(ctx.storage().catalog()).plan(mvDef.querySql(), mvSchema);
+            TableHandle mvTable = ctx.getTable(mvSchema, mvName);
+            mvTable.clearParts();
+            ExecContext mvCtx = new ExecContext(ctx.storage(), ctx.allocator(), mvSchema);
+            try (BatchIterator it = mvPlan.execute(mvCtx)) {
+                while (it.hasNext()) {
+                    VectorSchemaRoot batch = it.next();
+                    VectorSchemaRoot copy = mvTable.newBatchRoot();
+                    copy.allocateNew();
+                    for (int i = 0; i < batch.getRowCount(); i++) {
+                        RowCopier.copyRow(batch, i, copy, i);
+                    }
+                    copy.setRowCount(batch.getRowCount());
+                    try {
+                        mvTable.writePart(copy, TableHandle.Operation.INSERT);
+                    } finally {
+                        copy.close();
+                    }
+                }
+            } finally {
+                mvCtx.close();
+            }
+        }
     }
 
     private void appendRows(ExecContext ctx, TableHandle target, BatchIterator input) {

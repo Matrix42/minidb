@@ -4,7 +4,9 @@ import com.minidb.storage.common.ArrowTypes;
 import com.minidb.storage.common.ColumnMeta;
 import com.minidb.storage.common.ColumnType;
 import com.minidb.server.catalog.MiniDbCatalog;
+import com.minidb.storage.common.MVDefinition;
 import com.minidb.storage.common.TableSchema;
+import java.util.stream.Collectors;
 import java.nio.charset.StandardCharsets;
 import java.util.ArrayList;
 import java.util.List;
@@ -32,6 +34,9 @@ public final class InformationSchema {
         }
         if (tableName.equalsIgnoreCase("schemata")) {
             return materializeSchemata(catalog, allocator);
+        }
+        if (tableName.equalsIgnoreCase("materialized_views")) {
+            return materializeMaterializedViews(catalog, allocator);
         }
         throw new IllegalArgumentException("unknown information_schema table: " + tableName);
     }
@@ -78,13 +83,53 @@ public final class InformationSchema {
         for (int i = 0; i < n; i++) {
             tableSchema.setSafe(i, rows.get(i)[0].getBytes(StandardCharsets.UTF_8));
             tableName.setSafe(i, rows.get(i)[1].getBytes(StandardCharsets.UTF_8));
-            // 现在只有 base table;视图落地后在此按 kind 分支报 'VIEW'。
-            tableType.setSafe(i, "BASE TABLE".getBytes(StandardCharsets.UTF_8));
+            // 区分 BASE TABLE / MATERIALIZED VIEW / VIEW
+            String rowSchema = rows.get(i)[0];
+            String rowName = rows.get(i)[1];
+            TableSchema ts = catalog.getTable(rowSchema, rowName);
+            String typeStr;
+            if (ts.tableType() == com.minidb.storage.common.TableType.MATERIALIZED_VIEW) {
+                typeStr = "MATERIALIZED VIEW";
+            } else {
+                typeStr = "BASE TABLE";
+            }
+            tableType.setSafe(i, typeStr.getBytes(StandardCharsets.UTF_8));
         }
         for (VarCharVector v : new VarCharVector[]{tableCatalog, tableSchema, tableName, tableType}) {
             v.setValueCount(n);
         }
         return VectorSchemaRoot.of(tableCatalog, tableSchema, tableName, tableType);
+    }
+
+    private static VectorSchemaRoot materializeMaterializedViews(MiniDbCatalog catalog, BufferAllocator allocator) {
+        List<MVDefinition> allMVs = new ArrayList<>();
+        List<String> schemas = new ArrayList<>(catalog.schemaNames());
+        schemas.sort(String::compareTo);
+        for (String schema : schemas) {
+            allMVs.addAll(catalog.getMaterializedViews(schema));
+        }
+        int n = allMVs.size();
+        VarCharVector mvCatalog = vc("MV_CATALOG", n, allocator);
+        VarCharVector mvSchema = vc("MV_SCHEMA", n, allocator);
+        VarCharVector mvName = vc("MV_NAME", n, allocator);
+        VarCharVector definition = vc("DEFINITION", n, allocator);
+        VarCharVector dependencies = vc("DEPENDENCIES", n, allocator);
+        VarCharVector isStale = vc("IS_STALE", n, allocator);
+        for (int i = 0; i < n; i++) {
+            MVDefinition mv = allMVs.get(i);
+            mvSchema.setSafe(i, mv.schemaName().getBytes(StandardCharsets.UTF_8));
+            mvName.setSafe(i, mv.name().getBytes(StandardCharsets.UTF_8));
+            definition.setSafe(i, mv.querySql().getBytes(StandardCharsets.UTF_8));
+            String depStr = mv.dependencies().stream()
+                    .map(d -> d.schemaName() + "." + d.tableName())
+                    .collect(Collectors.joining(", "));
+            dependencies.setSafe(i, depStr.getBytes(StandardCharsets.UTF_8));
+            isStale.setSafe(i, "FALSE".getBytes(StandardCharsets.UTF_8));
+        }
+        for (VarCharVector v : new VarCharVector[]{mvCatalog, mvSchema, mvName, definition, dependencies, isStale}) {
+            v.setValueCount(n);
+        }
+        return VectorSchemaRoot.of(mvCatalog, mvSchema, mvName, definition, dependencies, isStale);
     }
 
     private static VectorSchemaRoot materializeColumns(MiniDbCatalog catalog, BufferAllocator allocator) {
