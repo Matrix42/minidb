@@ -317,6 +317,9 @@ public class MiniDbCatalog {
         Map<String, MVDefinition> m = materializedViews.computeIfAbsent(
                 key(mv.schemaName()), k -> new ConcurrentHashMap<>());
         String tk = key(mv.name());
+        if (hasTable(mv.schemaName(), mv.name())) {
+            throw new IllegalArgumentException("table already exists: " + mv.name());
+        }
         if (hasView(mv.schemaName(), mv.name())) {
             throw new IllegalArgumentException("view already exists: " + mv.name());
         }
