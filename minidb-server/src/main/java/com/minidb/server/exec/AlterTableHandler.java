@@ -128,7 +128,7 @@ public class AlterTableHandler {
         }
         TableSchema newSchema = new TableSchema(schemaName, tableName, newCols,
                 oldSchema.primaryKey(), oldSchema.uniqueKeys(), oldSchema.foreignKeys(),
-                oldSchema.storageFormat(), oldSchema.tableType(), newIndexes);
+                oldSchema.storageFormat(), oldSchema.tableType(), newIndexes, null);
         storage.alterTable(schemaName, tableName, newSchema);
     }
 
@@ -184,7 +184,7 @@ public class AlterTableHandler {
         }
         TableSchema newSchema = new TableSchema(schemaName, tableName, oldSchema.columns(),
                 primaryKey, uniqueKeys, foreignKeys, oldSchema.storageFormat(),
-                oldSchema.tableType(), oldSchema.indexes());
+                oldSchema.tableType(), oldSchema.indexes(), null);
         ConstraintChecker.validateTableSatisfies(
                 new ExecContext(storage, allocator, schemaName), oldTable, newSchema);
         storage.alterTable(schemaName, tableName, newSchema);
@@ -193,7 +193,7 @@ public class AlterTableHandler {
     private void handleDropConstraint(SqlAlterTable alter, TableSchema oldSchema) {
         if (alter.constraintKind() == SqlKind.PRIMARY_KEY) {
             TableSchema newSchema = new TableSchema(schemaName, tableName, oldSchema.columns(),
-                    List.of(), oldSchema.uniqueKeys(), oldSchema.foreignKeys(), oldSchema.storageFormat());
+                    List.of(), oldSchema.uniqueKeys(), oldSchema.foreignKeys(), oldSchema.storageFormat(), null, null, null);
             storage.alterTable(schemaName, tableName, newSchema);
             return;
         }
@@ -309,7 +309,7 @@ public class AlterTableHandler {
     private TableSchema withColumns(TableSchema old, List<ColumnMeta> newCols) {
         return new TableSchema(old.schemaName(), old.name(), newCols,
                 old.primaryKey(), old.uniqueKeys(), old.foreignKeys(), old.storageFormat(),
-                old.tableType(), old.indexes());
+                old.tableType(), old.indexes(), null);
     }
 
     /** 从 SqlDataTypeSpec 解析列定义(与 QueryExecutor.handleCreate 的列解析一致)。 */

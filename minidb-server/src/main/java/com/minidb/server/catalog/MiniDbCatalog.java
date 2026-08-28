@@ -161,7 +161,7 @@ public class MiniDbCatalog {
         }
         TableSchema renamed = new TableSchema(old.schemaName(), newName, old.columns(),
                 old.primaryKey(), old.uniqueKeys(), old.foreignKeys(), old.storageFormat(),
-                old.tableType(), old.indexes());
+                old.tableType(), old.indexes(), null);
         tables.remove(oldKey);
         tables.put(newKey, renamed);
         notifyChange();

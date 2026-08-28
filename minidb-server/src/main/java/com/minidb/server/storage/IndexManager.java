@@ -95,7 +95,7 @@ public class IndexManager {
             pk.add(c.name());
         }
         return new TableSchema(schemaName, def.name(), cols, pk, List.of(), List.of(),
-                data.storageFormat(), TableType.LSM, List.of());
+                data.storageFormat(), TableType.LSM, List.of(), null);
     }
 
     /**

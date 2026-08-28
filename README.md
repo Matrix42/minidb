@@ -1,6 +1,6 @@
 # MiniDB
 
-基于 Apache Calcite、Apache Arrow、Netty 的微型 JDBC 数据库。
+基于 Apache Calcite、Apache Arrow、Netty 的单机 JDBC 数据库。
 
 ## 特性
 
@@ -148,7 +148,6 @@ SMALLINT、INTEGER、BIGINT、REAL、FLOAT、DOUBLE、DECIMAL、NUMERIC、VARCHA
 
 ## 限制
 
-- 无事务（autoCommit 恒为 true）
 - 崩溃可能丢失未 flush 的插入（正常关闭时统一落盘）
 - PreparedStatement 为客户端参数替换实现
 - 结果集在客户端一次性物化，不做服务端分页

@@ -6,7 +6,8 @@ import java.util.List;
 public record TableSchema(String schemaName, String name, List<ColumnMeta> columns,
                           List<String> primaryKey, List<List<String>> uniqueKeys,
                           List<ForeignKey> foreignKeys, StorageFormat storageFormat,
-                          TableType tableType, List<IndexDef> indexes) {
+                          TableType tableType, List<IndexDef> indexes,
+                          MVDefinition mvDefinition) {
 
     public TableSchema {
         primaryKey = primaryKey == null ? List.of() : List.copyOf(primaryKey);
@@ -36,34 +37,34 @@ public record TableSchema(String schemaName, String name, List<ColumnMeta> colum
     }
 
     public TableSchema(String name, List<ColumnMeta> columns) {
-        this("public", name, columns, List.of(), List.of(), List.of(), StorageFormat.DEFAULT, null, null);
+        this("public", name, columns, List.of(), List.of(), List.of(), StorageFormat.DEFAULT, null, null, null);
     }
 
     public TableSchema(String schemaName, String name, List<ColumnMeta> columns) {
-        this(schemaName, name, columns, List.of(), List.of(), List.of(), StorageFormat.DEFAULT, null, null);
+        this(schemaName, name, columns, List.of(), List.of(), List.of(), StorageFormat.DEFAULT, null, null, null);
     }
 
     public TableSchema(String schemaName, String name, List<ColumnMeta> columns,
                        List<String> primaryKey, List<List<String>> uniqueKeys,
                        List<ForeignKey> foreignKeys) {
-        this(schemaName, name, columns, primaryKey, uniqueKeys, foreignKeys, StorageFormat.DEFAULT, null, null);
+        this(schemaName, name, columns, primaryKey, uniqueKeys, foreignKeys, StorageFormat.DEFAULT, null, null, null);
     }
 
     public TableSchema(String schemaName, String name, List<ColumnMeta> columns,
                        List<String> primaryKey, List<List<String>> uniqueKeys,
                        List<ForeignKey> foreignKeys, StorageFormat storageFormat) {
-        this(schemaName, name, columns, primaryKey, uniqueKeys, foreignKeys, storageFormat, null, null);
+        this(schemaName, name, columns, primaryKey, uniqueKeys, foreignKeys, storageFormat, null, null, null);
     }
 
     /** 返回带指定存储格式的副本(加载时按引擎格式补用)。 */
     public TableSchema withStorageFormat(StorageFormat format) {
-        return new TableSchema(schemaName, name, columns, primaryKey, uniqueKeys, foreignKeys, format, tableType, indexes);
+        return new TableSchema(schemaName, name, columns, primaryKey, uniqueKeys, foreignKeys, format, tableType, indexes, mvDefinition);
     }
 
     /** 返回替换 indexes 的副本(DDL 增删索引 + ALTER/RENAME 保索引时用)。 */
     public TableSchema withIndexes(List<IndexDef> newIndexes) {
         return new TableSchema(schemaName, name, columns, primaryKey, uniqueKeys,
-                foreignKeys, storageFormat, tableType, newIndexes);
+                foreignKeys, storageFormat, tableType, newIndexes, mvDefinition);
     }
 
     public ColumnMeta column(String name) {

@@ -91,7 +91,7 @@ public class TpcdsDataGenerator {
                 ? List.of()
                 : PRIMARY_KEYS.getOrDefault(table.getName().toLowerCase(), List.of());
         TableSchema schema = new TableSchema("public", table.getName().toLowerCase(),
-                columns, pk, List.of(), List.of(), format, tableType, List.of());
+                columns, pk, List.of(), List.of(), format, tableType, List.of(), null);
         TableHandle target = storage.createTable(schema);
 
         Results results = Results.constructResults(table, session);

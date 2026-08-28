@@ -329,7 +329,7 @@ public class QueryExecutor {
             columns.add(new ColumnMeta(column.name.getSimple(), type, precision, scale, nullable));
         }
         TableSchema schema = new TableSchema(schemaName, tableName, columns,
-                primaryKey, uniqueKeys, foreignKeys, storageFormat, tableType, null);
+                primaryKey, uniqueKeys, foreignKeys, storageFormat, tableType, null, null);
         storage.createTable(schema);
         return new QueryResult.Update(0);
     }
@@ -358,7 +358,7 @@ public class QueryExecutor {
         }
         TableSchema target = new TableSchema(targetSchema, targetName,
                 source.columns(), source.primaryKey(), source.uniqueKeys(),
-                source.foreignKeys(), storageFormat, tableType, null);
+                source.foreignKeys(), storageFormat, tableType, null, null);
         storage.createTable(target);
         return new QueryResult.Update(0);
     }
