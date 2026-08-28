@@ -113,9 +113,11 @@ public class MiniDbModify extends TableModify implements MiniDbRel {
             MVDefinition mvDef = ctx.storage().catalog()
                     .getMaterializedView(mvSchema, mvName);
             if (mvDef == null) continue;
-            // 全量刷新：TRUNCATE + 重算
+            // 全量刷新：TRUNCATE + 重算(必须关 MV 重写,否则定义查询被重写为扫描 MV 自身,
+            // 而此刻 MV 表刚被清空 → 恒空结果,见 Planner.planWithoutMvRewrite)
             MiniDbRel mvPlan = (MiniDbRel)
-                    new Planner(ctx.storage().catalog()).plan(mvDef.querySql(), mvSchema);
+                    new Planner(ctx.storage().catalog())
+                            .planWithoutMvRewrite(mvDef.querySql(), mvSchema);
             TableHandle mvTable = ctx.getTable(mvSchema, mvName);
             mvTable.clearParts();
             ExecContext mvCtx = new ExecContext(ctx.storage(), ctx.allocator(), mvSchema);

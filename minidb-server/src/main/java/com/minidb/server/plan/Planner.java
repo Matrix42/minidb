@@ -2,7 +2,9 @@ package com.minidb.server.plan;
 
 import com.minidb.server.calcite.CalciteContext;
 import com.minidb.server.calcite.Utf8SqlTypeFactory;
+import com.minidb.server.catalog.InformationSchemaCatalog;
 import com.minidb.server.catalog.MiniDbCatalog;
+import com.minidb.storage.common.MVDefinition;
 import com.minidb.server.plan.logical.LogicalOptimizer;
 import com.minidb.server.plan.physical.MiniDbAggregate;
 import com.minidb.server.plan.physical.MiniDbConvention;
@@ -21,6 +23,8 @@ import org.apache.calcite.plan.RelOptCluster;
 import org.apache.calcite.plan.RelOptRule;
 import org.apache.calcite.plan.RelOptTable;
 import org.apache.calcite.plan.RelTraitSet;
+import org.apache.calcite.plan.hep.HepPlanner;
+import org.apache.calcite.plan.hep.HepProgramBuilder;
 import org.apache.calcite.plan.volcano.VolcanoPlanner;
 import org.apache.calcite.rel.RelCollation;
 import org.apache.calcite.rel.RelCollationImpl;
@@ -29,6 +33,11 @@ import org.apache.calcite.rel.RelFieldCollation;
 import org.apache.calcite.rel.RelNode;
 import org.apache.calcite.rel.RelRoot;
 import org.apache.calcite.rel.core.AggregateCall;
+import org.apache.calcite.rel.logical.LogicalAggregate;
+import org.apache.calcite.rel.logical.LogicalFilter;
+import org.apache.calcite.rel.logical.LogicalJoin;
+import org.apache.calcite.rel.logical.LogicalProject;
+import org.apache.calcite.rel.logical.LogicalTableScan;
 import org.apache.calcite.rel.type.RelDataType;
 import org.apache.calcite.rel.type.RelDataTypeFactory;
 import org.apache.calcite.rel.type.RelDataTypeField;
@@ -52,17 +61,32 @@ import java.util.TreeSet;
 
 public class Planner {
 
+    private final MiniDbCatalog catalog;
     private final CalciteContext calcite;
 
     public Planner(MiniDbCatalog catalog) {
+        this.catalog = catalog;
         this.calcite = new CalciteContext(catalog);
     }
 
     public RelNode plan(String sql) {
-        return plan(sql, MiniDbCatalog.DEFAULT_SCHEMA);
+        return plan(sql, MiniDbCatalog.DEFAULT_SCHEMA, true);
     }
 
     public RelNode plan(String sql, String currentSchema) {
+        return plan(sql, currentSchema, true);
+    }
+
+    /**
+     * 规划查询但不做物化视图重写。重算 MV 定义查询(REFRESH / DML 自动刷新 / 初始填充)时必须
+     * 用它:若带重写,定义查询会被重写为扫描 MV 自身——而此刻 MV 表刚被清空/尚未填充,结果恒空,
+     * 且构成自引用。用户查询走 {@link #plan(String, String)} 保持重写开启。
+     */
+    public RelNode planWithoutMvRewrite(String sql, String currentSchema) {
+        return plan(sql, currentSchema, false);
+    }
+
+    private RelNode plan(String sql, String currentSchema, boolean mvRewrite) {
         VolcanoPlanner volcanoPlanner = new VolcanoPlanner();
         // 常量折叠/条件简化(ReduceExpressionsRule)依赖 RexExecutor 真正求值常量表达式;
         // 默认的 RexUtil.EXECUTOR 只能 reduce 很有限的东西(如 CAST(字面量)),挂上
@@ -102,9 +126,14 @@ public class Planner {
         RelNode logical = root.project();
         // Phase 1: logical optimization (HepPlanner over Calcite Logical* tree)
         RelNode optimized = LogicalOptimizer.optimize(logical);
+        // Phase 1.5: 物化视图查询重写——与 MV 定义结构一致的查询子树替换为对 MV 表的扫描。
+        // 仅用户查询开启;重算 MV 自身定义时关闭(见 planWithoutMvRewrite)。
+        RelNode rewritten = mvRewrite
+                ? rewriteWithMaterializedViews(optimized, currentSchema)
+                : optimized;
         // Phase 2: physical conversion (VolcanoPlanner)
-        RelNode converted = volcanoPlanner.changeTraits(optimized,
-                optimized.getTraitSet().replace(MiniDbConvention.INSTANCE));
+        RelNode converted = volcanoPlanner.changeTraits(rewritten,
+                rewritten.getTraitSet().replace(MiniDbConvention.INSTANCE));
         volcanoPlanner.setRoot(converted);
         RelNode best = volcanoPlanner.findBestExp();
         if (!(best instanceof MiniDbRel)) {
@@ -126,8 +155,7 @@ public class Planner {
      * 包装为共享 {@link MiniDbCse} 节点。首次执行物化到缓存,后续命中回放。
      * 只对 Join/Aggregate 做——它们是昂贵操作,Scan/Filter/Project 已下推无需 CSE。
      */
-    private static RelNode deduplicateSubtrees(RelNode node) {
-        Map<String, Integer> counts = new HashMap<>();
+    private static RelNode deduplicateSubtrees(RelNode node) {        Map<String, Integer> counts = new HashMap<>();
         Map<String, MiniDbCse> cseMap = new HashMap<>();
         countJoinsAndAggregates(node, counts);
         return deduplicateSubtrees(node, counts, cseMap);
@@ -687,6 +715,169 @@ public class Planner {
         return true;
     }
 
+
+    // ---- 物化视图查询重写(Phase 1.5) ----
+
+    /**
+     * 物化视图查询重写:把「与某个 MV 定义结构完全一致」的查询子树替换为对该 MV 表的扫描。
+     *
+     * <p>重写只做保守的精确匹配(见 {@link #substituteMv}):用户查询子树与 MV 定义查询的
+     * 规范化逻辑计划 digest 完全相等才替换。这是正确的关键——MV 只存了定义查询的结果,只有
+     * 查询恰好等于(或在其上叠加投影/排序)MV 内容时,扫描 MV 才与原查询等价。聚合 MV 的
+     * 重写同样只覆盖「查询聚合 == MV 聚合」的精确匹配;更灵活的补偿式重写(查询过滤更宽/
+     * 分组更细等)留待后续。</p>
+     */
+    private RelNode rewriteWithMaterializedViews(RelNode logical, String currentSchema) {
+        List<MVDefinition> mvs = new ArrayList<>();
+        for (String schema : catalog.schemaNames()) {
+            if (InformationSchemaCatalog.isSystemSchema(schema)) {
+                continue;
+            }
+            mvs.addAll(catalog.getMaterializedViews(schema));
+        }
+        if (mvs.isEmpty()) {
+            return logical;
+        }
+        // 预规划每个 MV 的定义 SQL:与用户查询走同一套流水线(root.project + LogicalOptimizer),
+        // 保证两侧形状可比。失败(如基表已改导致解析错误)的 MV 直接跳过,不影响查询本身。
+        Map<String, RelNode> mvPlans = new HashMap<>();
+        for (MVDefinition mv : mvs) {
+            try {
+                RelNode mvPlan = planMvLogical(mv.querySql(), mv.schemaName());
+                mvPlans.put(mvKey(mv), mvPlan);
+            } catch (RuntimeException e) {
+                // MV 定义 SQL 无法重新规划:跳过该 MV(不破坏用户查询)
+            }
+        }
+        if (mvPlans.isEmpty()) {
+            return logical;
+        }
+        return substituteMv(logical, mvs, mvPlans);
+    }
+
+    /** 用独立 HepPlanner cluster 规划 MV 定义 SQL(不走火山规划器,避免污染本次规划会话)。 */
+    private RelNode planMvLogical(String sql, String schema) {
+        HepPlanner mvPlanner = new HepPlanner(new HepProgramBuilder().build());
+        SqlTypeFactoryImpl typeFactory = new Utf8SqlTypeFactory(RelDataTypeSystem.DEFAULT);
+        RelOptCluster cluster = RelOptCluster.create(mvPlanner, new RexBuilder(typeFactory));
+        RelRoot root = calcite.planInCluster(sql, cluster, schema);
+        return LogicalOptimizer.optimize(root.project());
+    }
+
+    private static String mvKey(MVDefinition mv) {
+        return mv.schemaName() + "." + mv.name();
+    }
+
+    /**
+     * 自底向上替换:先递归处理输入(深层子树优先),再尝试替换当前节点。
+     * 匹配规则(保守):
+     * <ol>
+     *   <li>当前节点与某 MV 计划结构完全相等(见 {@link #structurallyEqual}) →
+     *       整体替换为 MV 扫描;</li>
+     *   <li>当前节点是 Project 且其输入与某 MV 计划结构相等 → 保留 Project、把输入
+     *       替换为 MV 扫描(MV 输出列 == 被替换子树的输出列,Project 的列引用保持有效)。</li>
+     * </ol>
+     */
+    private RelNode substituteMv(RelNode node, List<MVDefinition> mvs,
+                                 Map<String, RelNode> mvPlans) {
+        List<RelNode> inputs = node.getInputs();
+        List<RelNode> newInputs = null;
+        for (int i = 0; i < inputs.size(); i++) {
+            RelNode newChild = substituteMv(inputs.get(i), mvs, mvPlans);
+            if (newChild != inputs.get(i)) {
+                if (newInputs == null) {
+                    newInputs = new ArrayList<>(inputs);
+                }
+                newInputs.set(i, newChild);
+            }
+        }
+        RelNode current = newInputs == null ? node : node.copy(node.getTraitSet(), newInputs);
+        for (MVDefinition mv : mvs) {
+            RelNode mvPlan = mvPlans.get(mvKey(mv));
+            if (mvPlan != null && structurallyEqual(current, mvPlan)) {
+                return scanMv(mv, current);
+            }
+        }
+        // Project(匹配 MV 的输入):保留投影,替换输入为 MV 扫描。
+        if (current instanceof LogicalProject proj) {
+            for (MVDefinition mv : mvs) {
+                RelNode mvPlan = mvPlans.get(mvKey(mv));
+                if (mvPlan != null && structurallyEqual(proj.getInput(), mvPlan)) {
+                    return LogicalProject.create(
+                            scanMv(mv, proj.getInput()), List.of(),
+                            proj.getProjects(), proj.getRowType());
+                }
+            }
+        }
+        return current;
+    }
+
+    /**
+     * 结构相等:两棵逻辑计划树逐节点比较——类名、rowType 字段名、各自的 RexNode 表达式
+     * (RexCall/RexInputRef/RexLiteral 的 equals 是结构化的)与 Scan 的 qualified name。
+     * 不用 {@code getDigest()} 字符串比较:digest 会带上 hints/variablesSet 等与重写
+     * 无关的表示差异(如 {@code LogicalProject.NONE.[]} vs {@code LogicalProject.}),
+     * 导致相同的查询形状误判不等。
+     */
+    private static boolean structurallyEqual(RelNode a, RelNode b) {
+        if (a.getClass() != b.getClass()) {
+            return false;
+        }
+        if (!a.getRowType().getFieldNames().equals(b.getRowType().getFieldNames())) {
+            return false;
+        }
+        if (a instanceof LogicalProject pa && b instanceof LogicalProject pb) {
+            if (!pa.getProjects().equals(pb.getProjects())) {
+                return false;
+            }
+        } else if (a instanceof LogicalFilter fa && b instanceof LogicalFilter fb) {
+            if (!fa.getCondition().equals(fb.getCondition())) {
+                return false;
+            }
+        } else if (a instanceof LogicalAggregate aa && b instanceof LogicalAggregate ab) {
+            if (!aa.getGroupSet().equals(ab.getGroupSet())) {
+                return false;
+            }
+            if (!aa.getAggCallList().equals(ab.getAggCallList())) {
+                return false;
+            }
+        } else if (a instanceof LogicalJoin ja && b instanceof LogicalJoin jb) {
+            if (ja.getJoinType() != jb.getJoinType()) {
+                return false;
+            }
+            if (!ja.getCondition().equals(jb.getCondition())) {
+                return false;
+            }
+        } else if (a instanceof LogicalTableScan) {
+            List<String> qa = ((LogicalTableScan) a).getTable().getQualifiedName();
+            List<String> qb = ((LogicalTableScan) b).getTable().getQualifiedName();
+            if (!qa.equals(qb)) {
+                return false;
+            }
+        }
+        List<RelNode> ia = a.getInputs();
+        List<RelNode> ib = b.getInputs();
+        if (ia.size() != ib.size()) {
+            return false;
+        }
+        for (int i = 0; i < ia.size(); i++) {
+            if (!structurallyEqual(ia.get(i), ib.get(i))) {
+                return false;
+            }
+        }
+        return true;
+    }
+
+    /** 构造对 MV 存储表的逻辑扫描(物理阶段由 MiniDbScanRule 转成 MiniDbScan)。 */
+    private RelNode scanMv(MVDefinition mv, RelNode anchor) {
+        SqlTypeFactoryImpl typeFactory =
+                (SqlTypeFactoryImpl) anchor.getCluster().getTypeFactory();
+        RelOptTable table = calcite.resolveTable(mv.schemaName(), mv.name(), typeFactory);
+        if (table == null) {
+            throw new IllegalStateException("MV table not resolvable: " + mvKey(mv));
+        }
+        return LogicalTableScan.create(anchor.getCluster(), table, List.of());
+    }
 
     private static int[] extractProjectColumns(List<RexNode> projects) {
         int[] cols = new int[projects.size()];

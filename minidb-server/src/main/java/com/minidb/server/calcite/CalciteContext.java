@@ -108,6 +108,13 @@ public class CalciteContext {
                         "view expansion not supported in this context");
             };
 
+    /** 解析 (schema, table) 为 RelOptTable,供物化视图查询重写构造 MV 扫描节点。 */
+    public RelOptTable resolveTable(String schemaName, String tableName,
+                                    SqlTypeFactoryImpl typeFactory) {
+        CalciteCatalogReader reader = buildCatalogReader(typeFactory, schemaName);
+        return reader.getTable(List.of(SCHEMA_NAME, schemaName, tableName));
+    }
+
     private CalciteCatalogReader buildCatalogReader(
             SqlTypeFactoryImpl typeFactory, String currentSchema) {
         Properties props = new Properties();

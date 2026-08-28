@@ -177,9 +177,10 @@ public class QueryExecutor {
             if (!catalog.hasMaterializedView(schemaName, name)) {
                 throw new IllegalArgumentException("materialized view not found: " + mvName);
             }
-            // 全量刷新：重新执行定义查询，TRUNCATE + INSERT
+            // 全量刷新：重新执行定义查询，TRUNCATE + INSERT。必须关 MV 重写：定义查询与
+            // MV 本身结构一致时会被重写为扫描 mv,而 mv 刚被清空 → 恒空(自引用)。
             MVDefinition mvDef = catalog.getMaterializedView(schemaName, name);
-            RelNode plan = planner.plan(mvDef.querySql(), schemaName);
+            RelNode plan = planner.planWithoutMvRewrite(mvDef.querySql(), schemaName);
             TableHandle target = storage.getTable(schemaName, name);
             target.clearParts();
             ExecContext ctx = new ExecContext(storage, allocator, schemaName);
