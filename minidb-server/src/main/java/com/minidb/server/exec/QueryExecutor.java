@@ -16,9 +16,11 @@ import com.minidb.storage.common.StorageFormat;
 import com.minidb.storage.common.TableHandle;
 import com.minidb.server.catalog.InformationSchemaCatalog;
 import com.minidb.storage.common.TableType;
+import com.minidb.storage.common.MVDefinition;
 import com.minidb.server.catalog.MiniDbCatalog;
 import com.minidb.storage.common.TableSchema;
 import com.minidb.server.catalog.ViewDefinition;
+import com.minidb.server.exec.RowCopier;
 import com.minidb.server.plan.physical.MiniDbModify;
 import com.minidb.server.plan.physical.MiniDbRel;
 import com.minidb.server.plan.Planner;
@@ -30,6 +32,7 @@ import java.util.List;
 import java.util.Locale;
 import java.util.Map;
 import org.apache.arrow.memory.BufferAllocator;
+import org.apache.arrow.vector.VectorSchemaRoot;
 import org.apache.arrow.vector.types.pojo.Field;
 import org.apache.arrow.vector.types.pojo.Schema;
 import org.apache.calcite.rel.RelNode;
@@ -46,9 +49,11 @@ import org.apache.calcite.sql.ddl.SqlColumnDeclaration;
 import org.apache.calcite.sql.ddl.SqlCreateSchema;
 import org.apache.calcite.sql.ddl.SqlCreateTable;
 import org.apache.calcite.sql.ddl.SqlCreateTableLike;
+import org.apache.calcite.sql.ddl.SqlCreateMaterializedView;
 import org.apache.calcite.sql.ddl.SqlCreateView;
 import org.apache.calcite.sql.ddl.SqlDropSchema;
 import org.apache.calcite.sql.ddl.SqlDropTable;
+import org.apache.calcite.sql.ddl.SqlDropMaterializedView;
 import org.apache.calcite.sql.ddl.SqlDropView;
 import org.apache.calcite.sql.ddl.SqlKeyConstraint;
 import org.apache.calcite.sql.ddl.SqlTruncateTable;
@@ -64,6 +69,8 @@ public class QueryExecutor {
     private final CalciteContext calcite;
     private final StatsManager stats;
 
+    private final MVManager mvManager;
+
     public QueryExecutor(MiniDbCatalog catalog, StorageManager storage,
                          BufferAllocator allocator, StatsManager stats) {
         this.catalog = catalog;
@@ -72,6 +79,7 @@ public class QueryExecutor {
         this.stats = stats;
         this.planner = new Planner(catalog);
         this.calcite = new CalciteContext(catalog);
+        this.mvManager = new MVManager(catalog, storage, allocator, planner);
     }
 
     public StorageManager storage() {
@@ -158,6 +166,40 @@ public class QueryExecutor {
             }
             return new QueryResult.UseSchema(resolved);
         }
+        if (upper.startsWith("REFRESH MATERIALIZED VIEW ")) {
+            String mvName = trimmed.substring("REFRESH MATERIALIZED VIEW ".length()).strip();
+            int dot = mvName.indexOf('.');
+            String schemaName = dot >= 0 ? mvName.substring(0, dot).strip() : currentSchema;
+            String name = dot >= 0 ? mvName.substring(dot + 1).strip() : mvName;
+            if (!catalog.hasMaterializedView(schemaName, name)) {
+                throw new IllegalArgumentException("materialized view not found: " + mvName);
+            }
+            // 全量刷新：重新执行定义查询，TRUNCATE + INSERT
+            MVDefinition mvDef = catalog.getMaterializedView(schemaName, name);
+            RelNode plan = planner.plan(mvDef.querySql(), schemaName);
+            TableHandle target = storage.getTable(schemaName, name);
+            target.clearParts();
+            ExecContext ctx = new ExecContext(storage, allocator, schemaName);
+            try (BatchIterator it = ((MiniDbRel) plan).execute(ctx)) {
+                while (it.hasNext()) {
+                    VectorSchemaRoot batch = it.next();
+                    VectorSchemaRoot copy = target.newBatchRoot();
+                    copy.allocateNew();
+                    for (int i = 0; i < batch.getRowCount(); i++) {
+                        RowCopier.copyRow(batch, i, copy, i);
+                    }
+                    copy.setRowCount(batch.getRowCount());
+                    try {
+                        target.writePart(copy, TableHandle.Operation.INSERT);
+                    } finally {
+                        copy.close();
+                    }
+                }
+            } finally {
+                ctx.close();
+            }
+            return new QueryResult.Update(0);
+        }
         if (upper.startsWith("COMPACT TABLE ")) {
             String table = trimmed.substring("COMPACT TABLE ".length()).strip();
             int dot = table.indexOf('.');
@@ -186,11 +228,17 @@ public class QueryExecutor {
         if (ddl instanceof SqlCreateView create) {
             return handleCreateView(create, currentSchema);
         }
+        if (ddl instanceof SqlCreateMaterializedView create) {
+            return handleCreateMaterializedView(create, currentSchema);
+        }
         if (ddl instanceof SqlDropTable drop) {
             return handleDrop(drop, currentSchema);
         }
         if (ddl instanceof SqlDropView drop) {
             return handleDropView(drop, currentSchema);
+        }
+        if (ddl instanceof SqlDropMaterializedView drop) {
+            return handleDropMaterializedView(drop, currentSchema);
         }
         if (ddl instanceof SqlTruncateTable truncate) {
             return handleTruncate(truncate, currentSchema);
@@ -433,6 +481,29 @@ public class QueryExecutor {
             throw new IllegalArgumentException("view not found: " + viewName);
         }
         catalog.dropView(schemaName, viewName);
+        return new QueryResult.Update(0);
+    }
+
+    private QueryResult handleCreateMaterializedView(SqlCreateMaterializedView create, String currentSchema) {
+        List<String> parts = create.name.names;
+        String schemaName = parts.size() > 1 ? parts.get(0) : currentSchema;
+        String mvName = parts.get(parts.size() - 1);
+        String querySql = create.query.toSqlString(CalciteSqlDialect.DEFAULT).getSql();
+        mvManager.createMV(schemaName, mvName, querySql);
+        return new QueryResult.Update(0);
+    }
+
+    private QueryResult handleDropMaterializedView(SqlDropMaterializedView drop, String currentSchema) {
+        List<String> parts = drop.name.names;
+        String schemaName = parts.size() > 1 ? parts.get(0) : currentSchema;
+        String mvName = parts.get(parts.size() - 1);
+        if (!catalog.hasMaterializedView(schemaName, mvName)) {
+            if (drop.ifExists) {
+                return new QueryResult.Update(0);
+            }
+            throw new IllegalArgumentException("materialized view not found: " + mvName);
+        }
+        mvManager.dropMV(schemaName, mvName);
         return new QueryResult.Update(0);
     }
 
