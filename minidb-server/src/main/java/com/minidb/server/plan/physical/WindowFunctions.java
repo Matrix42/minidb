@@ -92,7 +92,7 @@ public final class WindowFunctions {
                 for (int rowPos = 0; rowPos < orderedRows.size(); rowPos++) {
                     int originalRowIdx = orderedRows.get(rowPos);
                     result[originalRowIdx] = computeRow(over, aggKind, window, orderVectors,
-                            orderedRows, rowPos, rows, inputCols);
+                            orderedRows, rowPos, rows);
                 }
             }
             return Arrays.asList(result);
@@ -106,7 +106,7 @@ public final class WindowFunctions {
     private static Object computeRow(RexOver over, SqlKind aggKind, RexWindow window,
                                      List<ValueVector> orderVectors,
                                      List<Integer> orderedRows, int position,
-                                     VectorSchemaRoot rows, int inputCols) {
+                                     VectorSchemaRoot rows) {
         switch (aggKind) {
             case ROW_NUMBER:
                 return (long) (position + 1);

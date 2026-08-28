@@ -54,6 +54,7 @@ import org.apache.parquet.io.SeekableInputStream;
 import org.apache.parquet.io.api.Binary;
 import org.apache.parquet.schema.MessageType;
 import org.apache.parquet.schema.Type;
+import org.jspecify.annotations.NonNull;
 
 /**
  * Apache Parquet 格式的 part 读写。
@@ -189,13 +190,12 @@ public class ParquetPartFormat implements PartFormat {
             int rows = (int) pages.getRowCount();
             for (int r = 0; r < rows; r++) {
                 Group group = recordReader.read();
-                for (int c = 0; c < outCols; c++) {
-                    int parquetCol = projectedColumns == null ? c : projectedColumns[c];
+                for (int groupCol = 0; groupCol < outCols; groupCol++) {
+                    int parquetCol = projectedColumns == null ? groupCol : projectedColumns[groupCol];
                     // 列裁剪时 Group 索引是投影后的位置(c),不是原列索引(parquetCol)
-                    int groupCol = projectedColumns == null ? c : c;
                     if (parquetCol < parquetSchema.getFieldCount()
                             && group.getFieldRepetitionCount(groupCol) > 0) {
-                        readValue(vectors.get(c), dst + r, group, groupCol);
+                        readValue(vectors.get(groupCol), dst + r, group, groupCol);
                     }
                 }
             }
@@ -234,7 +234,7 @@ public class ParquetPartFormat implements PartFormat {
         } else if (vector instanceof BigIntVector v) {
             group.add(col, v.get(row));
         } else if (vector instanceof SmallIntVector v) {
-            group.add(col, (int) v.get(row));
+            group.add(col, v.get(row));
         } else if (vector instanceof Float4Vector v) {
             group.add(col, v.get(row));
         } else if (vector instanceof Float8Vector v) {
@@ -391,7 +391,7 @@ public class ParquetPartFormat implements PartFormat {
         }
 
         @Override
-        public int read(byte[] b, int off, int len) throws IOException {
+        public int read(byte @NonNull [] b, int off, int len) throws IOException {
             ByteBuffer buf = ByteBuffer.wrap(b, off, len);
             return channel.read(buf);
         }
@@ -448,7 +448,7 @@ public class ParquetPartFormat implements PartFormat {
         }
 
         @Override
-        public void write(byte[] b, int off, int len) throws IOException {
+        public void write(byte @NonNull [] b, int off, int len) throws IOException {
             ByteBuffer buf = ByteBuffer.wrap(b, off, len);
             while (buf.hasRemaining()) {
                 channel.write(buf);
@@ -505,7 +505,7 @@ public class ParquetPartFormat implements PartFormat {
         }
 
         @Override
-        public int read(byte[] b, int off, int len) {
+        public int read(byte @NonNull [] b, int off, int len) {
             if (pos >= data.length) {
                 return -1;
             }
@@ -601,7 +601,7 @@ public class ParquetPartFormat implements PartFormat {
         }
 
         @Override
-        public void write(byte[] b, int off, int len) {
+        public void write(byte @NonNull [] b, int off, int len) {
             out.write(b, off, len);
         }
 

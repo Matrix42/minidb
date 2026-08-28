@@ -29,8 +29,6 @@ import org.apache.calcite.rel.RelFieldCollation;
 import org.apache.calcite.rel.RelNode;
 import org.apache.calcite.rel.RelRoot;
 import org.apache.calcite.rel.core.AggregateCall;
-import org.apache.calcite.rel.rules.JoinAssociateRule;
-import org.apache.calcite.rel.rules.JoinCommuteRule;
 import org.apache.calcite.rel.type.RelDataType;
 import org.apache.calcite.rel.type.RelDataTypeFactory;
 import org.apache.calcite.rel.type.RelDataTypeField;
@@ -295,8 +293,6 @@ public class Planner {
     /**
      * 若 project 表达式全是 RexInputRef(纯列索引),返回索引数组;否则返回 null。
      * 索引连续恒等(0,1,2,...)时也返回 null——不需要裁剪,调用方不建新 Scan。
-     */
-    /**
      * 将 RexNode 中的 RexInputRef 索引从「投影后位置」映射回「原始列索引」。
      * 当 Scan 先被 Project 裁剪列(如 [2,0]),后续 Filter 条件引用的是新索引(0→原列2),
      * 推入 Scan 时需还原为原索引。
@@ -318,10 +314,6 @@ public class Planner {
      * Project/Join/Scan/Sort/Filter/Aggregate 输出只保留被引用的列。query64 等大
      * join 链每层物化全列(20+ 列 × 120 万行),裁剪后中间结果列数大减,物化/拷贝/
      * 哈希成本随之下降。
-     *
-     * <p>neededCols 语义:新输出列序,第 k 个新列对应原输出列 neededCols[k]。各节点
-     * 递归重建后统一 {@link #normalizeOutput}——若输出列多于需求(如 join 的条件列、
-     * Filter/Sort 的条件引用列),插 MiniDbProject 把输出裁剪为 neededCols 序。
      */
     private static RelNode pruneJoinColumns(RelNode root) {
         return pruneColumns(root, identityList(root.getRowType().getFieldCount()));
@@ -343,7 +335,7 @@ public class Planner {
         } else if (node instanceof MiniDbFilter filter) {
             p = pruneFilter(filter, neededCols);
         } else if (node instanceof MiniDbAggregate aggregate) {
-            p = pruneAggregate(aggregate, neededCols);
+            p = pruneAggregate(aggregate);
         } else {
             // 其他节点不支持裁剪;递归输入传全列,自身原样(列序 = 原序)
             RelNode result = node;
@@ -591,7 +583,7 @@ public class Planner {
         return new Pruned(newFilter, neededList);
     }
 
-    private static Pruned pruneAggregate(MiniDbAggregate aggregate, List<Integer> neededCols) {
+    private static Pruned pruneAggregate(MiniDbAggregate aggregate) {
         // 聚合输出(group + aggCalls)不裁剪——输出行数少,裁剪收益小;
         // 但输入可裁剪:输入需求 = group 列 + 各 aggCall 参数引用的列
         for (AggregateCall call : aggregate.getAggCallList()) {

@@ -31,7 +31,6 @@ import org.apache.calcite.rel.core.AggregateCall;
 import org.apache.calcite.rel.type.RelDataType;
 import org.apache.calcite.rel.type.RelDataTypeField;
 import org.apache.calcite.rex.RexLiteral;
-import org.apache.calcite.rex.RexNode;
 import org.apache.calcite.sql.SqlKind;
 import org.apache.calcite.sql.type.SqlTypeName;
 import org.apache.calcite.util.ImmutableBitSet;
@@ -285,10 +284,9 @@ public class MiniDbAggregate extends Aggregate implements MiniDbRel {
                         }
                         outCol++;
                     }
-                    int col = groupCount;
                     List<Accumulator> accs = e.getValue().accs;
                     for (int i = 0; i < accs.size(); i++) {
-                        accs.get(i).write(vectors.get(col + i), row);
+                        accs.get(i).write(vectors.get(groupCount + i), row);
                     }
                     row++;
                 }
@@ -378,21 +376,13 @@ public class MiniDbAggregate extends Aggregate implements MiniDbRel {
     }
 
     private static NumericDomain domainOf(SqlTypeName t) {
-        switch (t) {
-            case SMALLINT:
-            case INTEGER:
-            case BIGINT:
-                return NumericDomain.INTEGRAL;
-            case DECIMAL:
-                return NumericDomain.DECIMAL;
-            case REAL:
-            case FLOAT:
-            case DOUBLE:
-                return NumericDomain.FLOATING;
-            default:
-                throw new UnsupportedOperationException(
-                        "unsupported aggregate argument type: " + t);
-        }
+        return switch (t) {
+            case SMALLINT, INTEGER, BIGINT -> NumericDomain.INTEGRAL;
+            case DECIMAL -> NumericDomain.DECIMAL;
+            case REAL, FLOAT, DOUBLE -> NumericDomain.FLOATING;
+            default -> throw new UnsupportedOperationException(
+                    "unsupported aggregate argument type: " + t);
+        };
     }
 
     /** 判断聚合调用是否需要精度提升(由 AggregateAvgPrecisionRule 在逻辑层处理)。
@@ -867,16 +857,12 @@ public class MiniDbAggregate extends Aggregate implements MiniDbRel {
 
     /** Reads a numeric value as double for variance/stddev, regardless of domain. */
     private static double readAsDouble(ValueVector v, int row, NumericDomain domain) {
-        switch (domain) {
-            case INTEGRAL:
-                return readLong(v, row);
-            case DECIMAL:
-                return readDecimal(v, row).doubleValue();
-            case FLOATING:
-                return readDouble(v, row);
-            default:
-                throw new UnsupportedOperationException("unexpected domain: " + domain);
-        }
+        return switch (domain) {
+            case INTEGRAL -> readLong(v, row);
+            case DECIMAL -> readDecimal(v, row).doubleValue();
+            case FLOATING -> readDouble(v, row);
+            default -> throw new UnsupportedOperationException("unexpected domain: " + domain);
+        };
     }
 
     @SuppressWarnings({"rawtypes", "unchecked"})

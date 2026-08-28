@@ -73,7 +73,7 @@ public final class ConstraintChecker {
                 }
             }
         }
-        validateForeignKeys(ctx, schema, target, batch);
+        validateForeignKeys(ctx, schema, batch);
     }
 
     /** 索引表前缀范围扫描,行级确认存在「索引列 == prefix」的行(过滤超集窗口的其他键)。 */
@@ -174,8 +174,7 @@ public final class ConstraintChecker {
     }
 
     /** 外键 INSERT 校验:child 行的外键列值必须存在于引用表(含 null 的键不校验)。 */
-    private static void validateForeignKeys(ExecContext ctx, TableSchema schema,
-                                            TableHandle target, VectorSchemaRoot batch) {
+    private static void validateForeignKeys(ExecContext ctx, TableSchema schema, VectorSchemaRoot batch) {
         for (ForeignKey fk : schema.foreignKeys()) {
             TableHandle refTable = ctx.getTable(fk.refSchema(), fk.refTable());
             List<String> refColumns = fk.refColumns().isEmpty()

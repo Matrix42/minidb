@@ -12,7 +12,6 @@ import java.util.ArrayList;
 import java.util.List;
 import java.util.regex.Pattern;
 import org.apache.arrow.memory.BufferAllocator;
-import org.apache.arrow.vector.FieldVector;
 import org.apache.arrow.vector.IntVector;
 import org.apache.arrow.vector.SmallIntVector;
 import org.apache.arrow.vector.VarCharVector;
@@ -153,18 +152,6 @@ public class MetadataExecutor {
 
     private static Field field(String name) {
         return new Field(name, FieldType.nullable(VARCHAR), java.util.List.of());
-    }
-
-    private VectorSchemaRoot emptyRoot(List<Field> fields) {
-        VectorSchemaRoot root = VectorSchemaRoot.of(fields.stream()
-                .map(f -> {
-                    FieldVector v = f.createVector(allocator);
-                    v.allocateNew();
-                    return v;
-                })
-                .toArray(FieldVector[]::new));
-        root.setRowCount(0);
-        return root;
     }
 
     public VectorSchemaRoot columns(String schemaPattern, String tableNamePattern, String columnNamePattern) {

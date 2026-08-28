@@ -406,7 +406,7 @@ public final class BuiltInFunctions {
 
     /** REPEAT(str, n):串重复 n 次,n<=0 空串。 */
     private static Function repeatFunction() {
-        Kernel kernel = (args, out) -> repeat(args, out);
+        Kernel kernel = BuiltInFunctions::repeat;
         return new Function(SqlLibraryOperators.REPEAT.getName(), List.of(
                 new Overload(List.of(VarCharVector.class, IntVector.class), VarCharVector.class, kernel),
                 new Overload(List.of(VarCharVector.class, BigIntVector.class), VarCharVector.class, kernel)));
@@ -526,7 +526,7 @@ public final class BuiltInFunctions {
     /** CHR(n):code point 转字符。0 返回 NUL 字符(与 Calcite 常量折叠的 charFromUtf8 一致,
      * 保证常量与列求值结果相同;VARCHAR 能存 NUL,无需 PostgreSQL 那套「存储受限才返 null」)。 */
     private static Function chrFunction() {
-        Kernel kernel = (args, out) -> chr(args, out);
+        Kernel kernel = BuiltInFunctions::chr;
         return new Function(SqlLibraryOperators.CHR.getName(), List.of(
                 new Overload(List.of(IntVector.class), VarCharVector.class, kernel),
                 new Overload(List.of(BigIntVector.class), VarCharVector.class, kernel)));
@@ -547,7 +547,7 @@ public final class BuiltInFunctions {
 
     /** SPLIT_PART(str, delim, n):按 delim 切分取第 n 段(1-based),越界/空 delim 返回空串。 */
     private static Function splitPartFunction() {
-        Kernel kernel = (args, out) -> splitPart(args, out);
+        Kernel kernel = BuiltInFunctions::splitPart;
         return new Function(SqlLibraryOperators.SPLIT_PART.getName(), List.of(
                 new Overload(List.of(VarCharVector.class, VarCharVector.class, IntVector.class),
                         VarCharVector.class, kernel),
@@ -611,7 +611,7 @@ public final class BuiltInFunctions {
             String s = new String(str.get(i), StandardCharsets.UTF_8);
             String p = new String(pattern.get(i), StandardCharsets.UTF_8);
             boolean matches = likeToRegex(p).matcher(s).matches();
-            result.setSafe(i, (negate ? !matches : matches) ? 1 : 0);
+            result.setSafe(i, (negate != matches) ? 1 : 0);
         }
     }
 
@@ -926,7 +926,7 @@ public final class BuiltInFunctions {
 
     private static ScalarKernels.FloatBinary floatKernel(SqlOperator op) {
         if (op == SqlStdOperatorTable.PLUS) {
-            return (a, b) -> a + b;
+            return Float::sum;
         }
         if (op == SqlStdOperatorTable.MINUS) {
             return (a, b) -> a - b;

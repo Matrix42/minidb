@@ -14,7 +14,7 @@ class TpcdsTemplateParserTest {
         TpcdsTemplateParser parser = new TpcdsTemplateParser();
         String tpl = "define YEAR = random(1998, 2002, uniform);\n\n"
                 + "select * from t where d_year = [YEAR];\n";
-        String sql = parser.parseTemplate(tpl, 1.0, 1);
+        String sql = parser.parseTemplate(tpl, 1);
         assertFalse(sql.contains("define"), "define 应被移除");
         assertFalse(sql.contains("["), "替换应完成: " + sql);
         assertTrue(sql.contains("d_year = "), "应保留 SQL 主体");
@@ -24,14 +24,14 @@ class TpcdsTemplateParserTest {
     void reproducible() {
         TpcdsTemplateParser parser = new TpcdsTemplateParser();
         String tpl = "define X = random(1, 100, uniform);\nselect [X];\n";
-        assertEquals(parser.parseTemplate(tpl, 1.0, 1), parser.parseTemplate(tpl, 1.0, 1));
+        assertEquals(parser.parseTemplate(tpl, 1), parser.parseTemplate(tpl, 1));
     }
 
     @Test
     void textPicksCandidate() {
         TpcdsTemplateParser parser = new TpcdsTemplateParser();
         String tpl = "define AGG = text({\"a\",1},{\"b\",1});\nselect [AGG] from t;\n";
-        String sql = parser.parseTemplate(tpl, 1.0, 1);
+        String sql = parser.parseTemplate(tpl, 1);
         assertTrue(sql.contains("select a") || sql.contains("select b"), sql);
     }
 
@@ -40,7 +40,7 @@ class TpcdsTemplateParserTest {
         TpcdsTemplateParser parser = new TpcdsTemplateParser();
         String tpl = "define N = ulist(random(1, 1000, uniform), 3);\n"
                 + "select [N.1], [N.2], [N.3];\n";
-        String sql = parser.parseTemplate(tpl, 1.0, 1);
+        String sql = parser.parseTemplate(tpl, 1);
         assertFalse(sql.contains("[N"), "应替换 [N.N]: " + sql);
         assertTrue(sql.matches("(?s)select \\d+, \\d+, \\d+.*"), sql);
     }
@@ -49,14 +49,14 @@ class TpcdsTemplateParserTest {
     void limitExpansion() {
         TpcdsTemplateParser parser = new TpcdsTemplateParser();
         String tpl = "define _LIMIT = 100;\nselect * from t [_LIMITC];\n";
-        String sql = parser.parseTemplate(tpl, 1.0, 1);
+        String sql = parser.parseTemplate(tpl, 1);
         assertTrue(sql.contains("limit 100"), "应展开 limit: " + sql);
     }
 
     @Test
     void parsesAllRealTemplates() throws Exception {
         TpcdsTemplateParser parser = new TpcdsTemplateParser();
-        Map<String, String> sqls = parser.parseBundled(1.0);
+        Map<String, String> sqls = parser.parseBundled();
         assertEquals(99, sqls.size());
         for (Map.Entry<String, String> e : sqls.entrySet()) {
             String sql = e.getValue();

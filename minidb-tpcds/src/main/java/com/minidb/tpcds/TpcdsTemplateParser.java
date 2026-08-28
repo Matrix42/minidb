@@ -48,7 +48,7 @@ public class TpcdsTemplateParser {
     private static final Pattern VAR_REF =
             Pattern.compile("\\[([A-Za-z_][A-Za-z_0-9]*)(?:\\.([0-9]+))?\\]");
 
-    public Map<String, String> parseAll(Path templateDir, double scale) throws IOException {
+    public Map<String, String> parseAll(Path templateDir) throws IOException {
         // 数字序(query1, query2, ..., query99),而非字典序(query1, query10, ...)。
         Map<String, String> result = new TreeMap<>((a, b) ->
                 Integer.compare(queryNumber(a), queryNumber(b)));
@@ -56,7 +56,7 @@ public class TpcdsTemplateParser {
             for (Path p : ds) {
                 String fileName = p.getFileName().toString();
                 String queryName = fileName.substring(0, fileName.length() - 4);
-                result.put(queryName, parseTemplate(Files.readString(p), scale, queryNumber(queryName)));
+                result.put(queryName, parseTemplate(Files.readString(p), queryNumber(queryName)));
             }
         }
         return result;
@@ -72,7 +72,7 @@ public class TpcdsTemplateParser {
     /**
      * 从模块内置 resources 读 99 个查询模板(无需外部 DSGen 工具),语义同 {@link #parseAll}。
      */
-    public Map<String, String> parseBundled(double scale) throws IOException {
+    public Map<String, String> parseBundled() throws IOException {
         Map<String, String> result = new TreeMap<>((a, b) ->
                 Integer.compare(queryNumber(a), queryNumber(b)));
         for (int i = 1; i <= 99; i++) {
@@ -83,13 +83,13 @@ public class TpcdsTemplateParser {
                     throw new IOException("内置模板缺失: " + BUNDLED_TEMPLATE_DIR + name);
                 }
                 result.put("query" + i,
-                        parseTemplate(new String(in.readAllBytes(), StandardCharsets.UTF_8), scale, i));
+                        parseTemplate(new String(in.readAllBytes(), StandardCharsets.UTF_8), i));
             }
         }
         return result;
     }
 
-    public String parseTemplate(String tpl, double scale, int queryNumber) {
+    public String parseTemplate(String tpl, int queryNumber) {
         random.setSeed(42);
         Map<String, Value> vars = new HashMap<>();
         // 方言默认(适配 Calcite 的 LIMIT):_LIMITA/_LIMITB 空,_LIMITC 展开为 limit n。
@@ -108,7 +108,7 @@ public class TpcdsTemplateParser {
                     def.append(' ').append(lines[i].strip());
                     trimmed = def.toString();
                 }
-                parseDefine(def.toString(), vars, scale);
+                parseDefine(def.toString(), vars);
             } else {
                 sql.append(lines[i]).append('\n');
             }
@@ -129,7 +129,7 @@ public class TpcdsTemplateParser {
         return semi >= 0 ? text.substring(0, semi) : text;
     }
 
-    private void parseDefine(String line, Map<String, Value> vars, double scale) {
+    private void parseDefine(String line, Map<String, Value> vars) {
         String body = line.substring("define ".length()).trim();
         int eq = body.indexOf('=');
         String name = body.substring(0, eq).trim();
@@ -137,10 +137,10 @@ public class TpcdsTemplateParser {
         if (expr.endsWith(";")) {
             expr = expr.substring(0, expr.length() - 1);
         }
-        vars.put(name, evalExpr(expr.trim(), vars, scale));
+        vars.put(name, evalExpr(expr.trim(), vars));
     }
 
-    private Value evalExpr(String expr, Map<String, Value> vars, double scale) {
+    private Value evalExpr(String expr, Map<String, Value> vars) {
         expr = expr.trim();
         if (expr.matches("-?\\d+")) {
             return new IntValue(Integer.parseInt(expr));
@@ -154,14 +154,14 @@ public class TpcdsTemplateParser {
         }
         Matcher fn = Pattern.compile("^([a-zA-Z_]+)\\((.*)\\)$", Pattern.DOTALL).matcher(expr);
         if (fn.matches()) {
-            return evalFunction(fn.group(1), fn.group(2), vars, scale);
+            return evalFunction(fn.group(1), fn.group(2), vars);
         }
         // 算术/字符串拼接(一层):找最外层 + - * /。
         for (char op : new char[]{'+', '-', '*', '/'}) {
             int idx = topLevelOperator(expr, op);
             if (idx > 0) {
-                Value left = evalExpr(expr.substring(0, idx), vars, scale);
-                Value right = evalExpr(expr.substring(idx + 1), vars, scale);
+                Value left = evalExpr(expr.substring(0, idx), vars);
+                Value right = evalExpr(expr.substring(idx + 1), vars);
                 if (op == '+' && (left instanceof StrValue || right instanceof StrValue)) {
                     return new StrValue(valueToString(left) + valueToString(right));
                 }
@@ -192,12 +192,12 @@ public class TpcdsTemplateParser {
         return v != null ? v : new StrValue("");
     }
 
-    private Value evalFunction(String name, String args, Map<String, Value> vars, double scale) {
+    private Value evalFunction(String name, String args, Map<String, Value> vars) {
         return switch (name) {
             case "random" -> evalRandom(args, vars);
             case "rowcount" -> evalRowCount(args);
             case "distmember", "dist" -> evalDist(args, vars);
-            case "text" -> evalText(args, vars);
+            case "text" -> evalText(args);
             case "ulist", "list", "range" -> evalList(args, vars);
             case "date" -> new StrValue("2000-01-01");
             case "scalestep" -> new IntValue(1);
@@ -207,8 +207,8 @@ public class TpcdsTemplateParser {
 
     private Value evalRandom(String args, Map<String, Value> vars) {
         String[] parts = splitArgs(args);
-        int a = asInt(evalExpr(parts[0], vars, 1.0));
-        int b = asInt(evalExpr(parts[1], vars, 1.0));
+        int a = asInt(evalExpr(parts[0], vars));
+        int b = asInt(evalExpr(parts[1], vars));
         if (b < a) {
             return new IntValue(a);
         }
@@ -224,11 +224,11 @@ public class TpcdsTemplateParser {
     private Value evalDist(String args, Map<String, Value> vars) {
         String[] parts = splitArgs(args);
         String distName = parts[0].trim().replace("\"", "").toLowerCase();
-        int columnIdx = parts.length >= 2 ? asInt(evalExpr(parts[1], vars, 1.0)) : 1;
+        int columnIdx = parts.length >= 2 ? asInt(evalExpr(parts[1], vars)) : 1;
         return new StrValue(distCandidate(distName, columnIdx));
     }
 
-    private Value evalText(String args, Map<String, Value> vars) {
+    private Value evalText(String args) {
         // text({literal, weight}, ...):按权重随机选一个字符串。
         List<String[]> candidates = new ArrayList<>();
         for (String part : splitArgs(args)) {
@@ -263,7 +263,7 @@ public class TpcdsTemplateParser {
         int n = Integer.parseInt(parts[1].trim());
         List<Value> list = new ArrayList<>(n);
         for (int i = 0; i < n; i++) {
-            list.add(evalExpr(parts[0], vars, 1.0));
+            list.add(evalExpr(parts[0], vars));
         }
         return new ListValue(list);
     }
@@ -282,7 +282,7 @@ public class TpcdsTemplateParser {
 
     private String replaceSubstitutions(String text, Map<String, Value> vars, int queryNumber) {
         Matcher m = VAR_REF.matcher(text);
-        StringBuffer sb = new StringBuffer();
+        StringBuilder sb = new StringBuilder();
         while (m.find()) {
             String replacement = resolve(m.group(1), m.group(2), vars, queryNumber);
             m.appendReplacement(sb, Matcher.quoteReplacement(replacement));
@@ -391,7 +391,7 @@ public class TpcdsTemplateParser {
                 cur.append(c);
             }
         }
-        if (cur.length() > 0) {
+        if (!cur.isEmpty()) {
             args.add(cur.toString().trim());
         }
         return args.toArray(String[]::new);

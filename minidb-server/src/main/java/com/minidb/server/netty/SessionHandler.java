@@ -68,7 +68,7 @@ public class SessionHandler extends SimpleChannelInboundHandler<Message> {
 
     @Override
     protected void channelRead0(ChannelHandlerContext ctx, Message msg) {
-        if (msg instanceof Message.Handshake h) {
+        if (msg instanceof Message.Handshake) {
             ctx.writeAndFlush(new Message.HandshakeAck(Protocol.VERSION));
         } else if (msg instanceof Message.ExecuteRequest req) {
             handleExecute(ctx, req);
@@ -266,7 +266,6 @@ public class SessionHandler extends SimpleChannelInboundHandler<Message> {
             CursorHandle handle = cursor.handle();
             BufferAllocator allocator = handle.context().allocator();
             Paginator paginator = new Paginator(handle.iterator(), handle.schema(), allocator);
-            boolean retained = false;
             try {
                 int pageSize = req.fetchSize() > 0 ? req.fetchSize() : DEFAULT_FETCH_SIZE;
                 VectorSchemaRoot page = paginator.nextPage(pageSize);
@@ -279,12 +278,9 @@ public class SessionHandler extends SimpleChannelInboundHandler<Message> {
                     paginator.close();
                 } else {
                     cursors.put(req.requestId(), paginator);
-                    retained = true;
                 }
             } catch (Exception e) {
-                if (!retained) {
-                    paginator.close();
-                }
+                paginator.close();
                 throw e;
             }
         }

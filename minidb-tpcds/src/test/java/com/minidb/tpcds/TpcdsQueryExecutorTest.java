@@ -42,7 +42,7 @@ class TpcdsQueryExecutorTest {
             StatsManager stats = new StatsManager(storage);
             QueryExecutor executor = new QueryExecutor(catalog, storage, allocator, stats);
 
-            Map<String, String> queries = new TpcdsTemplateParser().parseBundled(0.01);
+            Map<String, String> queries = new TpcdsTemplateParser().parseBundled();
             assertEquals(99, queries.size(), "应内置 99 条查询");
 
             // 收集所有失败(而非首个即中断),便于一次性看清哪些查询有问题。

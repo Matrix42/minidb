@@ -47,7 +47,7 @@ public final class HistogramBuilder {
         long totalRows = values.size();
         long distinctCount = distinctCount(values, type);
         List<Histogram.McValue> mcv = topMcv(values);
-        List<Histogram.Bucket> buckets = equiDepth(values, totalRows);
+        List<Histogram.Bucket> buckets = equiDepth(values);
         return new Histogram(type, buckets, mcv, distinctCount, nullCount, totalRows);
     }
 
@@ -94,7 +94,7 @@ public final class HistogramBuilder {
                 .toList();
     }
 
-    private static List<Histogram.Bucket> equiDepth(List<Comparable<?>> sorted, long total) {
+    private static List<Histogram.Bucket> equiDepth(List<Comparable<?>> sorted) {
         List<Histogram.Bucket> buckets = new ArrayList<>();
         int n = sorted.size();
         int bcount = Math.min(BUCKET_COUNT, n);
@@ -123,7 +123,7 @@ public final class HistogramBuilder {
         String s = (String) c;
         return switch (type) {
             case INTEGER, BIGINT, SMALLINT, DOUBLE, REAL, FLOAT, DECIMAL, NUMERIC,
-                 DATE, TIME, TIMESTAMP -> (Comparable<Object>) (Comparable) Double.valueOf(Double.parseDouble(s));
+                 DATE, TIME, TIMESTAMP -> (Comparable<Object>) (Comparable) Double.parseDouble(s);
             case BOOLEAN -> (Comparable<Object>) (Comparable) Boolean.valueOf(s);
             default -> (Comparable<Object>) (Comparable) s;
         };

@@ -21,7 +21,7 @@ class TpcdsEndToEndTest {
         new TpcdsDataGenerator().generate(0.01, dataDir);
 
         // 2. 解析内置 99 个查询,只跑前 10 个保持测试快
-        Map<String, String> all = new TpcdsTemplateParser().parseBundled(0.01);
+        Map<String, String> all = new TpcdsTemplateParser().parseBundled();
         Map<String, String> subset = new LinkedHashMap<>();
         int i = 0;
         for (Map.Entry<String, String> e : all.entrySet()) {

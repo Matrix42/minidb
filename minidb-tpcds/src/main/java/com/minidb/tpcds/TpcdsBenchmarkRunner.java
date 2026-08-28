@@ -228,7 +228,7 @@ public class TpcdsBenchmarkRunner {
             return;
         }
         recording.stop();
-        try {
+        try (recording) {
             Path jfrFile = Files.createTempFile("tpcds-jfr-", ".jfr");
             try {
                 recording.dump(jfrFile);
@@ -241,8 +241,6 @@ public class TpcdsBenchmarkRunner {
                     // 清理临时文件失败,不影响主流程
                 }
             }
-        } finally {
-            recording.close();
         }
     }
 }

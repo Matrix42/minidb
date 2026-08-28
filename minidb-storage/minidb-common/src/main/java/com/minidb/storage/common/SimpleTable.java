@@ -428,8 +428,7 @@ public class SimpleTable implements TableHandle {
         int outRows = 0;
         try {
             for (Path part : parts) {
-                VectorSchemaRoot batch = format.read(part, arrowSchema, allocator);
-                try {
+                try (VectorSchemaRoot batch = format.read(part, arrowSchema, allocator)) {
                     for (int r = 0; r < batch.getRowCount(); r++) {
                         if (out == null) {
                             out = newBatchRoot();
@@ -444,8 +443,6 @@ public class SimpleTable implements TableHandle {
                             out = null;
                         }
                     }
-                } finally {
-                    batch.close();
                 }
             }
             if (out != null) {

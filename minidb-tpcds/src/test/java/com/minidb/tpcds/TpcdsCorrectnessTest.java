@@ -80,7 +80,7 @@ class TpcdsCorrectnessTest {
 
                 registerTables(duckStmt, catalog, dataDir);
 
-                Map<String, String> queries = new TpcdsTemplateParser().parseBundled(SCALE);
+                Map<String, String> queries = new TpcdsTemplateParser().parseBundled();
                 int limit = "true".equals(System.getProperty("tpcds.full")) ? 99 : DEFAULT_LIMIT;
                 // 支持只跑指定查询号:-Dtpcds.query=5,14,22
                 String queryFilter = System.getProperty("tpcds.query");

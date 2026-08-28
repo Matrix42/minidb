@@ -17,6 +17,7 @@ import java.time.ZoneOffset;
 import java.time.temporal.ChronoField;
 import java.time.temporal.WeekFields;
 import java.util.ArrayList;
+import java.util.Arrays;
 import java.util.Calendar;
 import java.util.List;
 import java.util.Objects;
@@ -37,6 +38,7 @@ import org.apache.arrow.vector.ValueVector;
 import org.apache.arrow.vector.VarBinaryVector;
 import org.apache.arrow.vector.VarCharVector;
 import org.apache.arrow.vector.VectorSchemaRoot;
+import org.apache.calcite.avatica.util.ByteString;
 import org.apache.calcite.avatica.util.TimeUnitRange;
 import org.apache.calcite.rel.type.RelDataType;
 import org.apache.calcite.rex.RexCall;
@@ -200,12 +202,9 @@ public class RexInterpreter {
         int rows = input.getRowCount();
         boolean[] stateNull = new boolean[rows];
         int[] stateValue = new int[rows];
-        for (int i = 0; i < rows; i++) {
-            stateValue[i] = isAnd ? 1 : 0;
-        }
+        Arrays.fill(stateValue, isAnd ? 1 : 0);
         for (RexNode operand : operands) {
-            ValueVector v = eval(operand, input);
-            try {
+            try (ValueVector v = eval(operand, input)) {
                 for (int i = 0; i < rows; i++) {
                     boolean accNull = stateNull[i];
                     int acc = accNull ? (isAnd ? 1 : 0) : stateValue[i];
@@ -224,8 +223,6 @@ public class RexInterpreter {
                     }
                     stateValue[i] = isAnd ? (acc & val) : (acc | val);
                 }
-            } finally {
-                v.close();
             }
         }
         BitVector out = new BitVector(isAnd ? "and" : "or", allocator);
@@ -243,8 +240,7 @@ public class RexInterpreter {
 
     private ValueVector not(RexNode operand, VectorSchemaRoot input) {
         int rows = input.getRowCount();
-        ValueVector v = eval(operand, input);
-        try {
+        try (ValueVector v = eval(operand, input)) {
             BitVector out = new BitVector("not", allocator);
             out.allocateNew(rows);
             for (int i = 0; i < rows; i++) {
@@ -256,8 +252,6 @@ public class RexInterpreter {
             }
             out.setValueCount(rows);
             return out;
-        } finally {
-            v.close();
         }
     }
 
@@ -268,18 +262,15 @@ public class RexInterpreter {
      */
     private ValueVector nullTest(RexNode operand, VectorSchemaRoot input, boolean isNull) {
         int rows = input.getRowCount();
-        ValueVector v = eval(operand, input);
-        try {
+        try (ValueVector v = eval(operand, input)) {
             BitVector out = new BitVector(isNull ? "is_null" : "is_not_null", allocator);
             out.allocateNew(rows);
             for (int i = 0; i < rows; i++) {
-                boolean nullResult = isNull ? v.isNull(i) : !v.isNull(i);
+                boolean nullResult = isNull == v.isNull(i);
                 out.setSafe(i, nullResult ? 1 : 0);
             }
             out.setValueCount(rows);
             return out;
-        } finally {
-            v.close();
         }
     }
 
@@ -292,9 +283,7 @@ public class RexInterpreter {
     private ValueVector nullSafeComparison(RexNode left, RexNode right,
                                            VectorSchemaRoot input, boolean isNotDistinct) {
         int rows = input.getRowCount();
-        ValueVector l = eval(left, input);
-        ValueVector r = eval(right, input);
-        try {
+        try (ValueVector l = eval(left, input); ValueVector r = eval(right, input)) {
             BitVector out = new BitVector(
                     isNotDistinct ? "is_not_distinct_from" : "is_distinct_from", allocator);
             out.allocateNew(rows);
@@ -309,15 +298,12 @@ public class RexInterpreter {
                 } else {
                     boolean eq = Objects.equals(
                             RowVectors.readObject(l, i), RowVectors.readObject(r, i));
-                    result = isNotDistinct ? eq : !eq;
+                    result = isNotDistinct == eq;
                 }
                 out.setSafe(i, result ? 1 : 0);
             }
             out.setValueCount(rows);
             return out;
-        } finally {
-            l.close();
-            r.close();
         }
     }
 
@@ -341,7 +327,7 @@ public class RexInterpreter {
                     result = negate;
                 } else {
                     boolean bitMatches = (((BitVector) v).get(i) == 1) == testTrue;
-                    result = negate ? !bitMatches : bitMatches;
+                    result = negate != bitMatches;
                 }
                 out.setSafe(i, result ? 1 : 0);
             }
@@ -359,9 +345,8 @@ public class RexInterpreter {
     private ValueVector evalExtract(RexCall call, VectorSchemaRoot input) {
         TimeUnitRange range = ((RexLiteral) call.getOperands().get(0))
                 .getValueAs(TimeUnitRange.class);
-        ValueVector v = eval(call.getOperands().get(1), input);
-        int rows = input.getRowCount();
-        try {
+        try (ValueVector v = eval(call.getOperands().get(1), input)) {
+            int rows = input.getRowCount();
             BigIntVector out = new BigIntVector("extract", allocator);
             out.allocateNew(rows);
             for (int i = 0; i < rows; i++) {
@@ -373,8 +358,6 @@ public class RexInterpreter {
             }
             out.setValueCount(rows);
             return out;
-        } finally {
-            v.close();
         }
     }
 
@@ -437,7 +420,7 @@ public class RexInterpreter {
                 if (cv instanceof String s) {
                     cv = new NlsString(s, null, null);
                 }
-                boolean contains = ((RangeSet) sarg.rangeSet).contains(cv);
+                boolean contains = sarg.rangeSet.contains(cv);
                 out.setSafe(i, contains ? 1 : 0);
             }
             out.setValueCount(rows);
@@ -486,7 +469,7 @@ public class RexInterpreter {
                 || outTypeName == SqlTypeName.BIGINT
                 || outTypeName == SqlTypeName.SMALLINT);
         if (needFloat) {
-            boolean anyFloat = elseV != null && isFloatingVector(elseV);
+            boolean anyFloat = isFloatingVector(elseV);
             for (ValueVector t : thens) {
                 if (isFloatingVector(t)) {
                     anyFloat = true;
@@ -589,8 +572,7 @@ public class RexInterpreter {
     }
 
     private ValueVector evalCast(RexCall call, VectorSchemaRoot input) {
-        ValueVector v = eval(call.getOperands().get(0), input);
-        try {
+        try (ValueVector v = eval(call.getOperands().get(0), input)) {
             ColumnType target = ArrowTypes.fromSqlTypeName(call.getType().getSqlTypeName().getName());
             int precision = ColumnMeta.PRECISION_UNSET;
             int scale = ColumnMeta.SCALE_UNSET;
@@ -603,8 +585,6 @@ public class RexInterpreter {
                 }
             }
             return VectorCasts.cast(v, target, precision, scale, allocator);
-        } finally {
-            v.close();
         }
     }
 
@@ -683,7 +663,7 @@ public class RexInterpreter {
                 VarCharVector out = new VarCharVector("lit", allocator);
                 out.allocateNew();
                 byte[] bytes = literal.getValueAs(String.class)
-                        .getBytes(java.nio.charset.StandardCharsets.UTF_8);
+                        .getBytes(StandardCharsets.UTF_8);
                 for (int i = 0; i < rows; i++) {
                     out.setSafe(i, bytes);
                 }
@@ -693,7 +673,7 @@ public class RexInterpreter {
             case BOOLEAN: {
                 BitVector out = new BitVector("lit", allocator);
                 out.allocateNew(rows);
-                boolean value = literal.getValueAs(Boolean.class);
+                boolean value = Boolean.TRUE.equals(literal.getValueAs(Boolean.class));
                 for (int i = 0; i < rows; i++) {
                     out.setSafe(i, value ? 1 : 0);
                 }
@@ -755,53 +735,24 @@ public class RexInterpreter {
 
     private ValueVector nullLiteral(RelDataType type, int rows) {
         SqlTypeName typeName = type.getSqlTypeName();
-        ValueVector out;
-        switch (typeName) {
-            case TINYINT:
-            case INTEGER:
-                out = new IntVector("lit", allocator);
-                break;
-            case SMALLINT:
-                out = new SmallIntVector("lit", allocator);
-                break;
-            case BIGINT:
-                out = new BigIntVector("lit", allocator);
-                break;
-            case REAL:
-            case FLOAT:
-                out = new Float4Vector("lit", allocator);
-                break;
-            case DOUBLE:
-                out = new Float8Vector("lit", allocator);
-                break;
-            case DECIMAL:
+        ValueVector out = switch (typeName) {
+            case TINYINT, INTEGER -> new IntVector("lit", allocator);
+            case SMALLINT -> new SmallIntVector("lit", allocator);
+            case BIGINT -> new BigIntVector("lit", allocator);
+            case REAL, FLOAT -> new Float4Vector("lit", allocator);
+            case DOUBLE -> new Float8Vector("lit", allocator);
+            case DECIMAL ->
                 // DecimalVector 构造需要 precision/scale,经 ArrowTypes.field 从 RelDataType 取。
-                out = ArrowTypes.field(type, "lit").createVector(allocator);
-                break;
-            case CHAR:
-            case VARCHAR:
-                out = new VarCharVector("lit", allocator);
-                break;
-            case BOOLEAN:
-                out = new BitVector("lit", allocator);
-                break;
-            case DATE:
-                out = new DateDayVector("lit", allocator);
-                break;
-            case TIME:
-                out = new TimeMilliVector("lit", allocator);
-                break;
-            case TIMESTAMP:
-                out = new TimeStampMilliVector("lit", allocator);
-                break;
-            case BINARY:
-            case VARBINARY:
-                out = new VarBinaryVector("lit", allocator);
-                break;
-            default:
-                throw new UnsupportedOperationException(
-                        "unsupported literal type: " + typeName);
-        }
+                    ArrowTypes.field(type, "lit").createVector(allocator);
+            case CHAR, VARCHAR -> new VarCharVector("lit", allocator);
+            case BOOLEAN -> new BitVector("lit", allocator);
+            case DATE -> new DateDayVector("lit", allocator);
+            case TIME -> new TimeMilliVector("lit", allocator);
+            case TIMESTAMP -> new TimeStampMilliVector("lit", allocator);
+            case BINARY, VARBINARY -> new VarBinaryVector("lit", allocator);
+            default -> throw new UnsupportedOperationException(
+                    "unsupported literal type: " + typeName);
+        };
         out.setInitialCapacity(rows);
         out.allocateNew();
         out.setValueCount(rows); // all null by default
@@ -812,10 +763,7 @@ public class RexInterpreter {
      * 旧版本可能存 byte[] 或 BitString,三者都兼容。 */
     private static byte[] literalBytes(RexLiteral literal) {
         Object raw = literal.getValue();
-        if (raw instanceof byte[] bytes) {
-            return bytes;
-        }
-        if (raw instanceof org.apache.calcite.avatica.util.ByteString byteString) {
+        if (raw instanceof ByteString byteString) {
             return byteString.getBytes();
         }
         if (raw instanceof org.apache.calcite.util.BitString bitString) {

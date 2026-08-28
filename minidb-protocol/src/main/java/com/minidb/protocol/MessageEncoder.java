@@ -83,8 +83,8 @@ public class MessageEncoder extends MessageToByteEncoder<Message> {
             byte[] tp = bytes(r.tableNamePattern());
             int typesLen = r.types() == null ? -1 : r.types().length;
             int body = 8 + 4 + sp.length + 4 + tp.length + 4;
-            byte[][] typeBytes = new byte[typesLen < 0 ? 0 : typesLen][];
-            for (int i = 0; i < (typesLen < 0 ? 0 : typesLen); i++) {
+            byte[][] typeBytes = new byte[Math.max(typesLen, 0)][];
+            for (int i = 0; i < (Math.max(typesLen, 0)); i++) {
                 typeBytes[i] = bytes(r.types()[i]);
                 body += 4 + typeBytes[i].length;
             }
@@ -96,7 +96,7 @@ public class MessageEncoder extends MessageToByteEncoder<Message> {
             out.writeInt(r.tableNamePattern() == null ? -1 : tp.length);
             if (tp.length > 0) out.writeBytes(tp);
             out.writeInt(typesLen);
-            for (int i = 0; i < (typesLen < 0 ? 0 : typesLen); i++) {
+            for (int i = 0; i < (Math.max(typesLen, 0)); i++) {
                 out.writeInt(typeBytes[i].length);
                 if (typeBytes[i].length > 0) out.writeBytes(typeBytes[i]);
             }

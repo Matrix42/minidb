@@ -81,7 +81,7 @@ public class MiniDbModify extends TableModify implements MiniDbRel {
 
     private void appendRows(ExecContext ctx, TableHandle target, BatchIterator input) {
         affected = 0;
-        try {
+        try (input) {
             while (input.hasNext()) {
                 VectorSchemaRoot batch = input.next();
                 validateInsert(ctx, target, batch);
@@ -114,8 +114,6 @@ public class MiniDbModify extends TableModify implements MiniDbRel {
                     copy.close();
                 }
             }
-        } finally {
-            input.close();
         }
         // 自动合并:part 数超过阈值时按配置目标大小合并。
         MiniDbConfig config = ctx.storage().config();
@@ -179,8 +177,8 @@ public class MiniDbModify extends TableModify implements MiniDbRel {
                 while (input.hasNext()) {
                     VectorSchemaRoot batch = input.next();
                     VectorSchemaRoot out = target.newBatchRoot();
-                    out.allocateNew();
-                    try {
+                    try (out) {
+                        out.allocateNew();
                         for (int i = 0; i < batch.getRowCount(); i++) {
                             // Copy table columns (old values) from input
                             for (int c = 0; c < numTableCols; c++) {
@@ -208,8 +206,6 @@ public class MiniDbModify extends TableModify implements MiniDbRel {
                             ctx.storage().indexManager().onUpdate(ts, batch, out);
                         }
                         affected += batch.getRowCount();
-                    } finally {
-                        out.close();
                     }
                 }
             }

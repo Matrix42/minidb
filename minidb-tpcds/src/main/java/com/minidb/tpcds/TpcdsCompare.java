@@ -5,6 +5,8 @@ import com.fasterxml.jackson.databind.ObjectMapper;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.util.ArrayList;
+import java.util.Arrays;
+import java.util.Comparator;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
@@ -46,16 +48,12 @@ public class TpcdsCompare {
         int n = names.size();
 
         // 按查询号排序对齐
-        TreeMap<String, long[]> aligned = new TreeMap<>((a, b) -> Integer.compare(
-                queryNumber(a), queryNumber(b)));
-        for (int i = 0; i < n; i++) {
-            int idx = i;
-            for (String qName : allResults.get(i).keySet()) {
+        TreeMap<String, long[]> aligned = new TreeMap<>(Comparator.comparingInt(TpcdsCompare::queryNumber));
+        for (int idx = 0; idx < n; idx++) {
+            for (String qName : allResults.get(idx).keySet()) {
                 long[] times = aligned.computeIfAbsent(qName, k -> {
                     long[] arr = new long[n];
-                    for (int j = 0; j < arr.length; j++) {
-                        arr[j] = -1;
-                    }
+                    Arrays.fill(arr, -1);
                     return arr;
                 });
                 times[idx] = allResults.get(idx).get(qName).elapsedMs();
@@ -73,7 +71,7 @@ public class TpcdsCompare {
         for (Map.Entry<String, long[]> e : aligned.entrySet()) {
             String qName = e.getKey();
             long[] times = e.getValue();
-            if (labels.length() > 0) {
+            if (!labels.isEmpty()) {
                 labels.append(", ");
                 for (int i = 0; i < n; i++) {
                     datasets[i].append(", ");

@@ -44,8 +44,8 @@ public class TpcdsBenchmark {
                         : null;
                 TpcdsTemplateParser parser = new TpcdsTemplateParser();
                 Map<String, String> queries = opts.containsKey("query-dir")
-                        ? parser.parseAll(Path.of(opts.get("query-dir")), scale)
-                        : parser.parseBundled(scale);
+                        ? parser.parseAll(Path.of(opts.get("query-dir")))
+                        : parser.parseBundled();
                 TpcdsBenchmarkRunner runner = new TpcdsBenchmarkRunner();
                 if (opts.containsKey("direct")) {
                     runner.runDirect(queries, dataDir, output, scale, name, timeoutMs,

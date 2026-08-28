@@ -49,60 +49,41 @@ public class MiniDbResultSetMetaData implements ResultSetMetaData {
         if (meta != null && meta.containsKey("minidb.type")) {
             return meta.get("minidb.type");
         }
-        switch (f.getType().getTypeID()) {
-            case Int:
-                return ((ArrowType.Int) f.getType()).getBitWidth() == 16 ? "SMALLINT"
-                        : ((ArrowType.Int) f.getType()).getBitWidth() == 32 ? "INTEGER" : "BIGINT";
-            case FloatingPoint:
-                return "DOUBLE";
-            case Decimal:
-                return "DECIMAL";
-            case Utf8:
-                return "VARCHAR";
-            case Bool:
-                return "BOOLEAN";
-            case Date:
-                return "DATE";
-            case Time:
-                return "TIME";
-            case Timestamp:
-                return "TIMESTAMP";
-            case Binary:
-                return "VARBINARY";
-            default:
-                return f.getType().getTypeID().name();
-        }
+        return switch (f.getType().getTypeID()) {
+            case Int -> ((ArrowType.Int) f.getType()).getBitWidth() == 16 ? "SMALLINT"
+                    : ((ArrowType.Int) f.getType()).getBitWidth() == 32 ? "INTEGER" : "BIGINT";
+            case FloatingPoint -> "DOUBLE";
+            case Decimal -> "DECIMAL";
+            case Utf8 -> "VARCHAR";
+            case Bool -> "BOOLEAN";
+            case Date -> "DATE";
+            case Time -> "TIME";
+            case Timestamp -> "TIMESTAMP";
+            case Binary -> "VARBINARY";
+            default -> f.getType().getTypeID().name();
+        };
     }
 
     @Override
     public int getColumnType(int column) throws SQLException {
         Field f = fields.get(column - 1);
-        switch (f.getType().getTypeID()) {
-            case Int: {
+        return switch (f.getType().getTypeID()) {
+            case Int -> {
                 int bitWidth = ((ArrowType.Int) f.getType()).getBitWidth();
-                return bitWidth == 16 ? java.sql.Types.SMALLINT
+                yield bitWidth == 16 ? java.sql.Types.SMALLINT
                         : bitWidth == 32 ? java.sql.Types.INTEGER : java.sql.Types.BIGINT;
             }
-            case FloatingPoint:
-                return ((ArrowType.FloatingPoint) f.getType()).getPrecision()
-                        == FloatingPointPrecision.SINGLE ? java.sql.Types.REAL : java.sql.Types.DOUBLE;
-            case Decimal:
-                return java.sql.Types.DECIMAL;
-            case Utf8:
-                return java.sql.Types.VARCHAR;
-            case Bool:
-                return java.sql.Types.BOOLEAN;
-            case Date:
-                return java.sql.Types.DATE;
-            case Time:
-                return java.sql.Types.TIME;
-            case Timestamp:
-                return java.sql.Types.TIMESTAMP;
-            case Binary:
-                return java.sql.Types.VARBINARY;
-            default:
-                return java.sql.Types.OTHER;
-        }
+            case FloatingPoint -> ((ArrowType.FloatingPoint) f.getType()).getPrecision()
+                    == FloatingPointPrecision.SINGLE ? java.sql.Types.REAL : java.sql.Types.DOUBLE;
+            case Decimal -> java.sql.Types.DECIMAL;
+            case Utf8 -> java.sql.Types.VARCHAR;
+            case Bool -> java.sql.Types.BOOLEAN;
+            case Date -> java.sql.Types.DATE;
+            case Time -> java.sql.Types.TIME;
+            case Timestamp -> java.sql.Types.TIMESTAMP;
+            case Binary -> java.sql.Types.VARBINARY;
+            default -> java.sql.Types.OTHER;
+        };
     }
 
     @Override
@@ -222,32 +203,23 @@ public class MiniDbResultSetMetaData implements ResultSetMetaData {
     @Override
     public String getColumnClassName(int column) {
         Field f = fields.get(column - 1);
-        switch (f.getType().getTypeID()) {
-            case Int: {
+        return switch (f.getType().getTypeID()) {
+            case Int -> {
                 int bw = ((ArrowType.Int) f.getType()).getBitWidth();
-                return bw == 16 ? Short.class.getName()
+                yield bw == 16 ? Short.class.getName()
                         : bw == 32 ? Integer.class.getName() : Long.class.getName();
             }
-            case FloatingPoint:
-                return ((ArrowType.FloatingPoint) f.getType()).getPrecision()
-                        == FloatingPointPrecision.SINGLE ? Float.class.getName() : Double.class.getName();
-            case Decimal:
-                return java.math.BigDecimal.class.getName();
-            case Utf8:
-                return String.class.getName();
-            case Bool:
-                return Boolean.class.getName();
-            case Date:
-                return java.sql.Date.class.getName();
-            case Time:
-                return java.sql.Time.class.getName();
-            case Timestamp:
-                return java.sql.Timestamp.class.getName();
-            case Binary:
-                return byte[].class.getName();
-            default:
-                return Object.class.getName();
-        }
+            case FloatingPoint -> ((ArrowType.FloatingPoint) f.getType()).getPrecision()
+                    == FloatingPointPrecision.SINGLE ? Float.class.getName() : Double.class.getName();
+            case Decimal -> java.math.BigDecimal.class.getName();
+            case Utf8 -> String.class.getName();
+            case Bool -> Boolean.class.getName();
+            case Date -> java.sql.Date.class.getName();
+            case Time -> java.sql.Time.class.getName();
+            case Timestamp -> java.sql.Timestamp.class.getName();
+            case Binary -> byte[].class.getName();
+            default -> Object.class.getName();
+        };
     }
 
     @Override

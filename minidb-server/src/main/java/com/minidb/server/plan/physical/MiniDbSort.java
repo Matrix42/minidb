@@ -57,12 +57,12 @@ public class MiniDbSort extends Sort implements MiniDbRel {
 
         int rows = materialized.getRowCount();
         IntVector indices = new IntVector("sort_indices", ctx.allocator());
-        indices.allocateNew(rows);
         // allocateNew 只分配 buffer 不设 valueCount,而 IndexSorter.quickSort 靠
         // getValueCount() 定排序范围,必须在这里显式设置,否则排序空转。
-        indices.setValueCount(rows);
-        VectorValueComparator<ValueVector> comparator = buildComparator(materialized);
-        try {
+        try (indices) {
+            indices.allocateNew(rows);
+            indices.setValueCount(rows);
+            VectorValueComparator<ValueVector> comparator = buildComparator(materialized);
             // Arrow 原生索引快排(arrow-algorithm),比较走 ValueComparators 的列式实现。
             new IndexSorter<ValueVector>().sort(materialized.getVector(0), indices, comparator);
 
@@ -86,7 +86,6 @@ public class MiniDbSort extends Sort implements MiniDbRel {
             out.setRowCount(outRows);
             materialized.close();
 
-            VectorSchemaRoot single = out;
             boolean emitted = false;
             return BatchIterator.interruptible(new BatchIterator() {
                 boolean done = emitted;
@@ -99,16 +98,14 @@ public class MiniDbSort extends Sort implements MiniDbRel {
                 @Override
                 public VectorSchemaRoot next() {
                     done = true;
-                    return single;
+                    return out;
                 }
 
                 @Override
                 public void close() {
-                    single.close();
+                    out.close();
                 }
             });
-        } finally {
-            indices.close();
         }
     }
 

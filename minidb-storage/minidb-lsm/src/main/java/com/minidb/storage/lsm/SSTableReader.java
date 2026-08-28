@@ -50,7 +50,6 @@ public class SSTableReader implements AutoCloseable {
                 throw new IllegalArgumentException("not a valid SSTable: " + file);
             }
             int level = footerBuf.get();
-            int blockCount = footerBuf.getInt();
             long rowCount = footerBuf.getLong();
             short minKeyLen = footerBuf.getShort();
             byte[] minKeyBytes = new byte[minKeyLen];
@@ -254,7 +253,6 @@ public class SSTableReader implements AutoCloseable {
                     channel.position(bi.offset);
                     readFully(channel, header);
                     header.flip();
-                    int rows = Short.toUnsignedInt(header.getShort());
                     int dataLen = header.getInt();
                     ByteBuffer data = ByteBuffer.allocate(dataLen);
                     readFully(channel, data);

@@ -28,96 +28,52 @@ public final class ArrowTypes {
 
     public static ColumnType fromSqlTypeName(String name) {
         String upper = name.toUpperCase(Locale.ROOT);
-        switch (upper) {
-            case "SMALLINT":
-                return ColumnType.SMALLINT;
-            case "INTEGER":
-            case "INT":
-                return ColumnType.INTEGER;
-            case "BIGINT":
-                return ColumnType.BIGINT;
-            case "REAL":
-                return ColumnType.REAL;
-            case "FLOAT":
-                return ColumnType.FLOAT;
-            case "DOUBLE":
-            case "DOUBLE PRECISION":
-                return ColumnType.DOUBLE;
-            case "DECIMAL":
-                return ColumnType.DECIMAL;
-            case "NUMERIC":
-                return ColumnType.NUMERIC;
-            case "VARCHAR":
-                return ColumnType.VARCHAR;
-            case "CHAR":
-            case "CHARACTER":
-                return ColumnType.CHAR;
-            case "NCHAR":
-            case "NATIONAL CHARACTER":
-                return ColumnType.NCHAR;
-            case "NVARCHAR":
-            case "NATIONAL CHARACTER VARYING":
-                return ColumnType.NVARCHAR;
-            case "BOOLEAN":
-                return ColumnType.BOOLEAN;
-            case "DATE":
-                return ColumnType.DATE;
-            case "TIME":
-                return ColumnType.TIME;
-            case "TIMESTAMP":
-                return ColumnType.TIMESTAMP;
-            case "BINARY":
-                return ColumnType.BINARY;
-            case "VARBINARY":
-            case "BINARY VARYING":
-                return ColumnType.VARBINARY;
-            default:
-                throw new IllegalArgumentException(
-                        "unsupported column type: " + name);
-        }
+        return switch (upper) {
+            case "SMALLINT" -> ColumnType.SMALLINT;
+            case "INTEGER", "INT" -> ColumnType.INTEGER;
+            case "BIGINT" -> ColumnType.BIGINT;
+            case "REAL" -> ColumnType.REAL;
+            case "FLOAT" -> ColumnType.FLOAT;
+            case "DOUBLE", "DOUBLE PRECISION" -> ColumnType.DOUBLE;
+            case "DECIMAL" -> ColumnType.DECIMAL;
+            case "NUMERIC" -> ColumnType.NUMERIC;
+            case "VARCHAR" -> ColumnType.VARCHAR;
+            case "CHAR", "CHARACTER" -> ColumnType.CHAR;
+            case "NCHAR", "NATIONAL CHARACTER" -> ColumnType.NCHAR;
+            case "NVARCHAR", "NATIONAL CHARACTER VARYING" -> ColumnType.NVARCHAR;
+            case "BOOLEAN" -> ColumnType.BOOLEAN;
+            case "DATE" -> ColumnType.DATE;
+            case "TIME" -> ColumnType.TIME;
+            case "TIMESTAMP" -> ColumnType.TIMESTAMP;
+            case "BINARY" -> ColumnType.BINARY;
+            case "VARBINARY", "BINARY VARYING" -> ColumnType.VARBINARY;
+            default -> throw new IllegalArgumentException(
+                    "unsupported column type: " + name);
+        };
     }
 
     public static String toSqlTypeName(ColumnType type) {
-        switch (type) {
-            case SMALLINT:
-                return "SMALLINT";
-            case INTEGER:
-                return "INTEGER";
-            case BIGINT:
-                return "BIGINT";
-            case REAL:
-                return "REAL";
-            case FLOAT:
-                return "FLOAT";
-            case DOUBLE:
-                return "DOUBLE";
-            case DECIMAL:
-                return "DECIMAL";
-            case NUMERIC:
-                return "NUMERIC";
-            case VARCHAR:
-                return "VARCHAR";
-            case CHAR:
-                return "CHAR";
-            case NCHAR:
-                return "NCHAR";
-            case NVARCHAR:
-                return "NVARCHAR";
-            case BOOLEAN:
-                return "BOOLEAN";
-            case DATE:
-                return "DATE";
-            case TIME:
-                return "TIME";
-            case TIMESTAMP:
-                return "TIMESTAMP";
-            case BINARY:
-                return "BINARY";
-            case VARBINARY:
-                return "VARBINARY";
-            default:
-                throw new IllegalArgumentException("unknown type: " + type);
-        }
+        return switch (type) {
+            case SMALLINT -> "SMALLINT";
+            case INTEGER -> "INTEGER";
+            case BIGINT -> "BIGINT";
+            case REAL -> "REAL";
+            case FLOAT -> "FLOAT";
+            case DOUBLE -> "DOUBLE";
+            case DECIMAL -> "DECIMAL";
+            case NUMERIC -> "NUMERIC";
+            case VARCHAR -> "VARCHAR";
+            case CHAR -> "CHAR";
+            case NCHAR -> "NCHAR";
+            case NVARCHAR -> "NVARCHAR";
+            case BOOLEAN -> "BOOLEAN";
+            case DATE -> "DATE";
+            case TIME -> "TIME";
+            case TIMESTAMP -> "TIMESTAMP";
+            case BINARY -> "BINARY";
+            case VARBINARY -> "VARBINARY";
+            default -> throw new IllegalArgumentException("unknown type: " + type);
+        };
     }
 
     public static ArrowType arrowType(ColumnType type, BufferAllocator allocator) {
@@ -170,38 +126,22 @@ public final class ArrowTypes {
     }
 
     private static ArrowType arrowTypeOf(SqlTypeName type) {
-        switch (type) {
-            case SMALLINT:
-                return new ArrowType.Int(16, true);
-            case INTEGER:
-                return new ArrowType.Int(32, true);
-            case BIGINT:
-                return new ArrowType.Int(64, true);
-            case REAL:
-            case FLOAT:
-                return new ArrowType.FloatingPoint(FloatingPointPrecision.SINGLE);
-            case DOUBLE:
-                return new ArrowType.FloatingPoint(FloatingPointPrecision.DOUBLE);
-            case DECIMAL:
-                return new ArrowType.Decimal(DEFAULT_DECIMAL_PRECISION, DEFAULT_DECIMAL_SCALE, 128);
-            case VARCHAR:
-            case CHAR:
-                return ArrowType.Utf8.INSTANCE;
-            case BOOLEAN:
-                return ArrowType.Bool.INSTANCE;
-            case DATE:
-                return new ArrowType.Date(DateUnit.DAY);
-            case TIME:
-                return new ArrowType.Time(TimeUnit.MILLISECOND, 32);
-            case TIMESTAMP:
-                return new ArrowType.Timestamp(TimeUnit.MILLISECOND, null);
-            case BINARY:
-            case VARBINARY:
-                return ArrowType.Binary.INSTANCE;
-            default:
-                throw new IllegalArgumentException(
-                        "unsupported sql type: " + type);
-        }
+        return switch (type) {
+            case SMALLINT -> new ArrowType.Int(16, true);
+            case INTEGER -> new ArrowType.Int(32, true);
+            case BIGINT -> new ArrowType.Int(64, true);
+            case REAL, FLOAT -> new ArrowType.FloatingPoint(FloatingPointPrecision.SINGLE);
+            case DOUBLE -> new ArrowType.FloatingPoint(FloatingPointPrecision.DOUBLE);
+            case DECIMAL -> new ArrowType.Decimal(DEFAULT_DECIMAL_PRECISION, DEFAULT_DECIMAL_SCALE, 128);
+            case VARCHAR, CHAR -> ArrowType.Utf8.INSTANCE;
+            case BOOLEAN -> ArrowType.Bool.INSTANCE;
+            case DATE -> new ArrowType.Date(DateUnit.DAY);
+            case TIME -> new ArrowType.Time(TimeUnit.MILLISECOND, 32);
+            case TIMESTAMP -> new ArrowType.Timestamp(TimeUnit.MILLISECOND, null);
+            case BINARY, VARBINARY -> ArrowType.Binary.INSTANCE;
+            default -> throw new IllegalArgumentException(
+                    "unsupported sql type: " + type);
+        };
     }
 
     private static ArrowType arrowTypeOf(ColumnType type, int precision, int scale) {
@@ -250,55 +190,28 @@ public final class ArrowTypes {
             int scale = meta.scale() >= 0 ? meta.scale() : DEFAULT_DECIMAL_SCALE;
             return factory.createSqlType(SqlTypeName.DECIMAL, precision, scale);
         }
-        SqlTypeName sqlType;
-        switch (meta.type()) {
-            case SMALLINT:
-                sqlType = SqlTypeName.SMALLINT;
-                break;
-            case INTEGER:
-                sqlType = SqlTypeName.INTEGER;
-                break;
-            case BIGINT:
-                sqlType = SqlTypeName.BIGINT;
-                break;
-            case REAL:
-            case FLOAT:
-                sqlType = SqlTypeName.REAL;
-                break;
-            case DOUBLE:
-                sqlType = SqlTypeName.DOUBLE;
-                break;
-            case VARCHAR:
-            case CHAR:
-            case NCHAR:
-            case NVARCHAR:
+        SqlTypeName sqlType = switch (meta.type()) {
+            case SMALLINT -> SqlTypeName.SMALLINT;
+            case INTEGER -> SqlTypeName.INTEGER;
+            case BIGINT -> SqlTypeName.BIGINT;
+            case REAL, FLOAT -> SqlTypeName.REAL;
+            case DOUBLE -> SqlTypeName.DOUBLE;
+            case VARCHAR, CHAR, NCHAR, NVARCHAR ->
                 // CHAR/NCHAR/NVARCHAR 都变长存储、不做定长空格填充(设计简化,见
                 // data-types-design「CHAR/NCHAR/NVARCHAR 语义」),故 Calcite 侧统一映射为
                 // VARCHAR;若映射为 SqlTypeName.CHAR,Calcite 会把插入值空格填充到声明长度。
-                sqlType = SqlTypeName.VARCHAR;
-                break;
-            case BOOLEAN:
-                sqlType = SqlTypeName.BOOLEAN;
-                break;
-            case DATE:
-                sqlType = SqlTypeName.DATE;
-                break;
-            case TIME:
-                sqlType = SqlTypeName.TIME;
-                break;
-            case TIMESTAMP:
-                sqlType = SqlTypeName.TIMESTAMP;
-                break;
-            case BINARY:
-            case VARBINARY:
+                    SqlTypeName.VARCHAR;
+            case BOOLEAN -> SqlTypeName.BOOLEAN;
+            case DATE -> SqlTypeName.DATE;
+            case TIME -> SqlTypeName.TIME;
+            case TIMESTAMP -> SqlTypeName.TIMESTAMP;
+            case BINARY, VARBINARY ->
                 // BINARY 与 VARBINARY 同为变长 Binary 存储(设计简化,落 VarBinaryVector);
                 // Calcite 侧统一映射为 VARBINARY,若映射 SqlTypeName.BINARY 会触发定长零填充
                 // 且其 CAST 路径对 VarBinaryVector 源抛异常。声明名靠 Arrow 元数据保真。
-                sqlType = SqlTypeName.VARBINARY;
-                break;
-            default:
-                throw new IllegalArgumentException("unknown type: " + meta.type());
-        }
+                    SqlTypeName.VARBINARY;
+            default -> throw new IllegalArgumentException("unknown type: " + meta.type());
+        };
         if (sqlType == SqlTypeName.VARCHAR || sqlType == SqlTypeName.VARBINARY) {
             return factory.createSqlType(sqlType, Integer.MAX_VALUE);
         }

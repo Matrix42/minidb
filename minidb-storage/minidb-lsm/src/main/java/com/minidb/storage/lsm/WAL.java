@@ -38,14 +38,12 @@ public class WAL implements AutoCloseable {
 
     private final Path dir;
     private final Path currentPath; // wal.log
-    private final TableSchema schema;
     private final CRC32 crc = new CRC32();
     private final ByteBuffer writeBuf = ByteBuffer.allocate(8192);
     private FileChannel channel;
     private int nextSegmentGen; // 下次 rotate 使用的代号
 
     public WAL(Path walFile, TableSchema schema) throws IOException {
-        this.schema = schema;
         this.currentPath = walFile;
         this.dir = walFile.getParent();
         this.nextSegmentGen = maxSegmentGen() + 1;

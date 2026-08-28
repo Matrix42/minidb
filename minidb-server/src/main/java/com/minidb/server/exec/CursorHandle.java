@@ -25,7 +25,7 @@ public record CursorHandle(BatchIterator iterator, ExecContext context, Schema s
     public VectorSchemaRoot materialize() {
         List<VectorSchemaRoot> batches = new ArrayList<>();
         int total = 0;
-        VectorSchemaRoot merged = null;
+        VectorSchemaRoot merged;
         try {
             while (iterator.hasNext()) {
                 VectorSchemaRoot batch = iterator.next();

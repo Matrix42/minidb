@@ -44,8 +44,7 @@ public final class RowVectors {
     /** Pulls every batch of {@code input} into normalized {@code Object[]} rows. */
     public static List<Object[]> materialize(RelNode input, ExecContext ctx) {
         List<Object[]> rows = new ArrayList<>();
-        BatchIterator iterator = ((MiniDbRel) input).execute(ctx);
-        try {
+        try (BatchIterator iterator = ((MiniDbRel) input).execute(ctx)) {
             while (iterator.hasNext()) {
                 VectorSchemaRoot batch = iterator.next();
                 for (int rowIdx = 0; rowIdx < batch.getRowCount(); rowIdx++) {
@@ -56,8 +55,6 @@ public final class RowVectors {
                     rows.add(row);
                 }
             }
-        } finally {
-            iterator.close();
         }
         return rows;
     }

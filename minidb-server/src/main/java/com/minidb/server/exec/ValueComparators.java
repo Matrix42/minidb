@@ -1,6 +1,5 @@
 package com.minidb.server.exec;
 
-import java.math.BigDecimal;
 import java.util.Arrays;
 import org.apache.arrow.vector.BigIntVector;
 import org.apache.arrow.vector.BitVector;

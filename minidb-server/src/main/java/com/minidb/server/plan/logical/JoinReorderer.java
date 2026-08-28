@@ -6,7 +6,6 @@ import java.util.Set;
 import org.apache.calcite.plan.RelOptCluster;
 import org.apache.calcite.rel.RelNode;
 import org.apache.calcite.rel.metadata.RelMetadataQuery;
-import org.apache.calcite.rel.core.CorrelationId;
 import org.apache.calcite.rel.core.JoinRelType;
 import org.apache.calcite.rel.logical.LogicalFilter;
 import org.apache.calcite.rel.logical.LogicalJoin;
@@ -201,6 +200,7 @@ public final class JoinReorderer {
                 for (int r : refs) {
                     if (r != leafId && currentOrder.contains(r)) {
                         otherInCurrent = true;
+                        break;
                     }
                 }
                 if (otherInCurrent) {

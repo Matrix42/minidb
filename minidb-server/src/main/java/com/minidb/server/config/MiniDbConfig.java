@@ -36,7 +36,6 @@ public final class MiniDbConfig {
     public static final long DEFAULT_LSM_MEMTABLE_SIZE_BYTES = 64L * 1024 * 1024;
     public static final int DEFAULT_LSM_L0_FILE_LIMIT = 4;
     public static final int DEFAULT_LSM_LEVEL_SIZE_MULTIPLIER = 10;
-    public static final boolean DEFAULT_LSM_WAL_FSYNC = false;
     public static final long DEFAULT_LSM_BACKGROUND_INTERVAL_MS = 1000;
     public static final int DEFAULT_LSM_BLOOM_BITS_PER_KEY = 10;
 
@@ -57,7 +56,6 @@ public final class MiniDbConfig {
     private final long lsmMemtableSizeBytes;
     private final int lsmL0FileLimit;
     private final int lsmLevelSizeMultiplier;
-    private final boolean lsmWalFsync;
     private final long lsmBackgroundIntervalMs;
     private final int lsmBloomBitsPerKey;
     private final int serverQueryThreads;
@@ -66,14 +64,13 @@ public final class MiniDbConfig {
 
     private MiniDbConfig(long compactionTargetSizeBytes, int compactionAutoPartThreshold,
                          long lsmMemtableSizeBytes, int lsmL0FileLimit, int lsmLevelSizeMultiplier,
-                         boolean lsmWalFsync, long lsmBackgroundIntervalMs, int lsmBloomBitsPerKey,
+                         long lsmBackgroundIntervalMs, int lsmBloomBitsPerKey,
                          int serverQueryThreads, int serverPort, TransactionIsolation isolationLevel) {
         this.compactionTargetSizeBytes = compactionTargetSizeBytes;
         this.compactionAutoPartThreshold = compactionAutoPartThreshold;
         this.lsmMemtableSizeBytes = lsmMemtableSizeBytes;
         this.lsmL0FileLimit = lsmL0FileLimit;
         this.lsmLevelSizeMultiplier = lsmLevelSizeMultiplier;
-        this.lsmWalFsync = lsmWalFsync;
         this.lsmBackgroundIntervalMs = lsmBackgroundIntervalMs;
         this.lsmBloomBitsPerKey = lsmBloomBitsPerKey;
         this.serverQueryThreads = serverQueryThreads;
@@ -99,10 +96,6 @@ public final class MiniDbConfig {
 
     public int lsmLevelSizeMultiplier() {
         return lsmLevelSizeMultiplier;
-    }
-
-    public boolean lsmWalFsync() {
-        return lsmWalFsync;
     }
 
     public long lsmBackgroundIntervalMs() {
@@ -134,7 +127,6 @@ public final class MiniDbConfig {
         long lsmMemtable = DEFAULT_LSM_MEMTABLE_SIZE_BYTES;
         int lsmL0 = DEFAULT_LSM_L0_FILE_LIMIT;
         int lsmMultiplier = DEFAULT_LSM_LEVEL_SIZE_MULTIPLIER;
-        boolean lsmFsync = DEFAULT_LSM_WAL_FSYNC;
         long lsmInterval = DEFAULT_LSM_BACKGROUND_INTERVAL_MS;
         int lsmBloom = DEFAULT_LSM_BLOOM_BITS_PER_KEY;
         int queryThreads = DEFAULT_SERVER_QUERY_THREADS;
@@ -165,10 +157,6 @@ public final class MiniDbConfig {
             if (mult != null && mult > 0) {
                 lsmMultiplier = mult;
             }
-            Boolean fsync = asBoolean(lsm == null ? null : lsm.get("wal-fsync"));
-            if (fsync != null) {
-                lsmFsync = fsync;
-            }
             Long interval = asLong(lsm == null ? null : lsm.get("background-interval-ms"));
             if (interval != null && interval > 0) {
                 lsmInterval = interval;
@@ -192,12 +180,12 @@ public final class MiniDbConfig {
             }
         }
         return new MiniDbConfig(targetBytes, autoThreshold,
-                lsmMemtable, lsmL0, lsmMultiplier, lsmFsync, lsmInterval, lsmBloom, queryThreads, serverPort, isolationLevel);
+                lsmMemtable, lsmL0, lsmMultiplier, lsmInterval, lsmBloom, queryThreads, serverPort, isolationLevel);
     }
 
     private static Map<String, Object> readYaml(Path file) {
         try {
-            return YAML.readValue(file.toFile(), new TypeReference<Map<String, Object>>() {
+            return YAML.readValue(file.toFile(), new TypeReference<>() {
             });
         } catch (IOException e) {
             throw new UncheckedIOException("failed to load config: " + file, e);
@@ -215,10 +203,6 @@ public final class MiniDbConfig {
 
     private static Integer asInt(Object value) {
         return value instanceof Number n ? n.intValue() : null;
-    }
-
-    private static Boolean asBoolean(Object value) {
-        return value instanceof Boolean b ? b : null;
     }
 
     private static String asString(Object value) {

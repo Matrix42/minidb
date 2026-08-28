@@ -1,9 +1,7 @@
 package com.minidb.storage.lsm;
 
 import com.minidb.storage.common.*;
-import java.io.IOException;
-import java.io.UncheckedIOException;
-import java.nio.file.Files;
+
 import java.nio.file.Path;
 import java.util.*;
 import org.apache.arrow.memory.BufferAllocator;
@@ -99,8 +97,7 @@ public class Compaction {
         List<Map.Entry<List<Object>, RowValue>> allRows = new ArrayList<>();
 
         for (SSTable sst : inputs) {
-            SSTableReader reader = new SSTableReader(sst.file(), schema, format, allocator);
-            try {
+            try (SSTableReader reader = new SSTableReader(sst.file(), schema, format, allocator)) {
                 BatchIterator it = reader.scan();
                 while (it.hasNext()) {
                     VectorSchemaRoot batch = it.next();
@@ -120,8 +117,6 @@ public class Compaction {
                     }
                 }
                 it.close();
-            } finally {
-                reader.close();
             }
         }
 

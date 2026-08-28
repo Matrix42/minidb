@@ -26,7 +26,7 @@ public class TxLog implements AutoCloseable {
     private static final int PAYLOAD_SIZE = 9; // txId(8) + status(1)
     private static final int HEADER_SIZE = 8;  // checksum(4) + length(4)
 
-    private FileChannel channel;
+    private final FileChannel channel;
 
     public TxLog(Path path) {
         try {

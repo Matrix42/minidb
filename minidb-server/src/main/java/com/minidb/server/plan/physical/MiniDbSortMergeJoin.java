@@ -95,8 +95,6 @@ public class MiniDbSortMergeJoin extends MiniDbJoin {
     private static final class MergePairSource implements PairSource {
         private final VectorSchemaRoot left;
         private final VectorSchemaRoot right;
-        private final JoinRelType type;
-        private final ExecContext ctx;
         private final List<Integer> leftKeyCols;
         private final List<Integer> rightKeyCols;
         private final List<Integer> leftScanOrder;
@@ -120,8 +118,6 @@ public class MiniDbSortMergeJoin extends MiniDbJoin {
                         List<Integer> leftScanOrder, List<Integer> rightScanOrder) {
             this.left = left;
             this.right = right;
-            this.type = type;
-            this.ctx = ctx;
             this.leftKeyCols = leftKeyCols;
             this.rightKeyCols = rightKeyCols;
             this.leftScanOrder = leftScanOrder;

@@ -27,7 +27,6 @@ import org.apache.arrow.vector.BigIntVector;
 import org.apache.arrow.vector.BitVector;
 import org.apache.arrow.vector.DateDayVector;
 import org.apache.arrow.vector.DecimalVector;
-import org.apache.arrow.vector.FieldVector;
 import org.apache.arrow.vector.Float4Vector;
 import org.apache.arrow.vector.Float8Vector;
 import org.apache.arrow.vector.IntVector;
@@ -116,16 +115,6 @@ public class MiniDbResultSet implements ResultSet {
             throw new SQLException("column index out of range: " + columnIndex);
         }
         return root.getVector(columnIndex - 1);
-    }
-
-    private ValueVector vector(String columnLabel) throws SQLException {
-        checkClosed();
-        for (FieldVector v : root.getFieldVectors()) {
-            if (v.getName().equalsIgnoreCase(columnLabel)) {
-                return v;
-            }
-        }
-        throw new SQLException("no column named " + columnLabel);
     }
 
     private boolean isNull(ValueVector v) {
@@ -266,38 +255,26 @@ public class MiniDbResultSet implements ResultSet {
 
     @Override
     public Object getObject(int columnIndex) throws SQLException {
-        ValueVector v = vector(columnIndex);
-        if (v.isNull(cursor)) {
-            wasNull = true;
-            return null;
-        }
-        switch (v.getMinorType()) {
-            case INT:
-                return getInt(columnIndex);
-            case BIGINT:
-                return getLong(columnIndex);
-            case FLOAT8:
-                return getDouble(columnIndex);
-            case VARCHAR:
-                return getString(columnIndex);
-            case BIT:
-                return getBoolean(columnIndex);
-            case DATEDAY:
-                return getDate(columnIndex);
-            case TIMESTAMPMILLI:
-                return getTimestamp(columnIndex);
-            case SMALLINT:
-                return getShort(columnIndex);
-            case FLOAT4:
-                return getFloat(columnIndex);
-            case DECIMAL:
-                return getBigDecimal(columnIndex);
-            case TIMEMILLI:
-                return getTime(columnIndex);
-            case VARBINARY:
-                return getBytes(columnIndex);
-            default:
-                throw new SQLException("unsupported type: " + v.getMinorType());
+        try (ValueVector v = vector(columnIndex)) {
+            if (v.isNull(cursor)) {
+                wasNull = true;
+                return null;
+            }
+            return switch (v.getMinorType()) {
+                case INT -> getInt(columnIndex);
+                case BIGINT -> getLong(columnIndex);
+                case FLOAT8 -> getDouble(columnIndex);
+                case VARCHAR -> getString(columnIndex);
+                case BIT -> getBoolean(columnIndex);
+                case DATEDAY -> getDate(columnIndex);
+                case TIMESTAMPMILLI -> getTimestamp(columnIndex);
+                case SMALLINT -> getShort(columnIndex);
+                case FLOAT4 -> getFloat(columnIndex);
+                case DECIMAL -> getBigDecimal(columnIndex);
+                case TIMEMILLI -> getTime(columnIndex);
+                case VARBINARY -> getBytes(columnIndex);
+                default -> throw new SQLException("unsupported type: " + v.getMinorType());
+            };
         }
     }
 

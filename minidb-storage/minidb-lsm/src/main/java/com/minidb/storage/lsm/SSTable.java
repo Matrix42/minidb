@@ -20,7 +20,7 @@ public record SSTable(Path file, int level, long seq,
     /** 按原始 Comparable 比较 key 列表（不假定 String 类型）。
      *  与 MemTable.KEY_COMPARATOR 不同，后者要求 key 元素全为 String。
      *  SSTable 的 key 可能含 Integer/Long（SSTableReader.decodeKeyValue 解析整数时产生）。 */
-    public static final Comparator<List<Object>> KEY_COMPARATOR = (a, b) -> compareKeys(a, b);
+    public static final Comparator<List<Object>> KEY_COMPARATOR = SSTable::compareKeys;
 
     public boolean overlaps(List<Object> rangeMin, List<Object> rangeMax) {
         // 两个 key range 不重叠的条件: maxKey < rangeMin 或 minKey > rangeMax

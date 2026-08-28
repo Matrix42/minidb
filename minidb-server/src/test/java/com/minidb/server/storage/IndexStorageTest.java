@@ -7,11 +7,8 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
 
 import com.minidb.server.catalog.MiniDbCatalog;
 import com.minidb.server.exec.QueryExecutor;
-import com.minidb.server.exec.QueryResult;
 import com.minidb.server.stats.StatsManager;
 import com.minidb.storage.common.BatchIterator;
-import com.minidb.storage.common.ColumnMeta;
-import com.minidb.storage.common.ColumnType;
 import com.minidb.storage.common.IndexDef;
 import com.minidb.storage.common.TableHandle;
 import com.minidb.storage.common.TableSchema;
@@ -20,9 +17,7 @@ import java.nio.file.Path;
 import java.util.List;
 import org.apache.arrow.memory.BufferAllocator;
 import org.apache.arrow.memory.RootAllocator;
-import org.apache.arrow.vector.BigIntVector;
 import org.apache.arrow.vector.IntVector;
-import org.apache.arrow.vector.VarCharVector;
 import org.apache.arrow.vector.VectorSchemaRoot;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeEach;
@@ -61,7 +56,7 @@ class IndexStorageTest {
         IndexDef def = new IndexDef("idx_a", false, List.of("a"));
         TableHandle dataTable = storage.getTable("public", "t");
         TableHandle indexTable = storage.indexManager().createIndex("public", "t", def, data);
-        storage.indexManager().populateFromTable("public", "t", def, dataTable, indexTable);
+        storage.indexManager().populateFromTable(def, dataTable, indexTable);
 
         Path idxDir = dataDir.resolve("public").resolve("t").resolve(".indexes").resolve("idx_a");
         assertTrue(Files.isDirectory(idxDir), "索引目录应存在");
@@ -78,7 +73,7 @@ class IndexStorageTest {
         IndexDef def = new IndexDef("idx_a", false, List.of("a"));
         TableHandle dataTable = storage.getTable("public", "t");
         TableHandle indexTable = storage.indexManager().createIndex("public", "t", def, data);
-        storage.indexManager().populateFromTable("public", "t", def, dataTable, indexTable);
+        storage.indexManager().populateFromTable(def, dataTable, indexTable);
 
         // scan(lo,hi) 是超集语义:先用 a=10 前缀扫,再在返回行中按 a==10 过滤。
         try (BatchIterator it = indexTable.scan(List.of(10), List.of(10))) {
@@ -128,7 +123,7 @@ class IndexStorageTest {
         IndexDef def = new IndexDef("idx_a", false, List.of("a"));
         TableHandle dataTable = storage.getTable("public", "t");
         TableHandle indexTable = storage.indexManager().createIndex("public", "t", def, data);
-        storage.indexManager().populateFromTable("public", "t", def, dataTable, indexTable);
+        storage.indexManager().populateFromTable(def, dataTable, indexTable);
         // 让 catalog 元数据也记录索引,loadAll 才能恢复
         catalog.alterTable("public", "t", data.withIndexes(List.of(def)));
 
@@ -156,7 +151,7 @@ class IndexStorageTest {
         TableSchema data = catalog.getTable("public", "t");
         IndexDef def = new IndexDef("idx_ab", false, List.of("a", "b"));
         TableHandle indexTable = storage.indexManager().createIndex("public", "t", def, data);
-        storage.indexManager().populateFromTable("public", "t", def, storage.getTable("public", "t"), indexTable);
+        storage.indexManager().populateFromTable(def, storage.getTable("public", "t"), indexTable);
 
         TableSchema idxSchema = indexTable.schema();
         assertEquals(3, idxSchema.columns().size(), "复合索引(2 列)+ 主键(1 列)= 3 列");

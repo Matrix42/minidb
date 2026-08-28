@@ -551,7 +551,7 @@ public class QueryExecutor {
                 schemaName, tableName, def, data);
         try {
             storage.indexManager().populateFromTable(
-                    schemaName, tableName, def, dataTable, indexTable);
+                    def, dataTable, indexTable);
         } catch (RuntimeException e) {
             // populate 失败(如存量数据违反 UNIQUE 约束),清理半成品再 rethrow
             storage.indexManager().dropIndex(schemaName, tableName, indexName);

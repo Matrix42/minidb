@@ -295,8 +295,6 @@ public class LSMTable implements TableHandle {
     /**
      * 事务恢复:从 WAL 恢复已提交事务的数据,跳过未提交事务的条目。
      * 保留旧 {@link #recover()} 向后兼容(无事务时使用)。
-     */
-    /**
      * 事务感知恢复：构造函数已调用无参 recover() 加载 SSTable 元数据 + 重放全部 WAL，
      * 这里只补做 WAL 过滤——丢弃未提交事务的条目，仅保留已提交的。
      * 不重复加载 SSTable 元数据（避免 levels map 出现重复条目）。
@@ -455,8 +453,7 @@ public class LSMTable implements TableHandle {
             for (SSTable sst : sstManager.levelFiles(level)) {
                 if (!sst.bloom().mightContain(encodedKey)) continue;
                 if (!sst.overlaps(key, key)) continue;
-                SSTableReader reader = new SSTableReader(sst.file(), schema, format, allocator);
-                try {
+                try (SSTableReader reader = new SSTableReader(sst.file(), schema, format, allocator)) {
                     BatchIterator it = reader.scan();
                     while (it.hasNext()) {
                         VectorSchemaRoot batch = it.next();
@@ -479,8 +476,6 @@ public class LSMTable implements TableHandle {
                         }
                     }
                     it.close();
-                } finally {
-                    reader.close();
                 }
             }
         }

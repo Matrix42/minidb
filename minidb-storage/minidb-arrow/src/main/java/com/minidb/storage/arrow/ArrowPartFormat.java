@@ -147,7 +147,7 @@ public class ArrowPartFormat implements PartFormat {
     private static long recordBatchLength(SeekableByteChannel channel, ArrowBlock block)
             throws IOException {
         channel.position(block.getOffset());
-        ByteBuffer buf = ByteBuffer.allocate((int) block.getMetadataLength());
+        ByteBuffer buf = ByteBuffer.allocate(block.getMetadataLength());
         while (buf.hasRemaining()) {
             if (channel.read(buf) < 0) {
                 throw new EOFException();

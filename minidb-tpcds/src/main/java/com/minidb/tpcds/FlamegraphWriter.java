@@ -48,7 +48,7 @@ public class FlamegraphWriter {
                     continue;
                 }
                 List<RecordedFrame> frames = event.getStackTrace().getFrames();
-                if (frames == null || frames.isEmpty()) {
+                if (frames.isEmpty()) {
                     continue;
                 }
                 // 栈帧从底(入口)到顶(当前方法),火焰图格式从底到顶用分号分隔
@@ -56,7 +56,7 @@ public class FlamegraphWriter {
                 // 标准 folded stack: bottom;...;top count
                 StringBuilder sb = new StringBuilder();
                 for (int i = frames.size() - 1; i >= 0; i--) {
-                    if (sb.length() > 0) {
+                    if (!sb.isEmpty()) {
                         sb.append(';');
                     }
                     sb.append(formatFrame(frames.get(i)));
@@ -90,7 +90,7 @@ public class FlamegraphWriter {
     private String buildHtml(Map<String, Long> foldedStacks) {
         // foldedStacks 按 count 降序排列
         String data = foldedStacks.entrySet().stream()
-                .sorted(Map.Entry.<String, Long>comparingByValue(Comparator.reverseOrder()))
+                .sorted(Map.Entry.comparingByValue(Comparator.reverseOrder()))
                 .map(e -> e.getKey() + " " + e.getValue())
                 .collect(Collectors.joining("\\n"));
 

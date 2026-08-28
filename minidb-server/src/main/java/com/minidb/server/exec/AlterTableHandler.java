@@ -264,9 +264,8 @@ public class AlterTableHandler {
             while (it.hasNext()) {
                 VectorSchemaRoot src = it.next();
                 int rows = src.getRowCount();
-                FieldVector casted = VectorCasts.cast(src.getVector(changedIndex),
-                        newCol.type(), newCol.precision(), newCol.scale(), allocator);
-                try {
+                try (FieldVector casted = VectorCasts.cast(src.getVector(changedIndex),
+                        newCol.type(), newCol.precision(), newCol.scale(), allocator)) {
                     VectorSchemaRoot dst = newRoot(newSchema);
                     dst.allocateNew();
                     for (int r = 0; r < rows; r++) {
@@ -280,8 +279,6 @@ public class AlterTableHandler {
                     }
                     dst.setRowCount(rows);
                     newBatches.add(dst);
-                } finally {
-                    casted.close();
                 }
             }
         }

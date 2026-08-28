@@ -451,11 +451,11 @@ public class MiniDbScan extends TableScan implements MiniDbRel {
                 && tn != SqlTypeName.INTEGER && tn != SqlTypeName.BIGINT) {
             return null;
         }
-        Object v = lit.getValueAs(Number.class);
+        Number v = lit.getValueAs(Number.class);
         if (v == null) {
             return null;
         }
-        return tn == SqlTypeName.BIGINT ? ((Number) v).longValue() : ((Number) v).intValue();
+        return tn == SqlTypeName.BIGINT ? v.longValue() : v.intValue();
     }
 
     /**
@@ -531,8 +531,7 @@ public class MiniDbScan extends TableScan implements MiniDbRel {
         if (filter == null) {
             return batch;
         }
-        ValueVector condition = ctx.interpreter().eval(filter, batch);
-        try {
+        try (ValueVector condition = ctx.interpreter().eval(filter, batch)) {
             int kept = 0;
             for (int i = 0; i < batch.getRowCount(); i++) {
                 if (!condition.isNull(i) && ((BitVector) condition).get(i) == 1) {
@@ -561,8 +560,6 @@ public class MiniDbScan extends TableScan implements MiniDbRel {
             RowCopier.copyRowsByIndex(batch, keptRows, 0, out, 0, kept);
             out.setRowCount(kept);
             return out;
-        } finally {
-            condition.close();
         }
     }
 

@@ -25,7 +25,6 @@ import java.nio.file.Files;
 import java.nio.file.Path;
 import java.util.ArrayList;
 import java.util.EnumMap;
-import java.util.HashSet;
 import java.util.List;
 import java.util.Map;
 import java.util.Set;
@@ -103,10 +102,6 @@ public class StorageManager implements AutoCloseable {
 
     public MiniDbCatalog catalog() {
         return catalog;
-    }
-
-    public LSMBackgroundExecutor lsmExecutor() {
-        return lsmExecutor;
     }
 
     public IndexManager indexManager() {
@@ -213,7 +208,7 @@ public class StorageManager implements AutoCloseable {
         // handle (we need the LSMTable's scan() which requires an open WAL).
         boolean migrateToSimple = old instanceof LSMTable && newSchema.primaryKey().isEmpty();
         if (migrateToSimple) {
-            SimpleTable simple = migrateLsmToSimple((LSMTable) old, newSchema, sk);
+            SimpleTable simple = migrateLsmToSimple((LSMTable) old, newSchema);
             closeAndUnregister(old, sk);
             catalog.alterTable(schemaName, tableName, newSchema);
             tables.put(sk, simple);
@@ -238,7 +233,7 @@ public class StorageManager implements AutoCloseable {
     }
 
     /** 将 LSMTable 的数据迁移到 SimpleTable:扫描 SSTable → 写入 SimpleTable part 文件。 */
-    private SimpleTable migrateLsmToSimple(LSMTable lsm, TableSchema newSchema, String sk) {
+    private SimpleTable migrateLsmToSimple(LSMTable lsm, TableSchema newSchema) {
         SimpleTable simple = new SimpleTable(newSchema, allocator,
                 tableStorage.tableDir(newSchema.schemaName(), newSchema.name()),
                 formatFor(newSchema));

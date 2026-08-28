@@ -315,7 +315,7 @@ public final class VectorCasts {
             return dv.getObject(i).toPlainString();
         }
         if (v instanceof BitVector bv) {
-            return bv.get(i) == 1 ? "true" : "false";
+            return Boolean.toString(bv.get(i) == 1);
         }
         throw new IllegalArgumentException("cannot cast to string: " + v.getClass());
     }

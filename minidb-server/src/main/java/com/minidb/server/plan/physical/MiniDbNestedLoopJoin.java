@@ -145,15 +145,13 @@ public class MiniDbNestedLoopJoin extends MiniDbJoin {
         }
         // 左侧 probe 结果一次求值全量(表达式求值无状态,行对产出流式)。
         ValueVector leftResults = ctx.interpreter().eval(leftExpr, left);
-        return new HashAccelPairSource(left, right, type, ctx, hashMap, leftResults);
+        return new HashAccelPairSource(left, right, type, hashMap, leftResults);
     }
 
     /** 流式 probe 左侧匹配行;阶段 2/3 产出未匹配左行与未匹配右行(outer join)。 */
     private static final class HashAccelPairSource implements PairSource {
         private final VectorSchemaRoot left;
         private final VectorSchemaRoot right;
-        private final JoinRelType type;
-        private final ExecContext ctx;
         private final Map<Object, List<Integer>> hashMap;
         private final ValueVector leftResults;
         private final boolean keepUnmatchedLeft;
@@ -168,12 +166,10 @@ public class MiniDbNestedLoopJoin extends MiniDbJoin {
         private int scanIdx = 0;
 
         HashAccelPairSource(VectorSchemaRoot left, VectorSchemaRoot right, JoinRelType type,
-                            ExecContext ctx, Map<Object, List<Integer>> hashMap,
+                            Map<Object, List<Integer>> hashMap,
                             ValueVector leftResults) {
             this.left = left;
             this.right = right;
-            this.type = type;
-            this.ctx = ctx;
             this.hashMap = hashMap;
             this.leftResults = leftResults;
             this.keepUnmatchedLeft = type == JoinRelType.LEFT || type == JoinRelType.FULL;
@@ -267,7 +263,6 @@ public class MiniDbNestedLoopJoin extends MiniDbJoin {
     private final class NestedLoopPairSource implements PairSource {
         private final VectorSchemaRoot left;
         private final VectorSchemaRoot right;
-        private final JoinRelType type;
         private final ExecContext ctx;
         private final boolean keepUnmatchedLeft;
         private final boolean keepUnmatchedRight;
@@ -284,7 +279,6 @@ public class MiniDbNestedLoopJoin extends MiniDbJoin {
                              ExecContext ctx) {
             this.left = left;
             this.right = right;
-            this.type = type;
             this.ctx = ctx;
             this.keepUnmatchedLeft = type == JoinRelType.LEFT || type == JoinRelType.FULL;
             this.keepUnmatchedRight = type == JoinRelType.RIGHT || type == JoinRelType.FULL;
@@ -313,8 +307,7 @@ public class MiniDbNestedLoopJoin extends MiniDbJoin {
                         continue;
                     }
                     writeProbeRow(probeRoot, left, leftIdx, right, rightIdx);
-                    ValueVector conditionResult = ctx.interpreter().eval(getCondition(), probeRoot);
-                    try {
+                    try (ValueVector conditionResult = ctx.interpreter().eval(getCondition(), probeRoot)) {
                         boolean matches = !conditionResult.isNull(0)
                                 && ((BitVector) conditionResult).get(0) == 1;
                         if (matches) {
@@ -324,8 +317,6 @@ public class MiniDbNestedLoopJoin extends MiniDbJoin {
                             matchedRight[rightIdx] = true;
                             out++;
                         }
-                    } finally {
-                        conditionResult.close();
                     }
                     rightIdx++;
                     continue;

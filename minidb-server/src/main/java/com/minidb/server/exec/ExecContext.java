@@ -4,7 +4,6 @@ import com.minidb.server.catalog.MiniDbCatalog;
 import com.minidb.server.transaction.TxHandle;
 import com.minidb.storage.common.TableHandle;
 import com.minidb.server.storage.StorageManager;
-import java.util.ArrayList;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;

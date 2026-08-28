@@ -55,8 +55,7 @@ public class MergeIterator {
                          ConcurrentHashMap<Long, MemTable> txMemTables,
                          SSTableManager sstManager, TableSchema schema,
                          PartFormat format, BufferAllocator allocator,
-                         List<Object> rangeLo, List<Object> rangeHi,
-                         long snapshotTxId) {
+                         List<Object> rangeLo, List<Object> rangeHi) {
         this.memTables = memTables;
         this.sstManager = sstManager;
         this.schema = schema;
@@ -83,7 +82,6 @@ public class MergeIterator {
         private int heapSize = 0;
 
         private final List<SSTableReader> readers = new ArrayList<>();
-        private VectorSchemaRoot currentBatch = null;
         private int batchPos = 0;
         private final List<Object[]> batchRows = new ArrayList<>();
         private boolean exhausted = false;
@@ -151,7 +149,7 @@ public class MergeIterator {
             // 不关闭上一批 currentBatch:它已通过前一次 next() 返回给调用方,
             // 调用方可能仍在使用(materializeColumns 收进 batches list 后 copyRow)。
             // 改为累积到 emitted,由 close() 统一释放。
-            currentBatch = rowsToRoot(batchRows);
+            VectorSchemaRoot currentBatch = rowsToRoot(batchRows);
             emitted.add(currentBatch);
             batchPos = batchRows.size(); // 标记已消费
             return currentBatch;

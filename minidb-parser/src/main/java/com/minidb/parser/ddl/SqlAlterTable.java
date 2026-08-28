@@ -1,6 +1,8 @@
 package com.minidb.parser.ddl;
 
 import java.util.List;
+
+import org.apache.calcite.sql.SqlAlter;
 import org.apache.calcite.sql.SqlCall;
 import org.apache.calcite.sql.SqlDataTypeSpec;
 import org.apache.calcite.sql.SqlDdl;

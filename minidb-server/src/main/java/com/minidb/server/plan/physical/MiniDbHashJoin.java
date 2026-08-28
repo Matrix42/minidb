@@ -111,9 +111,7 @@ public class MiniDbHashJoin extends MiniDbJoin {
         private final VectorSchemaRoot probe;
         private final ExecContext ctx;
         private final Map<ColumnKey, List<Integer>> buildTable;
-        private final List<Integer> buildKeyCols;
         private final List<Integer> probeKeyCols;
-        private final int[] buildKeyArr;
         private final int[] probeKeyArr;
         private final RexNode residual;
         private final boolean hasResidual;
@@ -144,9 +142,7 @@ public class MiniDbHashJoin extends MiniDbJoin {
             this.probe = probe;
             this.ctx = ctx;
             this.buildTable = buildTable;
-            this.buildKeyCols = buildKeyCols;
             this.probeKeyCols = probeKeyCols;
-            this.buildKeyArr = buildKeyArr;
             this.probeKeyArr = probeKeyArr;
             this.residual = residual;
             this.hasResidual = hasResidual;
@@ -245,11 +241,8 @@ public class MiniDbHashJoin extends MiniDbJoin {
                                            int leftIdx, VectorSchemaRoot right, int rightIdx,
                                            RexNode residual, ExecContext ctx) {
         writeProbeRow(probeRoot, left, leftIdx, right, rightIdx);
-        ValueVector result = ctx.interpreter().eval(residual, probeRoot);
-        try {
+        try (ValueVector result = ctx.interpreter().eval(residual, probeRoot)) {
             return !result.isNull(0) && ((BitVector) result).get(0) == 1;
-        } finally {
-            result.close();
         }
     }
 }

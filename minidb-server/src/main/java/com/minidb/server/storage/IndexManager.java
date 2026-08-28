@@ -21,6 +21,7 @@ import java.nio.file.DirectoryStream;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.util.ArrayList;
+import java.util.Arrays;
 import java.util.HashSet;
 import java.util.List;
 import java.util.Locale;
@@ -127,8 +128,7 @@ public class IndexManager {
      * {@link IllegalArgumentException}。调用方(QueryExecutor.handleCreateIndex)
      * 捕获异常后清理索引半成品。
      */
-    public void populateFromTable(String schemaName, String tableName, IndexDef def,
-                                   TableHandle dataTable, TableHandle indexTable) {
+    public void populateFromTable(IndexDef def, TableHandle dataTable, TableHandle indexTable) {
         TableSchema data = dataTable.schema();
         List<Integer> idxPositions = new ArrayList<>(def.columns().size());
         for (String col : def.columns()) {
@@ -159,9 +159,7 @@ public class IndexManager {
                     if (seen != null) {
                         // 仅索引列值(不含主键)检查重复——同索引值跨主键仍算冲突
                         List<Object> idxKey = new ArrayList<>(idxPositions.size());
-                        for (int c = 0; c < idxPositions.size(); c++) {
-                            idxKey.add(key[c]);
-                        }
+                        idxKey.addAll(Arrays.asList(key).subList(0, idxPositions.size()));
                         // null 键不参与唯一性
                         if (idxKey.stream().noneMatch(Objects::isNull)
                                 && !seen.add(idxKey)) {
@@ -309,8 +307,7 @@ public class IndexManager {
         if (rows.isEmpty()) {
             return;
         }
-        VectorSchemaRoot root = VectorSchemaRoot.create(ArrowTypes.arrowSchema(indexTable.schema()), allocator);
-        try {
+        try (VectorSchemaRoot root = VectorSchemaRoot.create(ArrowTypes.arrowSchema(indexTable.schema()), allocator)) {
             for (FieldVector v : root.getFieldVectors()) {
                 v.setInitialCapacity(rows.size());
                 v.allocateNew();
@@ -323,8 +320,6 @@ public class IndexManager {
             }
             root.setRowCount(rows.size());
             indexTable.writePart(root, op);
-        } finally {
-            root.close();
         }
         rows.clear();
     }

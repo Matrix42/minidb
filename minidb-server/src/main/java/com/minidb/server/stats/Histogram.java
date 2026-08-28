@@ -225,18 +225,18 @@ public record Histogram(
     @SuppressWarnings({"unchecked", "rawtypes"})
     private static Comparable<Object> normalizeLiteral(Comparable<?> c) {
         if (c instanceof BigDecimal bd) {
-            return (Comparable<Object>) (Comparable) Double.valueOf(bd.doubleValue());
+            return (Comparable<Object>) (Comparable) bd.doubleValue();
         }
         if (c instanceof Integer i) {
-            return (Comparable<Object>) (Comparable) Double.valueOf(i.doubleValue());
+            return (Comparable<Object>) (Comparable) i.doubleValue();
         }
         if (c instanceof Long l) {
-            return (Comparable<Object>) (Comparable) Double.valueOf(l.doubleValue());
+            return (Comparable<Object>) (Comparable) l.doubleValue();
         }
         if (c instanceof Float f) {
-            return (Comparable<Object>) (Comparable) Double.valueOf(f.doubleValue());
+            return (Comparable<Object>) (Comparable) f.doubleValue();
         }
-        return (Comparable<Object>) (Comparable) c;
+        return (Comparable<Object>) c;
     }
 
     /**

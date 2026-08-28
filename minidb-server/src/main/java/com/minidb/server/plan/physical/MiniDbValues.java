@@ -138,9 +138,6 @@ public class MiniDbValues extends Values implements MiniDbRel {
      * 旧版本可能存 byte[] 或 BitString,三者都兼容。 */
     private static byte[] literalBytes(RexLiteral literal) {
         Object raw = literal.getValue();
-        if (raw instanceof byte[] bytes) {
-            return bytes;
-        }
         if (raw instanceof ByteString byteString) {
             return byteString.getBytes();
         }

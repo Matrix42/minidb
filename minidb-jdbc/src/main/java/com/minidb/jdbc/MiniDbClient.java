@@ -75,7 +75,6 @@ public class MiniDbClient implements AutoCloseable {
      * 兜底:用户忘记 close() 而让 client 被 GC 时,释放 EventLoopGroup 与 RootAllocator,
      * 避免堆外内存与 Netty 线程永久泄漏。转发 close()(其已做幂等)。
      */
-    @SuppressWarnings("removal")
     @Override
     protected void finalize() {
         close();
@@ -371,11 +370,8 @@ public class MiniDbClient implements AutoCloseable {
         try {
             VectorSchemaRoot root = VectorSchemaRoot.create(schema, allocator);
             try (ReadChannel channel = new ReadChannel(Channels.newChannel(new ByteBufInputStream(data)))) {
-                ArrowRecordBatch recordBatch = MessageSerializer.deserializeRecordBatch(channel, allocator);
-                try {
+                try (ArrowRecordBatch recordBatch = MessageSerializer.deserializeRecordBatch(channel, allocator)) {
                     new VectorLoader(root).load(recordBatch);
-                } finally {
-                    recordBatch.close();
                 }
             }
             return root;
@@ -494,7 +490,6 @@ public class MiniDbClient implements AutoCloseable {
                 } finally {
                     c.data().release();
                 }
-                return;
             }
         }
 

@@ -106,18 +106,6 @@ public class MiniDbCatalog {
         notifyChange();
     }
 
-    public ViewDefinition getView(String schemaName, String viewName) {
-        Map<String, ViewDefinition> v = views.get(key(schemaName));
-        if (v == null) {
-            throw new IllegalArgumentException("schema not found: " + schemaName);
-        }
-        ViewDefinition view = v.get(key(viewName));
-        if (view == null) {
-            throw new IllegalArgumentException("view not found: " + viewName);
-        }
-        return view;
-    }
-
     public boolean hasView(String schemaName, String viewName) {
         Map<String, ViewDefinition> v = views.get(key(schemaName));
         return v != null && v.containsKey(key(viewName));

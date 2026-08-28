@@ -75,10 +75,6 @@ public class CalciteContext {
         return planInCluster(sql, cluster, currentSchema);
     }
 
-    public RelRoot planInCluster(String sql, RelOptCluster cluster) {
-        return planInCluster(sql, cluster, MiniDbCatalog.DEFAULT_SCHEMA);
-    }
-
     public RelRoot planInCluster(String sql, RelOptCluster cluster, String currentSchema) {
         return planInCluster(sql, cluster, currentSchema, NO_VIEWS);
     }
