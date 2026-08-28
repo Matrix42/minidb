@@ -1,4 +1,5 @@
 package com.minidb.server.catalog;
+import com.minidb.storage.common.MVDefinition;
 import com.minidb.storage.common.TableSchema;
 
 import com.minidb.server.stats.TableStats;
@@ -6,6 +7,7 @@ import java.util.ArrayList;
 import java.util.List;
 import java.util.Locale;
 import java.util.Map;
+import java.util.Set;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.CopyOnWriteArrayList;
 
@@ -15,6 +17,8 @@ public class MiniDbCatalog {
 
     private final Map<String, Map<String, TableSchema>> schemas = new ConcurrentHashMap<>();
     private final Map<String, Map<String, ViewDefinition>> views = new ConcurrentHashMap<>();
+    private final Map<String, Map<String, MVDefinition>> materializedViews = new ConcurrentHashMap<>();
+    private final Map<MVDefinition.TableRef, Set<String>> mvDependencyIndex = new ConcurrentHashMap<>();
     private final Map<String, TableStats> stats = new ConcurrentHashMap<>();
     private final List<Runnable> listeners = new CopyOnWriteArrayList<>();
 
@@ -51,6 +55,7 @@ public class MiniDbCatalog {
             throw new IllegalArgumentException("schema not found: " + name);
         }
         views.remove(k);
+        materializedViews.remove(k);
         stats.keySet().removeIf(key -> key.startsWith(k + "."));
         notifyChange();
     }
@@ -69,6 +74,9 @@ public class MiniDbCatalog {
         if (hasView(schema.schemaName(), schema.name())) {
             throw new IllegalArgumentException("view already exists: " + schema.name());
         }
+        if (hasMaterializedView(schema.schemaName(), schema.name())) {
+            throw new IllegalArgumentException("materialized view already exists: " + schema.name());
+        }
         if (tables.putIfAbsent(tk, schema) != null) {
             throw new IllegalArgumentException("table already exists: " + schema.name());
         }
@@ -80,6 +88,9 @@ public class MiniDbCatalog {
                 key(view.schemaName()), k -> new ConcurrentHashMap<>());
         if (hasTable(view.schemaName(), view.name())) {
             throw new IllegalArgumentException("table already exists: " + view.name());
+        }
+        if (hasMaterializedView(view.schemaName(), view.name())) {
+            throw new IllegalArgumentException("materialized view already exists: " + view.name());
         }
         if (v.putIfAbsent(key(view.name()), view) != null) {
             throw new IllegalArgumentException("view already exists: " + view.name());
@@ -93,6 +104,9 @@ public class MiniDbCatalog {
                 key(view.schemaName()), k -> new ConcurrentHashMap<>());
         if (hasTable(view.schemaName(), view.name())) {
             throw new IllegalArgumentException("table already exists: " + view.name());
+        }
+        if (hasMaterializedView(view.schemaName(), view.name())) {
+            throw new IllegalArgumentException("materialized view already exists: " + view.name());
         }
         v.put(key(view.name()), view);
         notifyChange();
@@ -156,6 +170,9 @@ public class MiniDbCatalog {
         if (hasView(schemaName, newName)) {
             throw new IllegalArgumentException("view already exists: " + newName);
         }
+        if (hasMaterializedView(schemaName, newName)) {
+            throw new IllegalArgumentException("materialized view already exists: " + newName);
+        }
         if (tables.containsKey(newKey)) {
             throw new IllegalArgumentException("table already exists: " + newName);
         }
@@ -210,8 +227,6 @@ public class MiniDbCatalog {
         TableStats ts = stats.get(k);
         if (ts != null) {
             stats.put(k, new TableStats(ts.columnHistograms(), ts.rowCount(), true));
-            // 持久化 stale 标记:否则 DML 后重启会从 catalog.json 以 false 加载,
-            // 把过期统计误判为新鲜。代价是每次 DML 写一次 catalog.json,玩具库可接受。
             notifyChange();
         }
     }
@@ -245,10 +260,17 @@ public class MiniDbCatalog {
                 names.add(name);
             }
         }
-        return new CatalogSnapshot(names, tables, viewList, Map.copyOf(stats));
+        List<MVDefinition> mvList = new ArrayList<>();
+        for (Map.Entry<String, Map<String, MVDefinition>> e : materializedViews.entrySet()) {
+            if (InformationSchemaCatalog.SCHEMA_NAME.equals(e.getKey())) {
+                continue;
+            }
+            mvList.addAll(e.getValue().values());
+        }
+        return new CatalogSnapshot(names, tables, viewList, mvList, Map.copyOf(stats));
     }
 
-    /** 批量恢复(启动时用),不触发 notifyChange —— 避免加载时把刚读到的文件写回。 */
+    /** 批量恢复(启动时用),不触发 notifyChange */
     public void restore(CatalogSnapshot snapshot) {
         for (String schemaName : snapshot.schemas()) {
             schemas.putIfAbsent(key(schemaName), new ConcurrentHashMap<>());
@@ -266,6 +288,78 @@ public class MiniDbCatalog {
         for (var e : snapshot.stats().entrySet()) {
             stats.put(e.getKey(), e.getValue());
         }
+        for (MVDefinition mv : snapshot.materializedViews()) {
+            String sk = key(mv.schemaName());
+            Map<String, MVDefinition> m = materializedViews.computeIfAbsent(
+                    sk, k -> new ConcurrentHashMap<>());
+            m.putIfAbsent(key(mv.name()), mv);
+        }
+        for (MVDefinition mv : snapshot.materializedViews()) {
+            for (MVDefinition.TableRef dep : mv.dependencies()) {
+                MVDefinition.TableRef norm = new MVDefinition.TableRef(
+                        key(dep.schemaName()), key(dep.tableName()));
+                mvDependencyIndex.computeIfAbsent(norm, k -> ConcurrentHashMap.newKeySet())
+                        .add(key(mv.schemaName()) + "." + key(mv.name()));
+            }
+        }
+    }
+
+    // ---- 物化视图管理 ----
+
+    public Set<String> getDependentMVs(String schemaName, String tableName) {
+        MVDefinition.TableRef ref = new MVDefinition.TableRef(
+                key(schemaName), key(tableName));
+        Set<String> result = mvDependencyIndex.get(ref);
+        return result == null ? Set.of() : Set.copyOf(result);
+    }
+
+    public void createMaterializedView(MVDefinition mv) {
+        Map<String, MVDefinition> m = materializedViews.computeIfAbsent(
+                key(mv.schemaName()), k -> new ConcurrentHashMap<>());
+        String tk = key(mv.name());
+        if (hasTable(mv.schemaName(), mv.name())) {
+            throw new IllegalArgumentException("table already exists: " + mv.name());
+        }
+        if (hasView(mv.schemaName(), mv.name())) {
+            throw new IllegalArgumentException("view already exists: " + mv.name());
+        }
+        if (m.putIfAbsent(tk, mv) != null) {
+            throw new IllegalArgumentException("materialized view already exists: " + mv.name());
+        }
+        for (MVDefinition.TableRef dep : mv.dependencies()) {
+            MVDefinition.TableRef norm = new MVDefinition.TableRef(
+                    key(dep.schemaName()), key(dep.tableName()));
+            mvDependencyIndex.computeIfAbsent(norm, k -> ConcurrentHashMap.newKeySet())
+                    .add(key(mv.schemaName()) + "." + tk);
+        }
+        notifyChange();
+    }
+
+    public void dropMaterializedView(String schemaName, String mvName) {
+        String sk = key(schemaName);
+        String tk = key(mvName);
+        Map<String, MVDefinition> m = materializedViews.get(sk);
+        if (m == null || m.remove(tk) == null) {
+            throw new IllegalArgumentException("materialized view not found: " + mvName);
+        }
+        String fullName = sk + "." + tk;
+        mvDependencyIndex.values().forEach(set -> set.remove(fullName));
+        mvDependencyIndex.entrySet().removeIf(e -> e.getValue().isEmpty());
+        notifyChange();
+    }
+
+    public MVDefinition getMaterializedView(String schemaName, String mvName) {
+        Map<String, MVDefinition> m = materializedViews.get(key(schemaName));
+        return m == null ? null : m.get(key(mvName));
+    }
+
+    public boolean hasMaterializedView(String schemaName, String mvName) {
+        return getMaterializedView(schemaName, mvName) != null;
+    }
+
+    public List<MVDefinition> getMaterializedViews(String schemaName) {
+        Map<String, MVDefinition> m = materializedViews.get(key(schemaName));
+        return m == null ? List.of() : new ArrayList<>(m.values());
     }
 
     private void notifyChange() {
