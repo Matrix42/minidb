@@ -575,6 +575,15 @@ public class QueryExecutor {
         String schemaName = parts.size() > 1 ? parts.get(0) : currentSchema;
         String tableName = parts.get(parts.size() - 1);
         storage.truncateTable(schemaName, tableName);
+        // 清空依赖此表的物化视图
+        Set<String> dependents = catalog.getDependentMVs(schemaName, tableName);
+        for (String mvKey : dependents) {
+            int dot = mvKey.indexOf('.');
+            String mvSchema = mvKey.substring(0, dot);
+            String mvName = mvKey.substring(dot + 1);
+            TableHandle mvTable = storage.getTable(mvSchema, mvName);
+            mvTable.clearParts();
+        }
         return new QueryResult.Update(0);
     }
 

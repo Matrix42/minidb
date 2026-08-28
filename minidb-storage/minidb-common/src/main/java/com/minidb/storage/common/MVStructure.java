@@ -1,9 +1,12 @@
 package com.minidb.storage.common;
 
+import com.fasterxml.jackson.annotation.JsonTypeInfo;
+
 import java.util.List;
 
 /** 增量刷新所需的结构信息。用于 IncrementalRefreshEngine 判断刷新路径。 */
-public sealed interface MVStructure {
+@JsonTypeInfo(use = JsonTypeInfo.Id.CLASS)
+public interface MVStructure {
 
     /** SPJ：SELECT ... FROM 单表 WHERE ... */
     record Spj(

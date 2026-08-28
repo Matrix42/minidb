@@ -136,4 +136,53 @@ class MaterializedViewTest {
         assertNotNull(ts.mvDefinition());
         assertEquals("mv", ts.mvDefinition().name());
     }
+
+    @Test
+    void truncateBaseTableClearsDependentMV() {
+        executor.execute("CREATE TABLE t (id INTEGER, name VARCHAR)");
+        executor.execute("INSERT INTO t VALUES (1, 'a'), (2, 'b'), (3, 'c')");
+        executor.execute("CREATE MATERIALIZED VIEW mv AS SELECT id, name FROM t WHERE id > 1");
+
+        // 验证 MV 有数据
+        VectorSchemaRoot root = ((QueryResult.Rows) executor.execute(
+                "SELECT * FROM mv")).data();
+        assertEquals(2, root.getRowCount());
+        root.close();
+
+        // TRUNCATE 基表
+        executor.execute("TRUNCATE TABLE t");
+
+        // MV 应该被清空
+        root = ((QueryResult.Rows) executor.execute("SELECT * FROM mv")).data();
+        assertEquals(0, root.getRowCount());
+        root.close();
+    }
+
+    @Test
+    void dmlAutoRefreshMv() {
+        executor.execute("CREATE TABLE t (id INTEGER, name VARCHAR)");
+        executor.execute("INSERT INTO t VALUES (1, 'a'), (2, 'b'), (3, 'c')");
+        executor.execute("CREATE MATERIALIZED VIEW mv AS SELECT id, name FROM t WHERE id > 1");
+
+        // INSERT 后自动刷新
+        executor.execute("INSERT INTO t VALUES (4, 'd')");
+        VectorSchemaRoot root = ((QueryResult.Rows) executor.execute(
+                "SELECT id FROM mv ORDER BY id")).data();
+        IntVector iv = (IntVector) root.getVector("id");
+        assertEquals(3, iv.getValueCount());
+        assertEquals(2, iv.get(0));
+        assertEquals(3, iv.get(1));
+        assertEquals(4, iv.get(2));
+        root.close();
+
+        // DELETE 后自动刷新
+        executor.execute("DELETE FROM t WHERE id = 3");
+        root = ((QueryResult.Rows) executor.execute(
+                "SELECT id FROM mv ORDER BY id")).data();
+        iv = (IntVector) root.getVector("id");
+        assertEquals(2, iv.getValueCount());
+        assertEquals(2, iv.get(0));
+        assertEquals(4, iv.get(1));
+        root.close();
+    }
 }
