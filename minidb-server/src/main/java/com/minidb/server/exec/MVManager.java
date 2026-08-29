@@ -143,12 +143,22 @@ public class MVManager {
                                     throw new UnsupportedOperationException(
                                             "不支持的聚合函数: " + funcName);
                         };
-                String inputCol =
-                        agg.getInput()
-                                .getRowType()
-                                .getFieldList()
-                                .get(call.getArgList().get(0))
-                                .getName();
+                // 聚合输入列:纯列引用参数存 argList(见 CLAUDE.md 坑 11)。
+                // COUNT(*) 无参数(argList 空)——COUNT 增量刷新不需要输入列
+                // (IncrementalRefreshEngine 对 COUNT 直接计 delta 行数),置 null 即可。
+                // 非 COUNT 且无 argList 说明参数是表达式(不支持:增量刷新需要列索引)。
+                String inputCol = null;
+                if (!call.getArgList().isEmpty()) {
+                    inputCol =
+                            agg.getInput()
+                                    .getRowType()
+                                    .getFieldList()
+                                    .get(call.getArgList().get(0))
+                                    .getName();
+                } else if (aggType != MVStructure.AggType.COUNT) {
+                    throw new UnsupportedOperationException(
+                            "物化视图聚合暂不支持表达式参数: " + call.getAggregation().getName());
+                }
                 funcs.add(new MVStructure.AggFunc(call.name, aggType, inputCol));
             }
 
