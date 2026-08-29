@@ -49,7 +49,7 @@ public class MiniDbCalciteTable extends AbstractTable {
         RelDataTypeFactory.Builder builder = typeFactory.builder();
         for (ColumnMeta column : schema.columns()) {
             RelDataType type = ArrowTypes.toCalciteType(column, typeFactory);
-            builder.add(column.name(), type).nullable(true);
+            builder.add(column.name(), type).nullable(column.nullable());
         }
         return builder.build();
     }
