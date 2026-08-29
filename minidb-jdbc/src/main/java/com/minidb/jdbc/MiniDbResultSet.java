@@ -258,27 +258,29 @@ public class MiniDbResultSet implements ResultSet {
 
     @Override
     public Object getObject(int columnIndex) throws SQLException {
-        try (ValueVector v = vector(columnIndex)) {
-            if (v.isNull(cursor)) {
-                wasNull = true;
-                return null;
-            }
-            return switch (v.getMinorType()) {
-                case INT -> getInt(columnIndex);
-                case BIGINT -> getLong(columnIndex);
-                case FLOAT8 -> getDouble(columnIndex);
-                case VARCHAR -> getString(columnIndex);
-                case BIT -> getBoolean(columnIndex);
-                case DATEDAY -> getDate(columnIndex);
-                case TIMESTAMPMILLI -> getTimestamp(columnIndex);
-                case SMALLINT -> getShort(columnIndex);
-                case FLOAT4 -> getFloat(columnIndex);
-                case DECIMAL -> getBigDecimal(columnIndex);
-                case TIMEMILLI -> getTime(columnIndex);
-                case VARBINARY -> getBytes(columnIndex);
-                default -> throw new SQLException("unsupported type: " + v.getMinorType());
-            };
+        // 注意:vector() 返回的是 root 持有的共享向量,不能 try-with-resources 关闭——
+        // 关闭共享向量会释放整个列的 buffer,后续行访问直接越界(IndexOutOfBoundsException)。
+        // 与 getInt/getString 等一样,不在这里释放。
+        ValueVector v = vector(columnIndex);
+        if (v.isNull(cursor)) {
+            wasNull = true;
+            return null;
         }
+        return switch (v.getMinorType()) {
+            case INT -> getInt(columnIndex);
+            case BIGINT -> getLong(columnIndex);
+            case FLOAT8 -> getDouble(columnIndex);
+            case VARCHAR -> getString(columnIndex);
+            case BIT -> getBoolean(columnIndex);
+            case DATEDAY -> getDate(columnIndex);
+            case TIMESTAMPMILLI -> getTimestamp(columnIndex);
+            case SMALLINT -> getShort(columnIndex);
+            case FLOAT4 -> getFloat(columnIndex);
+            case DECIMAL -> getBigDecimal(columnIndex);
+            case TIMEMILLI -> getTime(columnIndex);
+            case VARBINARY -> getBytes(columnIndex);
+            default -> throw new SQLException("unsupported type: " + v.getMinorType());
+        };
     }
 
     @Override
