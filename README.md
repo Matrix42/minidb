@@ -21,6 +21,7 @@
 - [建表与 DDL](#建表与-ddl)
 - [数据操纵 DML](#数据操纵-dml)
 - [SELECT 查询](#select-查询)
+- [OLAP 分组](#olap-分组rollup--cube--grouping-sets)
 - [函数](#函数)
 - [索引](#索引)
 - [视图与物化视图](#视图与物化视图)
@@ -34,7 +35,7 @@
 
 ## 特性
 
-- **完整 SQL**:DDL(建表/改表/索引/视图/物化视图/schema)、DML(INSERT/UPDATE/DELETE/TRUNCATE)、SELECT(WHERE / ORDER BY / LIMIT / OFFSET / DISTINCT / GROUP BY / HAVING)、JOIN(INNER / LEFT / RIGHT / FULL、等值/非等值)、集合运算(UNION / INTERSECT / EXCEPT,含 ALL)、CTE(WITH 与递归 `WITH RECURSIVE`)、子查询(标量 / IN / EXISTS,含相关子查询)、窗口函数。
+- **完整 SQL**:DDL(建表/改表/索引/视图/物化视图/schema)、DML(INSERT/UPDATE/DELETE/TRUNCATE)、SELECT(WHERE / ORDER BY / LIMIT / OFFSET / DISTINCT / GROUP BY / HAVING)、OLAP 分组(ROLLUP / CUBE / GROUPING SETS / GROUPING)、JOIN(INNER / LEFT / RIGHT / FULL、等值/非等值)、集合运算(UNION / INTERSECT / EXCEPT,含 ALL)、CTE(WITH 与递归 `WITH RECURSIVE`)、子查询(标量 / IN / EXISTS,含相关子查询)、窗口函数。
 - **列式向量化执行**:数据以 Arrow `VectorSchemaRoot` 批次流转,`BatchIterator` 拉模式流式处理,VolcanoPlanner + 自研物理算子生成执行计划。
 - **两套存储引擎**:有主键默认走 LSM-Tree(带 WAL、SSTable、布隆过滤器、后台 compaction),无主键走 SimpleTable(直接落 part 文件);均支持 Parquet / Arrow IPC 两种落盘格式。
 - **二级索引**:`CREATE [UNIQUE] INDEX`,索引表 = LSM 表,查询自动选索引(`EXPLAIN` 显示 `index=`)。
@@ -521,6 +522,8 @@ SELECT * FROM emp e WHERE NOT EXISTS (SELECT 1 FROM dept d WHERE d.id = e.dept_i
 
 ### 窗口函数
 
+> 示例基于 `sales (dept VARCHAR, mth INT, amount DOUBLE)`,数据:('a',1,100),('a',2,200),('b',1,300),('b',2,400)。
+
 ```sql
 -- 分区聚合
 SELECT dept, mth, SUM(amount) OVER (PARTITION BY dept) AS s FROM sales;
@@ -551,6 +554,54 @@ SELECT dept, amount, COUNT(*) OVER () FROM sales;
 ```
 
 支持的窗口函数:聚合 `SUM / AVG / COUNT / MIN / MAX`、排名 `ROW_NUMBER / RANK / DENSE_RANK`、偏移 `LEAD / LAG`(可选 offset 与 default)、首末 `FIRST_VALUE / LAST_VALUE`。
+
+### OLAP 分组(ROLLUP / CUBE / GROUPING SETS)
+
+多层级分组聚合:汇总行中未参与分组的列输出 NULL。
+
+```sql
+CREATE TABLE olap (region VARCHAR, product VARCHAR, amount INT);
+INSERT INTO olap VALUES
+  ('east', 'a', 10), ('east', 'b', 20), ('east', 'a', 30),
+  ('west', 'a', 40), ('west', 'b', 50), ('west', 'a', 60);
+
+-- ROLLUP:右逐层收窄,先按 (region, product) 再按 (region) 再全表
+SELECT region, product, SUM(amount) AS s
+FROM olap GROUP BY ROLLUP (region, product)
+ORDER BY region, product;
+--   east | a      | 40        (明细)
+--   east | NULL   | 60        (region=east 小计)
+--   west | a      | 100
+--   west | NULL   | 150       (region=west 小计)
+--   NULL | NULL   | 210       (总计)
+
+-- CUBE:所有组合(明细 + 各维小计 + 总计)
+SELECT region, product, SUM(amount) AS s
+FROM olap GROUP BY CUBE (region, product)
+ORDER BY region, product;      -- 2 维 → 9 行
+
+-- GROUPING SETS:自定义分组集合
+SELECT region, product, SUM(amount) AS s
+FROM olap GROUP BY GROUPING SETS ((region, product), (region), ());
+
+-- GROUPING(col):该列是否被汇总(1=被 ROLLUP/CUBE 汇总,0=明细)
+SELECT region, GROUPING(region) AS g, SUM(amount) AS s
+FROM olap GROUP BY ROLLUP (region);
+--   east | 0 | 60   |   west | 0 | 150   |   NULL | 1 | 210
+
+-- 多列区分汇总级别:GROUPING(a) + GROUPING(b)(GROUPING_ID 目前仅支持单参)
+SELECT region, product,
+       GROUPING(region) + GROUPING(product) AS level,
+       SUM(amount) AS s
+FROM olap GROUP BY CUBE (region, product) ORDER BY region, product;
+
+-- HAVING 也可作用于汇总行
+SELECT region, product, SUM(amount) AS s
+FROM olap GROUP BY ROLLUP (region, product)
+HAVING SUM(amount) >= 60 ORDER BY region, product;
+```
+
+> 组合多列时按左侧参数区分汇总层级:`GROUPING(a)`+`GROUPING(b)` 得到 0/1/2(0=明细、1=单维小计、2=总计)。`GROUPING_ID(a, b)` 多参形式暂不支持(报 "multi-arg aggregate")。
 
 ---
 
@@ -641,6 +692,8 @@ SELECT VAR_SAMP(x), VAR_POP(x), STDDEV_SAMP(x), STDDEV_POP(x) FROM t;
 | `SUM` / `AVG` / `MIN` / `MAX` | 支持 `DISTINCT` 与表达式参数;`AVG` 整型提升为 DOUBLE,DECIMAL 保精度 |
 | `VAR_SAMP` / `VAR_POP` | 样本 / 总体方差 |
 | `STDDEV_SAMP` / `STDDEV_POP` | 样本 / 总体标准差 |
+| `GROUPING(col)` | 分组列是否被 ROLLUP/CUBE 汇总(1=汇总,0=明细),见 [OLAP 分组](#olap-分组rollup--cube--grouping-sets) |
+| `GROUPING_ID(col)` | 单参形式;多参暂不支持 |
 
 ### 窗口函数
 
@@ -789,7 +842,7 @@ COMPACT TABLE emp;                 -- 手动合并该表的 part 文件
 - `PreparedStatement` 为客户端参数替换实现,无服务端预编译。
 - 结果集默认整体拉取,`setFetchSize(n)` 走服务端游标分页;客户端不做本地缓存。
 - `BINARY/VARBINARY` 无值语义,JOIN/聚合/窗口/去重结果未定义;`TIME` 无算术。
-- 不支持:`CHECK` 约束、`DROP CONSTRAINT name`、`DROP SCHEMA ... CASCADE`、`%`(取模)运算符、`CREATE TABLE` 列级 `DEFAULT`(会被解析但不生效)。
+- 不支持:`CHECK` 约束、`DROP CONSTRAINT name`、`DROP SCHEMA ... CASCADE`、`%`(取模)运算符、`CREATE TABLE` 列级 `DEFAULT`(会被解析但不生效)、`GROUPING_ID(a, b, ...)` 多参形式。
 - 标识符用双引号引用(引号风格为 `DOUBLE_QUOTE`,MYSQL lex);反引号不支持。
 - 递归 CTE 支持线性递归(`UNION` / `UNION ALL`,递归项中仅一次引用自身);非线性(递归项多次引用自身)暂不支持。
 - 派生表(子查询)不带 `LIMIT` 的 `ORDER BY` 无排序语义(Calcite 会丢弃 Sort)。
@@ -837,4 +890,4 @@ QueryExecutor.execute(sql, currentSchema)
 
 ## 验证说明
 
-本 README 的全部 SQL 示例均通过发行包启动的服务端(`com.minidb.server.MiniDbServer`,JDK 17)使用自研 JDBC 驱动实际执行验证,覆盖:数据类型、两种表类型与两种存储格式、约束与外键、DML、SELECT 全特性、JOIN 全类型、集合运算、CTE(含递归与图遍历)、窗口函数、子查询、全部内置函数、视图与物化视图(含 DML 自动刷新)、索引与 `EXPLAIN index=`、`information_schema`、schema 切换、ALTER TABLE 全操作、`CREATE TABLE LIKE`、事务(commit/rollback)、`ANALYZE`/`EXPLAIN ANALYZE`、`COMPACT TABLE`,共 100+ 条语句全部通过。
+本 README 的全部 SQL 示例均通过发行包启动的服务端(`com.minidb.server.MiniDbServer`,JDK 17)使用自研 JDBC 驱动实际执行验证,覆盖:数据类型、两种表类型与两种存储格式、约束与外键、DML、SELECT 全特性、JOIN 全类型、集合运算、CTE(含递归与图遍历)、窗口函数、OLAP 分组(ROLLUP / CUBE / GROUPING SETS / GROUPING)、子查询、全部内置函数、视图与物化视图(含 DML 自动刷新)、索引与 `EXPLAIN index=`、`information_schema`、schema 切换、ALTER TABLE 全操作、`CREATE TABLE LIKE`、事务(commit/rollback)、`ANALYZE`/`EXPLAIN ANALYZE`、`COMPACT TABLE`,共 100+ 条语句全部通过。
