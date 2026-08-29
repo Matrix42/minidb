@@ -995,6 +995,16 @@ public final class BuiltInFunctions {
                                                 Integer::compare,
                                                 kind)),
                         new Overload(
+                                List.of(TimeStampMilliVector.class, TimeStampMilliVector.class),
+                                BitVector.class,
+                                (args, out) ->
+                                        Kernels.fillCompareTimestamp(
+                                                (TimeStampMilliVector) args.get(0),
+                                                (TimeStampMilliVector) args.get(1),
+                                                (BitVector) out,
+                                                Long::compare,
+                                                kind)),
+                        new Overload(
                                 List.of(VarBinaryVector.class, VarBinaryVector.class),
                                 BitVector.class,
                                 (args, out) ->

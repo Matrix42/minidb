@@ -36,8 +36,11 @@ import org.apache.calcite.rex.RexUnknownAs;
 import org.apache.calcite.sql.SqlKind;
 import org.apache.calcite.sql.fun.SqlTrimFunction;
 import org.apache.calcite.sql.type.SqlTypeName;
+import org.apache.calcite.util.DateString;
 import org.apache.calcite.util.NlsString;
 import org.apache.calcite.util.Sarg;
+import org.apache.calcite.util.TimeString;
+import org.apache.calcite.util.TimestampString;
 
 import java.math.BigDecimal;
 import java.nio.charset.StandardCharsets;
@@ -421,11 +424,23 @@ public class RexInterpreter {
                     continue;
                 }
                 Object value = RowVectors.readObject(v, i);
-                Comparable<?> cv = toComparable(value);
-                // Calcite 的 Sarg 字符串边界是 NlsString,而列值 readObject 返回 String;
-                // 统一成 NlsString 再比较,否则 RangeSet.contains 内部 cast 失败。
-                if (cv instanceof String s) {
-                    cv = new NlsString(s, null, null);
+                Comparable<?> cv;
+                // 日期/时间列:readObject 返回 epoch 天数/毫秒(整型),而 SARG 边界是
+                // DateString/TimeString/TimestampString。统一成对应的字符串类型再比较,
+                // 否则 ImmutableRangeSet 内部按自然序比较 BigDecimal vs DateString → ClassCastException。
+                if (v instanceof DateDayVector) {
+                    cv = DateString.fromDaysSinceEpoch(((Number) value).intValue());
+                } else if (v instanceof TimeMilliVector) {
+                    cv = TimeString.fromMillisOfDay(((Number) value).intValue());
+                } else if (v instanceof TimeStampMilliVector) {
+                    cv = TimestampString.fromMillisSinceEpoch(((Number) value).longValue());
+                } else {
+                    cv = toComparable(value);
+                    // Calcite 的 Sarg 字符串边界是 NlsString,而列值 readObject 返回 String;
+                    // 统一成 NlsString 再比较,否则 RangeSet.contains 内部 cast 失败。
+                    if (cv instanceof String s) {
+                        cv = new NlsString(s, null, null);
+                    }
                 }
                 boolean contains = sarg.rangeSet.contains(cv);
                 out.setSafe(i, contains ? 1 : 0);

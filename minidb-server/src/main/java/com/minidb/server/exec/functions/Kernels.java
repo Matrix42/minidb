@@ -9,6 +9,7 @@ import org.apache.arrow.vector.Float8Vector;
 import org.apache.arrow.vector.IntVector;
 import org.apache.arrow.vector.SmallIntVector;
 import org.apache.arrow.vector.TimeMilliVector;
+import org.apache.arrow.vector.TimeStampMilliVector;
 import org.apache.arrow.vector.ValueVector;
 import org.apache.arrow.vector.VarBinaryVector;
 import org.apache.arrow.vector.VarCharVector;
@@ -393,6 +394,22 @@ public final class Kernels {
             DateDayVector r,
             BitVector out,
             ScalarKernels.IntCompare cmp,
+            SqlKind kind) {
+        for (int i = 0; i < l.getValueCount(); i++) {
+            if (l.isNull(i) || r.isNull(i)) {
+                out.setNull(i);
+                continue;
+            }
+            out.setSafe(i, compareToBool(cmp.apply(l.get(i), r.get(i)), kind) ? 1 : 0);
+        }
+    }
+
+    /** TIMESTAMP 比较:值与 DateDayVector/TimeMilliVector 同构(epoch 毫秒,long),只是宽度不同。 */
+    public static void fillCompareTimestamp(
+            TimeStampMilliVector l,
+            TimeStampMilliVector r,
+            BitVector out,
+            ScalarKernels.LongCompare cmp,
             SqlKind kind) {
         for (int i = 0; i < l.getValueCount(); i++) {
             if (l.isNull(i) || r.isNull(i)) {
