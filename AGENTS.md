@@ -1,6 +1,6 @@
-# CLAUDE.md — MiniDB 项目指南
+# AGENTS.md — MiniDB 项目指南
 
-本文件供 Claude Code 在后续会话中读取,以快速理解项目、节省 token。内容基于 2026-08-26 的代码状态;若代码与本文冲突,以代码为准。
+本文件供 AGENT 在后续会话中读取,以快速理解项目、节省 token。内容基于 2026-08-26 的代码状态;若代码与本文冲突,以代码为准。
 
 ## 项目概览
 
@@ -11,16 +11,16 @@ MiniDB 是一个基于 Apache Calcite(解析/规划)+ Apache Arrow(列式存储)
 - `minidb-jdbc` — 客户端 JDBC 驱动(`jdbc:minidb://host:port`),基于自定义 Netty 协议。
 - `minidb-dist` — 发行组装模块(pom packaging 无源码),产出 bin/conf/data/jdbc/tools/libs/ 发行目录与 tar.gz/zip,支持 start/stop/status 守护管理。
 
-**定位**:功能完整的单机数据库。无事务(autoCommit 恒 true)。
+**定位**:功能完整的单机数据库。
 
 ## 构建与运行
 
 - **JDK 17 必须**。`JAVA_HOME` 指向 JDK 17(本机为 `C:\Users\Matrix42\.jdks\azul-17.0.15` 或 `C:\Program Files\Java\jdk-17`)。
 - **构建命令**(bash 下直接跑 `./mvnw.cmd`,不是 `mvnw.cmd` 也不是 `cmd //c`):
-  - 全量测试:`./mvnw.cmd test`
-  - 单模块测试:`./mvnw.cmd test -pl minidb-server`
-  - 单测试类:`./mvnw.cmd test -pl minidb-server -Dtest=QueryExecutorTest`
-  - 编译:`./mvnw.cmd -pl minidb-server -am compile -q`
+    - 全量测试:`./mvnw.cmd test`
+    - 单模块测试:`./mvnw.cmd test -pl minidb-server`
+    - 单测试类:`./mvnw.cmd test -pl minidb-server -Dtest=QueryExecutorTest`
+    - 编译:`./mvnw.cmd -pl minidb-server -am compile -q`
 - **启动服务端**:`./mvnw.cmd -pl minidb-server exec:java`(经 `MiniDbServer.main`,参数 `--port`/`--data`/`--conf`),默认监听 8899,数据目录 `./data`,配置目录 `./conf`。需加 JVM 参数:
   ```
   --add-opens=java.base/java.nio=ALL-UNNAMED
@@ -41,6 +41,8 @@ MiniDB 是一个基于 Apache Calcite(解析/规划)+ Apache Arrow(列式存储)
 7. **用中文回复用户**(代码/标识符/路径保持原文)。
 8. **不要偷懒,优先做对而不是做快**。当「干净、可扩展」的改法可行时,不要用局部特判/硬编码糊过去。判据:如果「把这个特判复制第二遍」会让你想把它下沉成框架能力,那第一次就不该特判。
 9. **类名尽量不用全限定名(FQN)**,用 import + 简单名——除非不得已(如两个同名类需要同时引用)。注释里提及类名不算(那是文档,不需要 import)。
+10. **保持代码一致性**。遵循项目已有的编码风格和命名约定,确保代码风格统一。
+11. **更改功能是同步更新README。md和**。比如新增函数要按照 README.md 中的格式和进行更新。
 
 ## 架构与关键类
 
@@ -71,7 +73,7 @@ QueryExecutor.execute(sql, currentSchema)
 - `plan/logical/LogicalOptimizer` — HepPlanner 直接优化 Calcite Logical* 树,跑 `rule/logical` 规则集。
 - `rule/logical/MiniDbLogicalRules` — 分两组:`HEP`(FilterJoinRule/FilterProjectTranspose/ProjectMerge/FilterMerge/聚合下推合并消除/排序换位化简/UnionEliminator 等,HepPlanner 阶段);`SORT`(SortRemoveRule,VolcanoPlanner 阶段,依赖 `RelCollationTraitDef`)。
 - `plan/physical/`——物理算子,均 `implements MiniDbRel`:
-  - `MiniDbScan` — 表扫描(含瞬态表路径 + 索引扫描,见索引节)。`MiniDbFilter` — 过滤,自分配输出 batch。`MiniDbProject` — 投影,窗口函数(RexOver)走 eager 路径。`MiniDbSort` — eager 物化+排序,offset/fetch 处理。`MiniDbValues` — VALUES 字面量。`MiniDbModify` — INSERT/UPDATE/DELETE,写路径调 `storage.markDirty`。`MiniDbAggregate` — eager 流式分组聚合,`LinkedHashMap` 保序;`SELECT DISTINCT` 天然支持。`MiniDbUnion` — UNION/UNION ALL,eager merge 后 close。`MiniDbSetOp` — INTERSECT/EXCEPT,行级 key 计数。`MiniDbCalc` — 防御性 Calc(Project+Filter 泛化),流式 + eager 窗口路径。`MiniDbJoin` — 抽象基类,INNER/LEFT/RIGHT/FULL 支持;三个子类:`MiniDbHashJoin`(等值,HASH 左建表右探测)、`MiniDbSortMergeJoin`(等值+双侧有序)、`MiniDbNestedLoopJoin`(任意条件)。`MiniDbRepeatUnion` — 递归 CTE,eager 迭代不动点,瞬态表传递。`MiniDbTableSpool` — 纯透传,供 `LogicalTableSpool` 转 MINIDB 约定。`RowVectors` — 行↔Arrow 转换工具。`WindowFunctions` — 窗口函数静态工具(聚合/排名/偏移/首末值),在 MiniDbProject 内嵌执行。
+    - `MiniDbScan` — 表扫描(含瞬态表路径 + 索引扫描,见索引节)。`MiniDbFilter` — 过滤,自分配输出 batch。`MiniDbProject` — 投影,窗口函数(RexOver)走 eager 路径。`MiniDbSort` — eager 物化+排序,offset/fetch 处理。`MiniDbValues` — VALUES 字面量。`MiniDbModify` — INSERT/UPDATE/DELETE,写路径调 `storage.markDirty`。`MiniDbAggregate` — eager 流式分组聚合,`LinkedHashMap` 保序;`SELECT DISTINCT` 天然支持。`MiniDbUnion` — UNION/UNION ALL,eager merge 后 close。`MiniDbSetOp` — INTERSECT/EXCEPT,行级 key 计数。`MiniDbCalc` — 防御性 Calc(Project+Filter 泛化),流式 + eager 窗口路径。`MiniDbJoin` — 抽象基类,INNER/LEFT/RIGHT/FULL 支持;三个子类:`MiniDbHashJoin`(等值,HASH 左建表右探测)、`MiniDbSortMergeJoin`(等值+双侧有序)、`MiniDbNestedLoopJoin`(任意条件)。`MiniDbRepeatUnion` — 递归 CTE,eager 迭代不动点,瞬态表传递。`MiniDbTableSpool` — 纯透传,供 `LogicalTableSpool` 转 MINIDB 约定。`RowVectors` — 行↔Arrow 转换工具。`WindowFunctions` — 窗口函数静态工具(聚合/排名/偏移/首末值),在 MiniDbProject 内嵌执行。
 - `rule/physical/`——每个规则一个类,均 `extends ConverterRule`,构造器链:`Config.INSTANCE.withConversion(...).withRuleFactory(XxxRule::new)`。join 由三条规则按代价选:非等值只有 NestedLoopJoinRule;等值三条都产出备选,靠 `computeSelfCost`(见坑 29)排名。
 
 **索引(`storage/IndexManager` + `plan/physical/MiniDbScan`):**
