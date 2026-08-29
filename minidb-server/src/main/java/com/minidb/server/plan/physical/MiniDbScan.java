@@ -161,11 +161,20 @@ public class MiniDbScan extends TableScan implements MiniDbRel {
             schemaName = qualified.get(n - 2);
             tableName = qualified.get(n - 1);
             if (InformationSchemaCatalog.isSystemSchema(schemaName)) {
-                return applyPushdown(
-                        singleBatch(
-                                InformationSchema.materialize(
-                                        ctx.storage().catalog(), tableName, ctx.allocator())),
-                        ctx);
+                // information_schema 物化返回全列批,但 applyPushdown 把 projectedColumns != null
+                // 一律当作「源已投影」(不再 applyProject)。这里先按投影列裁剪,否则批列数 > Scan
+                // rowType 列数,下游 Paginator.copyRow 按源列数取目标列会越界。
+                VectorSchemaRoot materialized =
+                        InformationSchema.materialize(
+                                ctx.storage().catalog(), tableName, ctx.allocator());
+                if (projectedColumns != null
+                        && !isIdentityProjection(
+                                projectedColumns, materialized.getFieldVectors().size())) {
+                    VectorSchemaRoot projected = applyProject(materialized, ctx);
+                    materialized.close();
+                    materialized = projected;
+                }
+                return applyPushdown(singleBatch(materialized), ctx);
             }
             // qualified name like [minidb, other, t] — schema is second-to-last
             tableHandle = ctx.getTable(schemaName, tableName);
