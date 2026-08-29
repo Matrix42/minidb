@@ -1,10 +1,5 @@
 package com.minidb.jdbc;
 
-import java.math.BigDecimal;
-import java.sql.Time;
-import java.sql.Types;
-import java.util.List;
-import java.util.Map;
 import org.apache.arrow.memory.BufferAllocator;
 import org.apache.arrow.memory.RootAllocator;
 import org.apache.arrow.vector.DecimalVector;
@@ -23,13 +18,18 @@ import org.junit.jupiter.api.AfterAll;
 import org.junit.jupiter.api.BeforeAll;
 import org.junit.jupiter.api.Test;
 
+import java.math.BigDecimal;
+import java.sql.Time;
+import java.sql.Types;
+import java.util.List;
+import java.util.Map;
+
 import static org.junit.jupiter.api.Assertions.assertArrayEquals;
 import static org.junit.jupiter.api.Assertions.assertEquals;
 
 /**
- * 客户端侧验证:ResultSetMetaData 优先读 Field 的 "minidb.type" 元数据(类型名端到端保真),
- * 以及 ResultSet 能从新增的原生 Arrow 向量读回值。用 RootAllocator 直接构造 Arrow 向量,
- * 不走网络(该模块不依赖 minidb-server 类)。
+ * 客户端侧验证:ResultSetMetaData 优先读 Field 的 "minidb.type" 元数据(类型名端到端保真), 以及 ResultSet 能从新增的原生 Arrow
+ * 向量读回值。用 RootAllocator 直接构造 Arrow 向量, 不走网络(该模块不依赖 minidb-server 类)。
  */
 class MiniDbResultSetMetaDataTest {
 
@@ -46,18 +46,26 @@ class MiniDbResultSetMetaDataTest {
     }
 
     private static Field field(String name, ArrowType type, String typeName) {
-        return new Field(name,
-                new FieldType(true, type, null, Map.of("minidb.type", typeName)),
-                List.of());
+        return new Field(
+                name, new FieldType(true, type, null, Map.of("minidb.type", typeName)), List.of());
     }
 
     private static VectorSchemaRoot newRoot() {
-        List<FieldVector> vecs = List.of(
-                field("c_smallint", new ArrowType.Int(16, true), "SMALLINT").createVector(allocator),
-                field("c_real", new ArrowType.FloatingPoint(FloatingPointPrecision.SINGLE), "REAL").createVector(allocator),
-                field("c_decimal", new ArrowType.Decimal(10, 2, 128), "DECIMAL").createVector(allocator),
-                field("c_time", new ArrowType.Time(TimeUnit.MILLISECOND, 32), "TIME").createVector(allocator),
-                field("c_varbinary", ArrowType.Binary.INSTANCE, "VARBINARY").createVector(allocator));
+        List<FieldVector> vecs =
+                List.of(
+                        field("c_smallint", new ArrowType.Int(16, true), "SMALLINT")
+                                .createVector(allocator),
+                        field(
+                                        "c_real",
+                                        new ArrowType.FloatingPoint(FloatingPointPrecision.SINGLE),
+                                        "REAL")
+                                .createVector(allocator),
+                        field("c_decimal", new ArrowType.Decimal(10, 2, 128), "DECIMAL")
+                                .createVector(allocator),
+                        field("c_time", new ArrowType.Time(TimeUnit.MILLISECOND, 32), "TIME")
+                                .createVector(allocator),
+                        field("c_varbinary", ArrowType.Binary.INSTANCE, "VARBINARY")
+                                .createVector(allocator));
         for (FieldVector v : vecs) {
             v.setInitialCapacity(1);
             v.allocateNew();
@@ -66,7 +74,7 @@ class MiniDbResultSetMetaDataTest {
         ((Float4Vector) vecs.get(1)).setSafe(0, 1.5f);
         ((DecimalVector) vecs.get(2)).setSafe(0, new BigDecimal("1.23"));
         ((TimeMilliVector) vecs.get(3)).setSafe(0, 45296000); // 12:34:56
-        ((VarBinaryVector) vecs.get(4)).setSafe(0, new byte[]{1, 2, 3});
+        ((VarBinaryVector) vecs.get(4)).setSafe(0, new byte[] {1, 2, 3});
         for (FieldVector v : vecs) {
             v.setValueCount(1);
         }
@@ -109,7 +117,7 @@ class MiniDbResultSetMetaDataTest {
             assertEquals(0, new BigDecimal("1.23").compareTo(rs.getBigDecimal(3)));
             // getTime() 回当日时刻;断言本地时区表示(=12:34:56),不依赖具体 epoch 毫秒。
             assertEquals(java.time.LocalTime.of(12, 34, 56), rs.getTime(4).toLocalTime());
-            assertArrayEquals(new byte[]{1, 2, 3}, rs.getBytes(5));
+            assertArrayEquals(new byte[] {1, 2, 3}, rs.getBytes(5));
         }
     }
 
@@ -121,9 +129,9 @@ class MiniDbResultSetMetaDataTest {
             assertEquals((short) 123, (short) rs.getObject(1));
             assertEquals(1.5f, (float) rs.getObject(2));
             assertEquals(0, new BigDecimal("1.23").compareTo((BigDecimal) rs.getObject(3)));
-            assertEquals(java.time.LocalTime.of(12, 34, 56),
-                    ((Time) rs.getObject(4)).toLocalTime());
-            assertArrayEquals(new byte[]{1, 2, 3}, (byte[]) rs.getObject(5));
+            assertEquals(
+                    java.time.LocalTime.of(12, 34, 56), ((Time) rs.getObject(4)).toLocalTime());
+            assertArrayEquals(new byte[] {1, 2, 3}, (byte[]) rs.getObject(5));
         }
     }
 
@@ -171,14 +179,21 @@ class MiniDbResultSetMetaDataTest {
     @Test
     void isNullableReflectsFieldNullability() throws Exception {
         // 非空列:主键/非 NOT NULL 列(Arrow Field nullable=false)
-        Field notNull = new Field("pk", new FieldType(false, new ArrowType.Int(32, true), null, null), List.of());
+        Field notNull =
+                new Field(
+                        "pk",
+                        new FieldType(false, new ArrowType.Int(32, true), null, null),
+                        List.of());
         FieldVector v = notNull.createVector(allocator);
         v.setInitialCapacity(1);
         v.allocateNew();
         v.setValueCount(1);
         try (VectorSchemaRoot root = VectorSchemaRoot.of(v)) {
             MiniDbResultSetMetaData md = new MiniDbResultSetMetaData(root);
-            assertEquals(java.sql.ResultSetMetaData.columnNoNulls, md.isNullable(1), "NOT NULL 列应报 columnNoNulls");
+            assertEquals(
+                    java.sql.ResultSetMetaData.columnNoNulls,
+                    md.isNullable(1),
+                    "NOT NULL 列应报 columnNoNulls");
         }
     }
 }

@@ -16,42 +16,38 @@ import java.util.regex.Matcher;
 import java.util.regex.Pattern;
 
 /**
- * TPC-DS 查询模板解析器:把 DSGen 的 {@code queryNN.tpl} 转成可执行的 SQL。
- * 求值策略是「简化实现」——固定 seed 保证可复现,函数返回类型正确且在数据范围内
- * 的候选值,不追求与官方 qgen 的精确分布一致(目的是测耗时,不校验 answer set)。
+ * TPC-DS 查询模板解析器:把 DSGen 的 {@code queryNN.tpl} 转成可执行的 SQL。 求值策略是「简化实现」——固定 seed
+ * 保证可复现,函数返回类型正确且在数据范围内 的候选值,不追求与官方 qgen 的精确分布一致(目的是测耗时,不校验 answer set)。
  */
 public class TpcdsTemplateParser {
 
     private final Random random = new Random(42);
 
     /** rowcount 引用的分布/表名 → 大小(简化:固定值,仅影响 random 上界)。 */
-    private static final Map<String, Integer> ROW_COUNTS = Map.of(
-            "active_counties", 3000,
-            "active_states", 50,
-            "store", 1000,
-            "store_sales", 1000000,
-            "web_sales", 1000000,
-            "catalog_sales", 1000000);
+    private static final Map<String, Integer> ROW_COUNTS =
+            Map.of(
+                    "active_counties", 3000,
+                    "active_states", 50,
+                    "store", 1000,
+                    "store_sales", 1000000,
+                    "web_sales", 1000000,
+                    "catalog_sales", 1000000);
 
-    private sealed interface Value permits IntValue, StrValue, ListValue {
-    }
+    private sealed interface Value permits IntValue, StrValue, ListValue {}
 
-    private record IntValue(int v) implements Value {
-    }
+    private record IntValue(int v) implements Value {}
 
-    private record StrValue(String s) implements Value {
-    }
+    private record StrValue(String s) implements Value {}
 
-    private record ListValue(List<Value> list) implements Value {
-    }
+    private record ListValue(List<Value> list) implements Value {}
 
     private static final Pattern VAR_REF =
             Pattern.compile("\\[([A-Za-z_][A-Za-z_0-9]*)(?:\\.([0-9]+))?\\]");
 
     public Map<String, String> parseAll(Path templateDir) throws IOException {
         // 数字序(query1, query2, ..., query99),而非字典序(query1, query10, ...)。
-        Map<String, String> result = new TreeMap<>((a, b) ->
-                Integer.compare(queryNumber(a), queryNumber(b)));
+        Map<String, String> result =
+                new TreeMap<>((a, b) -> Integer.compare(queryNumber(a), queryNumber(b)));
         try (DirectoryStream<Path> ds = Files.newDirectoryStream(templateDir, "query*.tpl")) {
             for (Path p : ds) {
                 String fileName = p.getFileName().toString();
@@ -69,20 +65,19 @@ public class TpcdsTemplateParser {
     /** 内置模板在 classpath 里的资源目录。 */
     private static final String BUNDLED_TEMPLATE_DIR = "/tpcds/query_templates/";
 
-    /**
-     * 从模块内置 resources 读 99 个查询模板(无需外部 DSGen 工具),语义同 {@link #parseAll}。
-     */
+    /** 从模块内置 resources 读 99 个查询模板(无需外部 DSGen 工具),语义同 {@link #parseAll}。 */
     public Map<String, String> parseBundled() throws IOException {
-        Map<String, String> result = new TreeMap<>((a, b) ->
-                Integer.compare(queryNumber(a), queryNumber(b)));
+        Map<String, String> result =
+                new TreeMap<>((a, b) -> Integer.compare(queryNumber(a), queryNumber(b)));
         for (int i = 1; i <= 99; i++) {
             String name = "query" + i + ".tpl";
-            try (InputStream in = TpcdsTemplateParser.class
-                    .getResourceAsStream(BUNDLED_TEMPLATE_DIR + name)) {
+            try (InputStream in =
+                    TpcdsTemplateParser.class.getResourceAsStream(BUNDLED_TEMPLATE_DIR + name)) {
                 if (in == null) {
                     throw new IOException("内置模板缺失: " + BUNDLED_TEMPLATE_DIR + name);
                 }
-                result.put("query" + i,
+                result.put(
+                        "query" + i,
                         parseTemplate(new String(in.readAllBytes(), StandardCharsets.UTF_8), i));
             }
         }
@@ -157,7 +152,7 @@ public class TpcdsTemplateParser {
             return evalFunction(fn.group(1), fn.group(2), vars);
         }
         // 算术/字符串拼接(一层):找最外层 + - * /。
-        for (char op : new char[]{'+', '-', '*', '/'}) {
+        for (char op : new char[] {'+', '-', '*', '/'}) {
             int idx = topLevelOperator(expr, op);
             if (idx > 0) {
                 Value left = evalExpr(expr.substring(0, idx), vars);
@@ -239,7 +234,7 @@ public class TpcdsTemplateParser {
                 if (comma > 0) {
                     String literal = inner.substring(0, comma).trim().replace("\"", "");
                     int weight = Integer.parseInt(inner.substring(comma + 1).trim());
-                    candidates.add(new String[]{literal, String.valueOf(weight)});
+                    candidates.add(new String[] {literal, String.valueOf(weight)});
                 }
             }
         }
@@ -310,8 +305,7 @@ public class TpcdsTemplateParser {
             case "STREAM" -> {
                 return "0";
             }
-            default -> {
-            }
+            default -> {}
         }
         Value v = vars.get(name);
         if (v == null) {
@@ -322,7 +316,10 @@ public class TpcdsTemplateParser {
                 int i = Integer.parseInt(idx) - 1;
                 return i >= 0 && i < lv.list().size() ? valueToString(lv.list().get(i)) : "";
             }
-            return lv.list().stream().map(this::valueToString).reduce((a, b) -> a + ", " + b).orElse("");
+            return lv.list().stream()
+                    .map(this::valueToString)
+                    .reduce((a, b) -> a + ", " + b)
+                    .orElse("");
         }
         return valueToString(v);
     }
@@ -335,7 +332,10 @@ public class TpcdsTemplateParser {
             return sv.s();
         }
         if (v instanceof ListValue lv) {
-            return lv.list().stream().map(this::valueToString).reduce((a, b) -> a + ", " + b).orElse("");
+            return lv.list().stream()
+                    .map(this::valueToString)
+                    .reduce((a, b) -> a + ", " + b)
+                    .orElse("");
         }
         return "";
     }

@@ -4,7 +4,7 @@ import com.minidb.server.catalog.MiniDbCatalog;
 import com.minidb.server.plan.Planner;
 import com.minidb.server.stats.StatsManager;
 import com.minidb.server.storage.StorageManager;
-import java.nio.file.Path;
+
 import org.apache.arrow.memory.BufferAllocator;
 import org.apache.arrow.memory.RootAllocator;
 import org.apache.calcite.plan.RelOptUtil;
@@ -13,6 +13,8 @@ import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
+
+import java.nio.file.Path;
 
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
@@ -51,7 +53,8 @@ class JoinCostTest {
         // 5×2 等值 join:Hash 建表成本 5+2=7,比 NestedLoop 逐对比较 5×2=10 便宜,
         // 比 SortMerge(5*log6 + 2*log3 ≈ 11 的内排开销)更便宜,计划应选 Hash。
         RelNode plan = new Planner(catalog).plan("SELECT a.id FROM a JOIN b ON a.id = b.id");
-        assertTrue(RelOptUtil.toString(plan).contains("MiniDbHashJoin"),
+        assertTrue(
+                RelOptUtil.toString(plan).contains("MiniDbHashJoin"),
                 "expected MiniDbHashJoin, plan=\n" + RelOptUtil.toString(plan));
     }
 
@@ -62,9 +65,10 @@ class JoinCostTest {
         executor.execute("CREATE TABLE single (id INTEGER)");
         executor.execute("INSERT INTO single VALUES (1)");
         stats.analyze("single");
-        RelNode plan = new Planner(catalog).plan(
-                "SELECT a.id FROM a JOIN single ON a.id = single.id");
-        assertTrue(RelOptUtil.toString(plan).contains("MiniDbHashJoin"),
+        RelNode plan =
+                new Planner(catalog).plan("SELECT a.id FROM a JOIN single ON a.id = single.id");
+        assertTrue(
+                RelOptUtil.toString(plan).contains("MiniDbHashJoin"),
                 "expected MiniDbHashJoin even with single-row side, plan=\n"
                         + RelOptUtil.toString(plan));
     }

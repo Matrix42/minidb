@@ -1,12 +1,14 @@
 package com.minidb.server.plan;
 
+import com.minidb.server.catalog.MiniDbCatalog;
 import com.minidb.storage.common.ColumnMeta;
 import com.minidb.storage.common.ColumnType;
-import com.minidb.server.catalog.MiniDbCatalog;
 import com.minidb.storage.common.TableSchema;
-import java.util.List;
+
 import org.apache.calcite.plan.RelOptUtil;
 import org.junit.jupiter.api.Test;
+
+import java.util.List;
 
 import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertTrue;
@@ -15,10 +17,13 @@ class ExprOptimizationTest {
 
     private Planner planner() {
         MiniDbCatalog catalog = new MiniDbCatalog();
-        catalog.createTable(new TableSchema("t", List.of(
-                new ColumnMeta("id", ColumnType.INTEGER),
-                new ColumnMeta("name", ColumnType.VARCHAR),
-                new ColumnMeta("dept", ColumnType.INTEGER))));
+        catalog.createTable(
+                new TableSchema(
+                        "t",
+                        List.of(
+                                new ColumnMeta("id", ColumnType.INTEGER),
+                                new ColumnMeta("name", ColumnType.VARCHAR),
+                                new ColumnMeta("dept", ColumnType.INTEGER))));
         return new Planner(catalog);
     }
 

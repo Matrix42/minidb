@@ -1,11 +1,7 @@
 package com.minidb.server.stats;
 
 import com.minidb.storage.common.ColumnType;
-import java.util.ArrayList;
-import java.util.Comparator;
-import java.util.List;
-import java.util.Map;
-import java.util.stream.Collectors;
+
 import org.apache.arrow.vector.BigIntVector;
 import org.apache.arrow.vector.BitVector;
 import org.apache.arrow.vector.DateDayVector;
@@ -20,13 +16,18 @@ import org.apache.arrow.vector.ValueVector;
 import org.apache.arrow.vector.VarBinaryVector;
 import org.apache.arrow.vector.VarCharVector;
 
+import java.util.ArrayList;
+import java.util.Comparator;
+import java.util.List;
+import java.util.Map;
+import java.util.stream.Collectors;
+
 public final class HistogramBuilder {
 
     public static final int BUCKET_COUNT = 10;
     public static final int MCV_CAP = 10;
 
-    private HistogramBuilder() {
-    }
+    private HistogramBuilder() {}
 
     public static Histogram build(List<? extends ValueVector> columnBatches, ColumnType type) {
         List<Comparable<?>> values = new ArrayList<>();
@@ -85,8 +86,8 @@ public final class HistogramBuilder {
         // column all values share one type, so identity grouping is equivalent
         // to normalize-based grouping for counting purposes. Histogram
         // equalitySelectivity parses both sides via histValue/normalizeLiteral.
-        Map<Comparable<?>, Long> freq = values.stream().collect(
-                Collectors.groupingBy(v -> v, Collectors.counting()));
+        Map<Comparable<?>, Long> freq =
+                values.stream().collect(Collectors.groupingBy(v -> v, Collectors.counting()));
         return freq.entrySet().stream()
                 .sorted(Map.Entry.<Comparable<?>, Long>comparingByValue().reversed())
                 .limit(MCV_CAP)
@@ -122,8 +123,18 @@ public final class HistogramBuilder {
         // read() 产出的值恒为 String,按列类型解析为可比较值。
         String s = (String) c;
         return switch (type) {
-            case INTEGER, BIGINT, SMALLINT, DOUBLE, REAL, FLOAT, DECIMAL, NUMERIC,
-                 DATE, TIME, TIMESTAMP -> (Comparable<Object>) (Comparable) Double.parseDouble(s);
+            case INTEGER,
+                            BIGINT,
+                            SMALLINT,
+                            DOUBLE,
+                            REAL,
+                            FLOAT,
+                            DECIMAL,
+                            NUMERIC,
+                            DATE,
+                            TIME,
+                            TIMESTAMP ->
+                    (Comparable<Object>) (Comparable) Double.parseDouble(s);
             case BOOLEAN -> (Comparable<Object>) (Comparable) Boolean.valueOf(s);
             default -> (Comparable<Object>) (Comparable) s;
         };

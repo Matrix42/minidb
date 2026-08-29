@@ -11,11 +11,7 @@ import com.minidb.storage.common.ForeignKey;
 import com.minidb.storage.common.IndexDef;
 import com.minidb.storage.common.TableHandle;
 import com.minidb.storage.common.TableSchema;
-import java.math.BigDecimal;
-import java.nio.charset.StandardCharsets;
-import java.util.ArrayList;
-import java.util.List;
-import java.util.Map;
+
 import org.apache.arrow.memory.BufferAllocator;
 import org.apache.arrow.vector.BigIntVector;
 import org.apache.arrow.vector.BitVector;
@@ -41,11 +37,16 @@ import org.apache.calcite.sql.SqlLiteral;
 import org.apache.calcite.sql.SqlNode;
 import org.apache.calcite.sql.SqlNodeList;
 
+import java.math.BigDecimal;
+import java.nio.charset.StandardCharsets;
+import java.util.ArrayList;
+import java.util.List;
+import java.util.Map;
+
 /**
- * ALTER TABLE 执行:解析语义 → 构造新 {@link TableSchema}(不可变,new 一个)→
- * 结构类操作(列增删/改类型)重写 part 文件、元数据类操作(改名/not-null/约束)
- * 只替换 catalog + 重建目录句柄。类型转换复用 {@link VectorCasts}(与 CAST 同源),
- * 约束校验复用 {@link ConstraintChecker}(与 INSERT 同源)。
+ * ALTER TABLE 执行:解析语义 → 构造新 {@link TableSchema}(不可变,new 一个)→ 结构类操作(列增删/改类型)重写 part
+ * 文件、元数据类操作(改名/not-null/约束) 只替换 catalog + 重建目录句柄。类型转换复用 {@link VectorCasts}(与 CAST 同源), 约束校验复用
+ * {@link ConstraintChecker}(与 INSERT 同源)。
  */
 public class AlterTableHandler {
 
@@ -87,8 +88,10 @@ public class AlterTableHandler {
         boolean nullable = !Boolean.FALSE.equals(alter.nullable());
         ColumnMeta newCol = columnFromDataType(colName, alter.dataType(), nullable);
         if (!nullable && alter.defaultExpr() == null && oldTable.rowCount() > 0) {
-            throw new IllegalArgumentException("cannot add NOT NULL column \"" + colName
-                    + "\" to non-empty table without DEFAULT");
+            throw new IllegalArgumentException(
+                    "cannot add NOT NULL column \""
+                            + colName
+                            + "\" to non-empty table without DEFAULT");
         }
         List<ColumnMeta> newCols = new ArrayList<>(oldSchema.columns());
         newCols.add(newCol);
@@ -96,7 +99,8 @@ public class AlterTableHandler {
         rewriteAddColumn(oldTable, newSchema, oldSchema.columns().size(), alter.defaultExpr());
     }
 
-    private void handleDropColumn(SqlAlterTable alter, TableSchema oldSchema, TableHandle oldTable) {
+    private void handleDropColumn(
+            SqlAlterTable alter, TableSchema oldSchema, TableHandle oldTable) {
         String colName = alter.column().getSimple();
         checkColumnNotConstrained(oldSchema, colName, "drop");
         int idx = oldSchema.columnIndex(colName);
@@ -126,9 +130,18 @@ public class AlterTableHandler {
             }
             newIndexes.add(new IndexDef(idf.name(), idf.unique(), renamedCols));
         }
-        TableSchema newSchema = new TableSchema(schemaName, tableName, newCols,
-                oldSchema.primaryKey(), oldSchema.uniqueKeys(), oldSchema.foreignKeys(),
-                oldSchema.storageFormat(), oldSchema.tableType(), newIndexes, null);
+        TableSchema newSchema =
+                new TableSchema(
+                        schemaName,
+                        tableName,
+                        newCols,
+                        oldSchema.primaryKey(),
+                        oldSchema.uniqueKeys(),
+                        oldSchema.foreignKeys(),
+                        oldSchema.storageFormat(),
+                        oldSchema.tableType(),
+                        newIndexes,
+                        null);
         storage.alterTable(schemaName, tableName, newSchema);
     }
 
@@ -150,12 +163,13 @@ public class AlterTableHandler {
         rewriteAlterType(oldTable, newSchema, idx, newCol);
     }
 
-    private void handleNotNull(SqlAlterTable alter, TableSchema oldSchema, TableHandle oldTable,
-                               boolean nullable) {
+    private void handleNotNull(
+            SqlAlterTable alter, TableSchema oldSchema, TableHandle oldTable, boolean nullable) {
         String colName = alter.column().getSimple();
         int idx = oldSchema.columnIndex(colName);
         ColumnMeta old = oldSchema.columns().get(idx);
-        ColumnMeta newCol = new ColumnMeta(old.name(), old.type(), old.precision(), old.scale(), nullable);
+        ColumnMeta newCol =
+                new ColumnMeta(old.name(), old.type(), old.precision(), old.scale(), nullable);
         List<ColumnMeta> newCols = new ArrayList<>(oldSchema.columns());
         newCols.set(idx, newCol);
         TableSchema newSchema = withColumns(oldSchema, newCols);
@@ -166,7 +180,8 @@ public class AlterTableHandler {
         storage.alterTable(schemaName, tableName, newSchema);
     }
 
-    private void handleAddConstraint(SqlAlterTable alter, TableSchema oldSchema, TableHandle oldTable) {
+    private void handleAddConstraint(
+            SqlAlterTable alter, TableSchema oldSchema, TableHandle oldTable) {
         List<String> primaryKey = oldSchema.primaryKey();
         List<List<String>> uniqueKeys = new ArrayList<>(oldSchema.uniqueKeys());
         List<ForeignKey> foreignKeys = new ArrayList<>(oldSchema.foreignKeys());
@@ -179,12 +194,22 @@ public class AlterTableHandler {
             List<String> refNames = alter.refTable().names;
             String refTable = refNames.get(refNames.size() - 1);
             String refSchema = refNames.size() > 1 ? refNames.get(0) : schemaName;
-            List<String> refCols = alter.refColumns() != null ? columnNames(alter.refColumns()) : List.of();
+            List<String> refCols =
+                    alter.refColumns() != null ? columnNames(alter.refColumns()) : List.of();
             foreignKeys.add(new ForeignKey(cols, refSchema, refTable, refCols));
         }
-        TableSchema newSchema = new TableSchema(schemaName, tableName, oldSchema.columns(),
-                primaryKey, uniqueKeys, foreignKeys, oldSchema.storageFormat(),
-                oldSchema.tableType(), oldSchema.indexes(), null);
+        TableSchema newSchema =
+                new TableSchema(
+                        schemaName,
+                        tableName,
+                        oldSchema.columns(),
+                        primaryKey,
+                        uniqueKeys,
+                        foreignKeys,
+                        oldSchema.storageFormat(),
+                        oldSchema.tableType(),
+                        oldSchema.indexes(),
+                        null);
         ConstraintChecker.validateTableSatisfies(
                 new ExecContext(storage, allocator, schemaName), oldTable, newSchema);
         storage.alterTable(schemaName, tableName, newSchema);
@@ -192,8 +217,18 @@ public class AlterTableHandler {
 
     private void handleDropConstraint(SqlAlterTable alter, TableSchema oldSchema) {
         if (alter.constraintKind() == SqlKind.PRIMARY_KEY) {
-            TableSchema newSchema = new TableSchema(schemaName, tableName, oldSchema.columns(),
-                    List.of(), oldSchema.uniqueKeys(), oldSchema.foreignKeys(), oldSchema.storageFormat(), null, null, null);
+            TableSchema newSchema =
+                    new TableSchema(
+                            schemaName,
+                            tableName,
+                            oldSchema.columns(),
+                            List.of(),
+                            oldSchema.uniqueKeys(),
+                            oldSchema.foreignKeys(),
+                            oldSchema.storageFormat(),
+                            null,
+                            null,
+                            null);
             storage.alterTable(schemaName, tableName, newSchema);
             return;
         }
@@ -205,8 +240,8 @@ public class AlterTableHandler {
 
     // ---- 数据重写 ----
 
-    private void rewriteAddColumn(TableHandle oldTable, TableSchema newSchema,
-                                  int newColIndex, SqlNode defaultExpr) {
+    private void rewriteAddColumn(
+            TableHandle oldTable, TableSchema newSchema, int newColIndex, SqlNode defaultExpr) {
         List<VectorSchemaRoot> newBatches = new ArrayList<>();
         int oldCols = oldTable.schema().columns().size();
         try (BatchIterator it = oldTable.scan()) {
@@ -256,16 +291,21 @@ public class AlterTableHandler {
         replace(oldTable, newSchema, newBatches);
     }
 
-    private void rewriteAlterType(TableHandle oldTable, TableSchema newSchema,
-                                  int changedIndex, ColumnMeta newCol) {
+    private void rewriteAlterType(
+            TableHandle oldTable, TableSchema newSchema, int changedIndex, ColumnMeta newCol) {
         List<VectorSchemaRoot> newBatches = new ArrayList<>();
         int oldCols = oldTable.schema().columns().size();
         try (BatchIterator it = oldTable.scan()) {
             while (it.hasNext()) {
                 VectorSchemaRoot src = it.next();
                 int rows = src.getRowCount();
-                try (FieldVector casted = VectorCasts.cast(src.getVector(changedIndex),
-                        newCol.type(), newCol.precision(), newCol.scale(), allocator)) {
+                try (FieldVector casted =
+                        VectorCasts.cast(
+                                src.getVector(changedIndex),
+                                newCol.type(),
+                                newCol.precision(),
+                                newCol.scale(),
+                                allocator)) {
                     VectorSchemaRoot dst = newRoot(newSchema);
                     dst.allocateNew();
                     for (int r = 0; r < rows; r++) {
@@ -285,7 +325,8 @@ public class AlterTableHandler {
         replace(oldTable, newSchema, newBatches);
     }
 
-    private void replace(TableHandle oldTable, TableSchema newSchema, List<VectorSchemaRoot> newBatches) {
+    private void replace(
+            TableHandle oldTable, TableSchema newSchema, List<VectorSchemaRoot> newBatches) {
         oldTable.clearParts();
         storage.alterTable(schemaName, tableName, newSchema);
         TableHandle newTable = storage.getTable(schemaName, tableName);
@@ -307,13 +348,22 @@ public class AlterTableHandler {
     }
 
     private TableSchema withColumns(TableSchema old, List<ColumnMeta> newCols) {
-        return new TableSchema(old.schemaName(), old.name(), newCols,
-                old.primaryKey(), old.uniqueKeys(), old.foreignKeys(), old.storageFormat(),
-                old.tableType(), old.indexes(), null);
+        return new TableSchema(
+                old.schemaName(),
+                old.name(),
+                newCols,
+                old.primaryKey(),
+                old.uniqueKeys(),
+                old.foreignKeys(),
+                old.storageFormat(),
+                old.tableType(),
+                old.indexes(),
+                null);
     }
 
     /** 从 SqlDataTypeSpec 解析列定义(与 QueryExecutor.handleCreate 的列解析一致)。 */
-    private static ColumnMeta columnFromDataType(String name, SqlDataTypeSpec dataType, boolean nullable) {
+    private static ColumnMeta columnFromDataType(
+            String name, SqlDataTypeSpec dataType, boolean nullable) {
         String typeName = dataType.getTypeName().getSimple();
         ColumnType type = ArrowTypes.fromSqlTypeName(typeName);
         int precision = ColumnMeta.PRECISION_UNSET;
@@ -349,30 +399,42 @@ public class AlterTableHandler {
     }
 
     /** 结构变更(删列/改列名/改类型)前校验:列不参与主键/唯一/外键,也不被其它表外键引用。 */
-    private void checkColumnNotConstrained(TableSchema schema, String columnName, String operation) {
+    private void checkColumnNotConstrained(
+            TableSchema schema, String columnName, String operation) {
         if (schema.primaryKey().stream().anyMatch(c -> c.equalsIgnoreCase(columnName))) {
-            throw new IllegalArgumentException("column \"" + columnName
-                    + "\" is part of primary key; cannot " + operation);
+            throw new IllegalArgumentException(
+                    "column \"" + columnName + "\" is part of primary key; cannot " + operation);
         }
         for (List<String> uk : schema.uniqueKeys()) {
             if (uk.stream().anyMatch(c -> c.equalsIgnoreCase(columnName))) {
-                throw new IllegalArgumentException("column \"" + columnName
-                        + "\" is part of unique constraint; cannot " + operation);
+                throw new IllegalArgumentException(
+                        "column \""
+                                + columnName
+                                + "\" is part of unique constraint; cannot "
+                                + operation);
             }
         }
         // 索引列:rename 允许(同步更新索引定义),drop/alter type 禁止。
         if (!"rename".equals(operation)) {
             for (IndexDef idx : schema.indexes()) {
                 if (idx.columns().stream().anyMatch(c -> c.equalsIgnoreCase(columnName))) {
-                    throw new IllegalArgumentException("column \"" + columnName
-                            + "\" is used by index \"" + idx.name() + "\"; cannot " + operation);
+                    throw new IllegalArgumentException(
+                            "column \""
+                                    + columnName
+                                    + "\" is used by index \""
+                                    + idx.name()
+                                    + "\"; cannot "
+                                    + operation);
                 }
             }
         }
         for (ForeignKey fk : schema.foreignKeys()) {
             if (fk.columns().stream().anyMatch(c -> c.equalsIgnoreCase(columnName))) {
-                throw new IllegalArgumentException("column \"" + columnName
-                        + "\" is part of foreign key; cannot " + operation);
+                throw new IllegalArgumentException(
+                        "column \""
+                                + columnName
+                                + "\" is part of foreign key; cannot "
+                                + operation);
             }
         }
         for (String s : storage.catalog().schemaNames()) {
@@ -381,10 +443,17 @@ public class AlterTableHandler {
                 for (ForeignKey fk : other.foreignKeys()) {
                     if (fk.refSchema().equalsIgnoreCase(schema.schemaName())
                             && fk.refTable().equalsIgnoreCase(schema.name())
-                            && fk.refColumns().stream().anyMatch(c -> c.equalsIgnoreCase(columnName))) {
-                        throw new IllegalArgumentException("column \"" + columnName
-                                + "\" is referenced by foreign key in " + s + "." + t
-                                + "; cannot " + operation);
+                            && fk.refColumns().stream()
+                                    .anyMatch(c -> c.equalsIgnoreCase(columnName))) {
+                        throw new IllegalArgumentException(
+                                "column \""
+                                        + columnName
+                                        + "\" is referenced by foreign key in "
+                                        + s
+                                        + "."
+                                        + t
+                                        + "; cannot "
+                                        + operation);
                     }
                 }
             }
@@ -413,12 +482,16 @@ public class AlterTableHandler {
             v.setSafe(row, lit.getValueAs(Boolean.class) ? 1 : 0);
         } else if (dst instanceof DecimalVector v) {
             v.setSafe(row, Kernels.scaleTo(v, lit.getValueAs(BigDecimal.class)));
-        } else if (dst instanceof DateDayVector || dst instanceof TimeMilliVector
-                || dst instanceof TimeStampMilliVector || dst instanceof VarBinaryVector) {
+        } else if (dst instanceof DateDayVector
+                || dst instanceof TimeMilliVector
+                || dst instanceof TimeStampMilliVector
+                || dst instanceof VarBinaryVector) {
             throw new IllegalArgumentException(
-                    "DEFAULT literal unsupported for column type " + dst.getClass().getSimpleName());
+                    "DEFAULT literal unsupported for column type "
+                            + dst.getClass().getSimpleName());
         } else {
-            throw new IllegalArgumentException("unsupported DEFAULT target: " + dst.getClass().getSimpleName());
+            throw new IllegalArgumentException(
+                    "unsupported DEFAULT target: " + dst.getClass().getSimpleName());
         }
     }
 }

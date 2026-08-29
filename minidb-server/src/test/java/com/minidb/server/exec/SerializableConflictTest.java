@@ -5,7 +5,7 @@ import com.minidb.server.stats.StatsManager;
 import com.minidb.server.storage.StorageManager;
 import com.minidb.server.transaction.TransactionManager;
 import com.minidb.server.transaction.TxHandle;
-import java.nio.file.Path;
+
 import org.apache.arrow.memory.BufferAllocator;
 import org.apache.arrow.memory.RootAllocator;
 import org.apache.arrow.vector.VectorSchemaRoot;
@@ -14,16 +14,17 @@ import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
 
+import java.nio.file.Path;
+
 import static org.junit.jupiter.api.Assertions.assertThrows;
 
 /**
- * SERIALIZABLE 隔离级别端到端冲突检测:写入路径必须把写集登记到
- * {@link TransactionManager}(recordWrite),否则 lastWriteTx 恒空,读写/写写冲突全部漏检。
+ * SERIALIZABLE 隔离级别端到端冲突检测:写入路径必须把写集登记到 {@link TransactionManager}(recordWrite),否则 lastWriteTx
+ * 恒空,读写/写写冲突全部漏检。
  */
 class SerializableConflictTest {
 
-    @TempDir
-    Path dataDir;
+    @TempDir Path dataDir;
     BufferAllocator allocator;
     MiniDbCatalog catalog;
     StorageManager storage;

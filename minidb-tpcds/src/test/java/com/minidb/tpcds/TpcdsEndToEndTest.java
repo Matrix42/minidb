@@ -2,13 +2,14 @@ package com.minidb.tpcds;
 
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
+import org.junit.jupiter.api.Test;
+import org.junit.jupiter.api.io.TempDir;
+
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
-import org.junit.jupiter.api.Test;
-import org.junit.jupiter.api.io.TempDir;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertTrue;
@@ -40,9 +41,12 @@ class TpcdsEndToEndTest {
 
         // 4. 对比(同文件两次,验证 HTML 生成)
         Path report = dataDir.resolve("report.html");
-        new TpcdsCompare().compare(
-                List.of(new TpcdsCompare.NamedRun("A", runJson), new TpcdsCompare.NamedRun("B", runJson)),
-                report);
+        new TpcdsCompare()
+                .compare(
+                        List.of(
+                                new TpcdsCompare.NamedRun("A", runJson),
+                                new TpcdsCompare.NamedRun("B", runJson)),
+                        report);
         String html = Files.readString(report);
         assertTrue(html.contains("Chart"), "应含 Chart.js");
         assertTrue(html.contains("canvas"), "应含 canvas");

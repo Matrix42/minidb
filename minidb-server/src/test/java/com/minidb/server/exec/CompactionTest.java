@@ -3,8 +3,7 @@ package com.minidb.server.exec;
 import com.minidb.server.catalog.MiniDbCatalog;
 import com.minidb.server.stats.StatsManager;
 import com.minidb.server.storage.StorageManager;
-import java.nio.file.Files;
-import java.nio.file.Path;
+
 import org.apache.arrow.memory.BufferAllocator;
 import org.apache.arrow.memory.RootAllocator;
 import org.apache.arrow.vector.IntVector;
@@ -14,12 +13,14 @@ import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
 
+import java.nio.file.Files;
+import java.nio.file.Path;
+
 import static org.junit.jupiter.api.Assertions.assertEquals;
 
 class CompactionTest {
 
-    @TempDir
-    Path dataDir;
+    @TempDir Path dataDir;
     BufferAllocator allocator;
     MiniDbCatalog catalog;
     StorageManager storage;
@@ -85,14 +86,14 @@ class CompactionTest {
 
     @Test
     void autoCompactsOnThreshold() throws Exception {
-        Files.writeString(dataDir.resolve("config.yaml"),
-                "compaction:\n  auto-part-threshold: 3\n");
+        Files.writeString(
+                dataDir.resolve("config.yaml"), "compaction:\n  auto-part-threshold: 3\n");
         // 低阈值配置需在 StorageManager 构造前生效,这里用独立存储验证自动触发。
         MiniDbCatalog catalog2 = new MiniDbCatalog();
         StorageManager storage2 = new StorageManager(catalog2, allocator, dataDir);
         try {
-            QueryExecutor executor2 = new QueryExecutor(catalog2, storage2, allocator,
-                    new StatsManager(storage2));
+            QueryExecutor executor2 =
+                    new QueryExecutor(catalog2, storage2, allocator, new StatsManager(storage2));
             executor2.execute("CREATE TABLE t (id INTEGER)");
             for (int i = 1; i <= 4; i++) {
                 executor2.execute("INSERT INTO t VALUES (" + i + ")");

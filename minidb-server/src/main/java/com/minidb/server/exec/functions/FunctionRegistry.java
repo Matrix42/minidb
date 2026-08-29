@@ -1,8 +1,9 @@
 package com.minidb.server.exec.functions;
 
+import org.apache.calcite.sql.SqlOperator;
+
 import java.util.HashMap;
 import java.util.Map;
-import org.apache.calcite.sql.SqlOperator;
 
 /** 按 SqlOperator 分发的函数表;可变,供 UDF 挂载。 */
 public final class FunctionRegistry {

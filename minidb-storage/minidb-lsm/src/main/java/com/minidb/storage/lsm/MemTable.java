@@ -2,6 +2,7 @@ package com.minidb.storage.lsm;
 
 import com.minidb.storage.common.RowValue;
 import com.minidb.storage.common.TableSchema;
+
 import java.util.Comparator;
 import java.util.Iterator;
 import java.util.List;
@@ -17,20 +18,21 @@ public class MemTable {
 
     // 统一 key 比较器：Number 类型用 long 值比较，其他用 raw Comparable。
     @SuppressWarnings({"unchecked", "rawtypes"})
-    public static final Comparator<List<Object>> KEY_COMPARATOR = (a, b) -> {
-        int minLen = Math.min(a.size(), b.size());
-        for (int i = 0; i < minLen; i++) {
-            Object ai = a.get(i), bi = b.get(i);
-            int cmp;
-            if (ai instanceof Number an && bi instanceof Number bn) {
-                cmp = Long.compare(an.longValue(), bn.longValue());
-            } else {
-                cmp = ((Comparable) ai).compareTo(bi);
-            }
-            if (cmp != 0) return cmp;
-        }
-        return Integer.compare(a.size(), b.size());
-    };
+    public static final Comparator<List<Object>> KEY_COMPARATOR =
+            (a, b) -> {
+                int minLen = Math.min(a.size(), b.size());
+                for (int i = 0; i < minLen; i++) {
+                    Object ai = a.get(i), bi = b.get(i);
+                    int cmp;
+                    if (ai instanceof Number an && bi instanceof Number bn) {
+                        cmp = Long.compare(an.longValue(), bn.longValue());
+                    } else {
+                        cmp = ((Comparable) ai).compareTo(bi);
+                    }
+                    if (cmp != 0) return cmp;
+                }
+                return Integer.compare(a.size(), b.size());
+            };
 
     public MemTable(TableSchema schema, long flushThresholdBytes) {
         this.schema = schema;

@@ -1,14 +1,10 @@
 package com.minidb.server.plan.physical;
 
-import com.minidb.storage.common.ArrowTypes;
-import com.minidb.storage.common.BatchIterator;
 import com.minidb.server.exec.ExecContext;
 import com.minidb.server.exec.RowCopier;
-import java.math.BigDecimal;
-import java.math.RoundingMode;
-import java.nio.charset.StandardCharsets;
-import java.util.ArrayList;
-import java.util.List;
+import com.minidb.storage.common.ArrowTypes;
+import com.minidb.storage.common.BatchIterator;
+
 import org.apache.arrow.memory.BufferAllocator;
 import org.apache.arrow.vector.BigIntVector;
 import org.apache.arrow.vector.BitVector;
@@ -29,17 +25,21 @@ import org.apache.calcite.rel.RelNode;
 import org.apache.calcite.rel.type.RelDataType;
 import org.apache.calcite.rel.type.RelDataTypeField;
 
+import java.math.BigDecimal;
+import java.math.RoundingMode;
+import java.nio.charset.StandardCharsets;
+import java.util.ArrayList;
+import java.util.List;
+
 /**
- * Row-oriented helpers for eager operators that normalize data to
- * {@code Object[]} (one element per column, null-safe) and rebuild Arrow
- * batches. Shared by MiniDbRepeatUnion and the transient-table read path in
- * MiniDbScan; the same conversions also exist privately in MiniDbJoin /
- * MiniDbUnion / WindowFunctions.
+ * Row-oriented helpers for eager operators that normalize data to {@code Object[]} (one element per
+ * column, null-safe) and rebuild Arrow batches. Shared by MiniDbRepeatUnion and the transient-table
+ * read path in MiniDbScan; the same conversions also exist privately in MiniDbJoin / MiniDbUnion /
+ * WindowFunctions.
  */
 public final class RowVectors {
 
-    private RowVectors() {
-    }
+    private RowVectors() {}
 
     /** Pulls every batch of {@code input} into normalized {@code Object[]} rows. */
     public static List<Object[]> materialize(RelNode input, ExecContext ctx) {
@@ -141,9 +141,8 @@ public final class RowVectors {
     }
 
     /** Builds a single batch whose columns follow {@code rowType}. */
-    public static VectorSchemaRoot buildRoot(List<Object[]> rows,
-                                             RelDataType rowType,
-                                             BufferAllocator allocator) {
+    public static VectorSchemaRoot buildRoot(
+            List<Object[]> rows, RelDataType rowType, BufferAllocator allocator) {
         List<FieldVector> vectors = new ArrayList<>();
         for (RelDataTypeField field : rowType.getFieldList()) {
             vectors.add(ArrowTypes.field(field).createVector(allocator));
@@ -167,9 +166,8 @@ public final class RowVectors {
     }
 
     /**
-     * 把 RelNode 的输出物化成单个 VectorSchemaRoot(列式 copy,不装箱)。
-     * 空输入返回 0 行 root(schema 从 rowType 推)。供 SetOp 等需要跨 batch
-     * 稳定列式 key 的算子复用。
+     * 把 RelNode 的输出物化成单个 VectorSchemaRoot(列式 copy,不装箱)。 空输入返回 0 行 root(schema 从 rowType 推)。供 SetOp
+     * 等需要跨 batch 稳定列式 key 的算子复用。
      */
     public static VectorSchemaRoot materializeToRoot(RelNode input, ExecContext ctx) {
         List<VectorSchemaRoot> batches = new ArrayList<>();

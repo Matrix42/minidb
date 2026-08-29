@@ -1,10 +1,8 @@
 package com.minidb.storage.lsm;
+
 import com.minidb.storage.arrow.ArrowPartFormat;
 import com.minidb.storage.common.*;
-import java.nio.file.Files;
-import java.nio.file.Path;
-import java.util.ArrayList;
-import java.util.List;
+
 import org.apache.arrow.memory.RootAllocator;
 import org.apache.arrow.vector.IntVector;
 import org.apache.arrow.vector.VarCharVector;
@@ -12,21 +10,30 @@ import org.apache.arrow.vector.VectorSchemaRoot;
 import org.apache.arrow.vector.util.Text;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
+
+import java.nio.file.Files;
+import java.nio.file.Path;
+import java.util.ArrayList;
+import java.util.List;
+
 import static org.junit.jupiter.api.Assertions.*;
 
-
 /**
- * 双缓冲 flush(A6):写路径满表 swap 出、后台异步落盘。验证:
- * ① swap 后未 flush 时读路径(scan/getByKey/rowCount)覆盖待落盘表——否则丢数据;
- * ② flushNextPending 落盘 + 删 WAL 段后读路径仍正确;
- * ③ TRUNCATE 作废挂起的 flush;
- * ④ 真实后台执行器端到端;
- * ⑤ 重启恢复 WAL 多段(swap 未 flush 即 crash)。
+ * 双缓冲 flush(A6):写路径满表 swap 出、后台异步落盘。验证: ① swap 后未 flush 时读路径(scan/getByKey/rowCount)覆盖待落盘表——否则丢数据;
+ * ② flushNextPending 落盘 + 删 WAL 段后读路径仍正确; ③ TRUNCATE 作废挂起的 flush; ④ 真实后台执行器端到端; ⑤ 重启恢复 WAL 多段(swap
+ * 未 flush 即 crash)。
  */
 class LSMTableAsyncFlushTest {
-    private final TableSchema schema = new TableSchema("public", "t",
-            List.of(new ColumnMeta("id", ColumnType.INTEGER), new ColumnMeta("name", ColumnType.VARCHAR)),
-            List.of("id"), List.of(), List.of());
+    private final TableSchema schema =
+            new TableSchema(
+                    "public",
+                    "t",
+                    List.of(
+                            new ColumnMeta("id", ColumnType.INTEGER),
+                            new ColumnMeta("name", ColumnType.VARCHAR)),
+                    List.of("id"),
+                    List.of(),
+                    List.of());
     private final RootAllocator allocator = new RootAllocator();
 
     /** 不执行的假执行器:swap 后 flush 时机由测试手动控制。 */

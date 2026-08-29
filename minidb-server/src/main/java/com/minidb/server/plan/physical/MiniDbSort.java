@@ -1,12 +1,10 @@
 package com.minidb.server.plan.physical;
 
-import com.minidb.storage.common.BatchIterator;
 import com.minidb.server.exec.ExecContext;
 import com.minidb.server.exec.RowCopier;
 import com.minidb.server.exec.ValueComparators;
-import java.math.BigDecimal;
-import java.util.ArrayList;
-import java.util.List;
+import com.minidb.storage.common.BatchIterator;
+
 import org.apache.arrow.algorithm.sort.CompositeVectorComparator;
 import org.apache.arrow.algorithm.sort.IndexSorter;
 import org.apache.arrow.algorithm.sort.VectorValueComparator;
@@ -23,16 +21,29 @@ import org.apache.calcite.rel.core.Sort;
 import org.apache.calcite.rex.RexLiteral;
 import org.apache.calcite.rex.RexNode;
 
+import java.math.BigDecimal;
+import java.util.ArrayList;
+import java.util.List;
+
 public class MiniDbSort extends Sort implements MiniDbRel {
 
-    public MiniDbSort(RelOptCluster cluster, RelTraitSet traitSet, RelNode input,
-                      RelCollation collation, RexNode offset, RexNode fetch) {
+    public MiniDbSort(
+            RelOptCluster cluster,
+            RelTraitSet traitSet,
+            RelNode input,
+            RelCollation collation,
+            RexNode offset,
+            RexNode fetch) {
         super(cluster, traitSet, input, collation, offset, fetch);
     }
 
     @Override
-    public Sort copy(RelTraitSet traitSet, RelNode newInput,
-                     RelCollation newCollation, RexNode offset, RexNode fetch) {
+    public Sort copy(
+            RelTraitSet traitSet,
+            RelNode newInput,
+            RelCollation newCollation,
+            RexNode offset,
+            RexNode fetch) {
         return new MiniDbSort(getCluster(), traitSet, newInput, newCollation, offset, fetch);
     }
 
@@ -47,8 +58,8 @@ public class MiniDbSort extends Sort implements MiniDbRel {
             batches.add(b);
             total += b.getRowCount();
         }
-        VectorSchemaRoot materialized = batches.isEmpty()
-                ? null : mergeBatches(batches, total, ctx);
+        VectorSchemaRoot materialized =
+                batches.isEmpty() ? null : mergeBatches(batches, total, ctx);
         // close input only AFTER copying: Filter/Project own their batches
         input.close();
         if (materialized == null) {
@@ -71,7 +82,8 @@ public class MiniDbSort extends Sort implements MiniDbRel {
             int start = Math.min(offsetRows, rows);
             int end = Math.min(rows, start + fetchRows);
 
-            VectorSchemaRoot out = VectorSchemaRoot.create(materialized.getSchema(), ctx.allocator());
+            VectorSchemaRoot out =
+                    VectorSchemaRoot.create(materialized.getSchema(), ctx.allocator());
             int outRows = end - start;
             // 预分配 outRows,按排序后行号批量拷贝(固定宽走无检查 copyFrom)
             for (FieldVector v : out.getFieldVectors()) {
@@ -87,25 +99,26 @@ public class MiniDbSort extends Sort implements MiniDbRel {
             materialized.close();
 
             boolean emitted = false;
-            return BatchIterator.interruptible(new BatchIterator() {
-                boolean done = emitted;
+            return BatchIterator.interruptible(
+                    new BatchIterator() {
+                        boolean done = emitted;
 
-                @Override
-                public boolean hasNext() {
-                    return !done;
-                }
+                        @Override
+                        public boolean hasNext() {
+                            return !done;
+                        }
 
-                @Override
-                public VectorSchemaRoot next() {
-                    done = true;
-                    return out;
-                }
+                        @Override
+                        public VectorSchemaRoot next() {
+                            done = true;
+                            return out;
+                        }
 
-                @Override
-                public void close() {
-                    out.close();
-                }
-            });
+                        @Override
+                        public void close() {
+                            out.close();
+                        }
+                    });
         }
     }
 
@@ -123,8 +136,9 @@ public class MiniDbSort extends Sort implements MiniDbRel {
         VectorValueComparator<ValueVector>[] inner = new VectorValueComparator[collations.size()];
         for (int i = 0; i < collations.size(); i++) {
             RelFieldCollation fc = collations.get(i);
-            boolean desc = fc.getDirection() == RelFieldCollation.Direction.DESCENDING
-                    || fc.getDirection() == RelFieldCollation.Direction.STRICTLY_DESCENDING;
+            boolean desc =
+                    fc.getDirection() == RelFieldCollation.Direction.DESCENDING
+                            || fc.getDirection() == RelFieldCollation.Direction.STRICTLY_DESCENDING;
             SortComparator sc = new SortComparator(desc);
             sc.attachVector(root.getVector(fc.getFieldIndex()));
             inner[i] = sc;
@@ -165,14 +179,14 @@ public class MiniDbSort extends Sort implements MiniDbRel {
         }
     }
 
-    private VectorSchemaRoot mergeBatches(List<VectorSchemaRoot> batches, int total,
-                                          ExecContext ctx) {
+    private VectorSchemaRoot mergeBatches(
+            List<VectorSchemaRoot> batches, int total, ExecContext ctx) {
         if (batches.isEmpty()) {
             // empty schema: rely on row type; build from first batch if present else null
             throw new IllegalArgumentException("sort received no input batches");
         }
-        VectorSchemaRoot merged = VectorSchemaRoot.create(batches.get(0).getSchema(),
-                ctx.allocator());
+        VectorSchemaRoot merged =
+                VectorSchemaRoot.create(batches.get(0).getSchema(), ctx.allocator());
         // 预分配 total(mergeBatches 参数,调用方已累计),批量列拷贝的前提
         for (FieldVector v : merged.getFieldVectors()) {
             v.setInitialCapacity(total);

@@ -1,10 +1,7 @@
 package com.minidb.server.plan.physical;
 
 import com.minidb.server.exec.ExecContext;
-import java.util.ArrayList;
-import java.util.HashMap;
-import java.util.List;
-import java.util.Map;
+
 import org.apache.arrow.vector.BitVector;
 import org.apache.arrow.vector.ValueVector;
 import org.apache.arrow.vector.VectorSchemaRoot;
@@ -19,17 +16,25 @@ import org.apache.calcite.rel.core.JoinRelType;
 import org.apache.calcite.rel.metadata.RelMetadataQuery;
 import org.apache.calcite.rex.RexNode;
 
+import java.util.ArrayList;
+import java.util.HashMap;
+import java.util.List;
+import java.util.Map;
+
 /**
- * Hash join: builds a hash table on the left input keyed by the equi columns,
- * then probes it with the right input. Equi-join only. Null keys never match
- * in an equi-join, so null-keyed rows are excluded from the table and, for
- * outer joins, emitted as preserved rows instead.
+ * Hash join: builds a hash table on the left input keyed by the equi columns, then probes it with
+ * the right input. Equi-join only. Null keys never match in an equi-join, so null-keyed rows are
+ * excluded from the table and, for outer joins, emitted as preserved rows instead.
  */
 public class MiniDbHashJoin extends MiniDbJoin {
 
-    public MiniDbHashJoin(RelOptCluster cluster, RelTraitSet traitSet,
-                          RelNode left, RelNode right, RexNode condition,
-                          JoinRelType joinType) {
+    public MiniDbHashJoin(
+            RelOptCluster cluster,
+            RelTraitSet traitSet,
+            RelNode left,
+            RelNode right,
+            RexNode condition,
+            JoinRelType joinType) {
         super(cluster, traitSet, left, right, condition, joinType);
     }
 
@@ -46,18 +51,26 @@ public class MiniDbHashJoin extends MiniDbJoin {
     }
 
     @Override
-    public Join copy(RelTraitSet traitSet, RexNode conditionExpr,
-                     RelNode left, RelNode right, JoinRelType joinType,
-                     boolean semiJoinDone) {
-        MiniDbHashJoin newJoin = new MiniDbHashJoin(getCluster(), traitSet, left, right,
-                conditionExpr, joinType);
+    public Join copy(
+            RelTraitSet traitSet,
+            RexNode conditionExpr,
+            RelNode left,
+            RelNode right,
+            JoinRelType joinType,
+            boolean semiJoinDone) {
+        MiniDbHashJoin newJoin =
+                new MiniDbHashJoin(getCluster(), traitSet, left, right, conditionExpr, joinType);
         copyProjectionTo(newJoin);
         return newJoin;
     }
 
     @Override
-    protected PairSource joinPairs(VectorSchemaRoot left, VectorSchemaRoot right,
-                                   JoinInfo info, JoinRelType type, ExecContext ctx) {
+    protected PairSource joinPairs(
+            VectorSchemaRoot left,
+            VectorSchemaRoot right,
+            JoinInfo info,
+            JoinRelType type,
+            ExecContext ctx) {
         List<Integer> leftKeyCols = info.leftKeys;
         List<Integer> rightKeyCols = info.rightKeys;
         // Build 侧选行数少的一侧:哈希表构建成本 O(build 行数),probe 大侧流式查表 O(1)/行。
@@ -81,27 +94,44 @@ public class MiniDbHashJoin extends MiniDbJoin {
             if (hasNullKey(build, buildIdx, buildKeyCols)) {
                 continue;
             }
-            buildTable.computeIfAbsent(new ColumnKey(build, buildIdx, buildKeyArr),
-                    k -> new ArrayList<>()).add(buildIdx);
+            buildTable
+                    .computeIfAbsent(
+                            new ColumnKey(build, buildIdx, buildKeyArr), k -> new ArrayList<>())
+                    .add(buildIdx);
         }
         // null-pad 语义按 build 侧翻转:
         //  LEFT=保留 left 未匹配 / RIGHT=保留 right 未匹配 / FULL=都保留
-        boolean keepUnmatchedBuild = (type == JoinRelType.LEFT && buildLeft)
-                || (type == JoinRelType.RIGHT && !buildLeft)
-                || type == JoinRelType.FULL;
-        boolean keepUnmatchedProbe = (type == JoinRelType.RIGHT && buildLeft)
-                || (type == JoinRelType.LEFT && !buildLeft)
-                || type == JoinRelType.FULL;
-        return new HashPairSource(left, right, buildLeft, build, probe, type, ctx, buildTable,
-                buildKeyCols, probeKeyCols, buildKeyArr, probeKeyArr,
-                residual, hasResidual, probeRoot, keepUnmatchedBuild, keepUnmatchedProbe);
+        boolean keepUnmatchedBuild =
+                (type == JoinRelType.LEFT && buildLeft)
+                        || (type == JoinRelType.RIGHT && !buildLeft)
+                        || type == JoinRelType.FULL;
+        boolean keepUnmatchedProbe =
+                (type == JoinRelType.RIGHT && buildLeft)
+                        || (type == JoinRelType.LEFT && !buildLeft)
+                        || type == JoinRelType.FULL;
+        return new HashPairSource(
+                left,
+                right,
+                buildLeft,
+                build,
+                probe,
+                type,
+                ctx,
+                buildTable,
+                buildKeyCols,
+                probeKeyCols,
+                buildKeyArr,
+                probeKeyArr,
+                residual,
+                hasResidual,
+                probeRoot,
+                keepUnmatchedBuild,
+                keepUnmatchedProbe);
     }
 
     /**
-     * 流式 probe:右侧逐行查 build 表产出匹配对;probe 耗尽后阶段 2 产出
-     * 未匹配的保留行(outer join 的 null-pad——行是否匹配要等整个 probe 结束才能定)。
-     * build 侧恒为小侧(建表成本 O(build 行数)),probe 大侧流式查表。
-     * 不物化输出行对,内存 O(批大小)。
+     * 流式 probe:右侧逐行查 build 表产出匹配对;probe 耗尽后阶段 2 产出 未匹配的保留行(outer join 的 null-pad——行是否匹配要等整个 probe
+     * 结束才能定)。 build 侧恒为小侧(建表成本 O(build 行数)),probe 大侧流式查表。 不物化输出行对,内存 O(批大小)。
      */
     private static final class HashPairSource implements PairSource {
         private final VectorSchemaRoot left;
@@ -128,13 +158,24 @@ public class MiniDbHashJoin extends MiniDbJoin {
         private boolean phaseTwo;
         private int unmatchedBuildIdx = 0;
 
-        HashPairSource(VectorSchemaRoot left, VectorSchemaRoot right, boolean buildLeft,
-                       VectorSchemaRoot build, VectorSchemaRoot probe, JoinRelType type,
-                       ExecContext ctx, Map<ColumnKey, List<Integer>> buildTable,
-                       List<Integer> buildKeyCols, List<Integer> probeKeyCols,
-                       int[] buildKeyArr, int[] probeKeyArr, RexNode residual,
-                       boolean hasResidual, VectorSchemaRoot probeRoot,
-                       boolean keepUnmatchedBuild, boolean keepUnmatchedProbe) {
+        HashPairSource(
+                VectorSchemaRoot left,
+                VectorSchemaRoot right,
+                boolean buildLeft,
+                VectorSchemaRoot build,
+                VectorSchemaRoot probe,
+                JoinRelType type,
+                ExecContext ctx,
+                Map<ColumnKey, List<Integer>> buildTable,
+                List<Integer> buildKeyCols,
+                List<Integer> probeKeyCols,
+                int[] buildKeyArr,
+                int[] probeKeyArr,
+                RexNode residual,
+                boolean hasResidual,
+                VectorSchemaRoot probeRoot,
+                boolean keepUnmatchedBuild,
+                boolean keepUnmatchedProbe) {
             this.left = left;
             this.right = right;
             this.buildLeft = buildLeft;
@@ -195,8 +236,15 @@ public class MiniDbHashJoin extends MiniDbJoin {
                 }
                 if (matchList != null && matchPos < matchList.size()) {
                     int buildIdx = matchList.get(matchPos++);
-                    if (!hasResidual || residualMatches(probeRoot, left, buildLeft ? buildIdx : probeIdx,
-                            right, buildLeft ? probeIdx : buildIdx, residual, ctx)) {
+                    if (!hasResidual
+                            || residualMatches(
+                                    probeRoot,
+                                    left,
+                                    buildLeft ? buildIdx : probeIdx,
+                                    right,
+                                    buildLeft ? probeIdx : buildIdx,
+                                    residual,
+                                    ctx)) {
                         writePair(leftRows, rightRows, out, buildIdx, probeIdx);
                         matchedBuild[buildIdx] = true;
                         out++;
@@ -218,8 +266,8 @@ public class MiniDbHashJoin extends MiniDbJoin {
         }
 
         /** 按 build 侧方向写出 (leftIdx, rightIdx) 行对:-1 = null-pad 对应侧。 */
-        private void writePair(int[] leftRows, int[] rightRows, int out,
-                               int buildIdx, int probeIdx) {
+        private void writePair(
+                int[] leftRows, int[] rightRows, int out, int buildIdx, int probeIdx) {
             if (buildLeft) {
                 leftRows[out] = buildIdx;
                 rightRows[out] = probeIdx;
@@ -237,9 +285,14 @@ public class MiniDbHashJoin extends MiniDbJoin {
         }
     }
 
-    private static boolean residualMatches(VectorSchemaRoot probeRoot, VectorSchemaRoot left,
-                                           int leftIdx, VectorSchemaRoot right, int rightIdx,
-                                           RexNode residual, ExecContext ctx) {
+    private static boolean residualMatches(
+            VectorSchemaRoot probeRoot,
+            VectorSchemaRoot left,
+            int leftIdx,
+            VectorSchemaRoot right,
+            int rightIdx,
+            RexNode residual,
+            ExecContext ctx) {
         writeProbeRow(probeRoot, left, leftIdx, right, rightIdx);
         try (ValueVector result = ctx.interpreter().eval(residual, probeRoot)) {
             return !result.isNull(0) && ((BitVector) result).get(0) == 1;

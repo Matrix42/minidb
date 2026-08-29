@@ -1,6 +1,5 @@
 package com.minidb.server.plan.physical;
 
-import static org.junit.jupiter.api.Assertions.*;
 import com.minidb.server.catalog.MiniDbCatalog;
 import com.minidb.server.exec.ExecContext;
 import com.minidb.server.exec.QueryExecutor;
@@ -9,26 +8,28 @@ import com.minidb.server.stats.StatsManager;
 import com.minidb.server.storage.StorageManager;
 import com.minidb.storage.common.BatchIterator;
 import com.minidb.storage.common.TableHandle;
-import java.nio.file.Path;
-import java.util.ArrayList;
-import java.util.List;
+
 import org.apache.arrow.memory.BufferAllocator;
 import org.apache.arrow.memory.RootAllocator;
 import org.apache.arrow.vector.IntVector;
-import org.apache.arrow.vector.VectorSchemaRoot;
 import org.apache.arrow.vector.VarCharVector;
+import org.apache.arrow.vector.VectorSchemaRoot;
 import org.apache.calcite.rel.RelNode;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
 
+import java.nio.file.Path;
+import java.util.ArrayList;
+import java.util.List;
+
+import static org.junit.jupiter.api.Assertions.*;
+
 /**
- * B2 join 输出流式化回归:大结果集分批产出(每批 ≤ 4096,内存 O(批大小) 而非
- * O(结果行数)),批边界/余数正确,outer join 的 null-pad 行跨批分布正确。
+ * B2 join 输出流式化回归:大结果集分批产出(每批 ≤ 4096,内存 O(批大小) 而非 O(结果行数)),批边界/余数正确,outer join 的 null-pad 行跨批分布正确。
  */
 class MiniDbJoinStreamingTest {
 
-    @TempDir
-    Path dataDir;
+    @TempDir Path dataDir;
 
     @Test
     void joinOutputStreamsInBatches(@TempDir Path dir) throws Exception {
@@ -44,13 +45,16 @@ class MiniDbJoinStreamingTest {
                 writeRowsSameKey(storage, "a", 100);
                 writeRowsSameKey(storage, "b", 100);
 
-                for (MiniDbJoin join : joinStrategies(catalog, "SELECT a.id, b.id FROM a JOIN b ON a.id = b.id")) {
+                for (MiniDbJoin join :
+                        joinStrategies(catalog, "SELECT a.id, b.id FROM a JOIN b ON a.id = b.id")) {
                     BatchStats stats1 = collect(join, storage, allocator);
-                    assertTrue(stats1.batches >= 3, join.getClass().getSimpleName()
-                            + " 应分多批产出,实际 " + stats1.batches);
+                    assertTrue(
+                            stats1.batches >= 3,
+                            join.getClass().getSimpleName() + " 应分多批产出,实际 " + stats1.batches);
                     assertEquals(10_000, stats1.rows, join.getClass().getSimpleName() + " 总行数");
-                    assertTrue(stats1.maxBatch <= 4096, join.getClass().getSimpleName()
-                            + " 单批不得超过 4096,实际 " + stats1.maxBatch);
+                    assertTrue(
+                            stats1.maxBatch <= 4096,
+                            join.getClass().getSimpleName() + " 单批不得超过 4096,实际 " + stats1.maxBatch);
                 }
             } finally {
                 storage.close();
@@ -73,8 +77,8 @@ class MiniDbJoinStreamingTest {
                 writeRowsSameKey(storage, "a", 8209);
                 writeRowsSameKey(storage, "b", 1);
 
-                for (MiniDbJoin join : joinStrategies(catalog,
-                        "SELECT a.id, b.id FROM a JOIN b ON a.id = b.id")) {
+                for (MiniDbJoin join :
+                        joinStrategies(catalog, "SELECT a.id, b.id FROM a JOIN b ON a.id = b.id")) {
                     BatchStats stats1 = collect(join, storage, allocator);
                     assertEquals(8209, stats1.rows, join.getClass().getSimpleName());
                     assertTrue(stats1.batches >= 3, join.getClass().getSimpleName());
@@ -102,8 +106,9 @@ class MiniDbJoinStreamingTest {
                 writeRowsSameKey(storage, "b", 100);
                 writeRows(storage, "b", 50, 1000); // 右表 50 行无匹配(key 1000..1049)
 
-                for (MiniDbJoin join : joinStrategies(catalog,
-                        "SELECT a.id, b.id FROM a FULL JOIN b ON a.id = b.id")) {
+                for (MiniDbJoin join :
+                        joinStrategies(
+                                catalog, "SELECT a.id, b.id FROM a FULL JOIN b ON a.id = b.id")) {
                     // FULL:10000 匹配 + 50 右未匹配 + 0 左未匹配(a 全匹配) = 10050
                     List<int[]> pairs = collectPairs(join, storage, allocator);
                     assertEquals(10_050, pairs.size(), join.getClass().getSimpleName());
@@ -120,12 +125,27 @@ class MiniDbJoinStreamingTest {
         RelNode plan = new Planner(catalog).plan(sql);
         MiniDbJoin join = findJoin(plan);
         return List.of(
-                new MiniDbHashJoin(join.getCluster(), join.getTraitSet(),
-                        join.getLeft(), join.getRight(), join.getCondition(), join.getJoinType()),
-                new MiniDbSortMergeJoin(join.getCluster(), join.getTraitSet(),
-                        join.getLeft(), join.getRight(), join.getCondition(), join.getJoinType()),
-                new MiniDbNestedLoopJoin(join.getCluster(), join.getTraitSet(),
-                        join.getLeft(), join.getRight(), join.getCondition(), join.getJoinType()));
+                new MiniDbHashJoin(
+                        join.getCluster(),
+                        join.getTraitSet(),
+                        join.getLeft(),
+                        join.getRight(),
+                        join.getCondition(),
+                        join.getJoinType()),
+                new MiniDbSortMergeJoin(
+                        join.getCluster(),
+                        join.getTraitSet(),
+                        join.getLeft(),
+                        join.getRight(),
+                        join.getCondition(),
+                        join.getJoinType()),
+                new MiniDbNestedLoopJoin(
+                        join.getCluster(),
+                        join.getTraitSet(),
+                        join.getLeft(),
+                        join.getRight(),
+                        join.getCondition(),
+                        join.getJoinType()));
     }
 
     private static MiniDbJoin findJoin(RelNode node) {
@@ -143,8 +163,8 @@ class MiniDbJoinStreamingTest {
 
     private record BatchStats(int batches, long rows, int maxBatch, int lastBatch) {}
 
-    private static BatchStats collect(MiniDbJoin join, StorageManager storage,
-                                      BufferAllocator allocator) {
+    private static BatchStats collect(
+            MiniDbJoin join, StorageManager storage, BufferAllocator allocator) {
         BatchIterator it = join.execute(new ExecContext(storage, allocator));
         int batches = 0;
         long rows = 0;
@@ -162,8 +182,8 @@ class MiniDbJoinStreamingTest {
     }
 
     /** 收集行对:null-pad 侧记为 -1(join 输出该侧为 null)。 */
-    private static List<int[]> collectPairs(MiniDbJoin join, StorageManager storage,
-                                            BufferAllocator allocator) {
+    private static List<int[]> collectPairs(
+            MiniDbJoin join, StorageManager storage, BufferAllocator allocator) {
         BatchIterator it = join.execute(new ExecContext(storage, allocator));
         int leftCols = join.getLeft().getRowType().getFieldCount();
         int rightCols = join.getRight().getRowType().getFieldCount();
@@ -185,7 +205,7 @@ class MiniDbJoinStreamingTest {
                         break;
                     }
                 }
-                pairs.add(new int[]{leftNull ? -1 : 1, rightNull ? -1 : 1});
+                pairs.add(new int[] {leftNull ? -1 : 1, rightNull ? -1 : 1});
             }
         }
         it.close();

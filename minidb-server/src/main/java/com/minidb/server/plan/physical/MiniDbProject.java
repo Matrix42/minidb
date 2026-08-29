@@ -1,14 +1,9 @@
 package com.minidb.server.plan.physical;
 
-import com.minidb.storage.common.ArrowTypes;
-import com.minidb.storage.common.BatchIterator;
 import com.minidb.server.exec.ExecContext;
 import com.minidb.server.exec.RowCopier;
-
-import java.util.ArrayDeque;
-import java.util.ArrayList;
-import java.util.Deque;
-import java.util.List;
+import com.minidb.storage.common.ArrowTypes;
+import com.minidb.storage.common.BatchIterator;
 
 import org.apache.arrow.vector.FieldVector;
 import org.apache.arrow.vector.ValueVector;
@@ -20,24 +15,33 @@ import org.apache.calcite.rel.RelNode;
 import org.apache.calcite.rel.core.Project;
 import org.apache.calcite.rel.type.RelDataType;
 import org.apache.calcite.rel.type.RelDataTypeField;
-import org.apache.calcite.sql.SqlKind;
-import org.apache.calcite.sql.type.SqlTypeName;
 import org.apache.calcite.rex.RexCall;
 import org.apache.calcite.rex.RexInputRef;
 import org.apache.calcite.rex.RexNode;
 import org.apache.calcite.rex.RexOver;
 import org.apache.calcite.rex.RexShuttle;
+import org.apache.calcite.sql.SqlKind;
+import org.apache.calcite.sql.type.SqlTypeName;
+
+import java.util.ArrayDeque;
+import java.util.ArrayList;
+import java.util.Deque;
+import java.util.List;
 
 public class MiniDbProject extends Project implements MiniDbRel {
 
-    public MiniDbProject(RelOptCluster cluster, RelTraitSet traitSet, RelNode input,
-                         List<? extends RexNode> projects, RelDataType rowType) {
+    public MiniDbProject(
+            RelOptCluster cluster,
+            RelTraitSet traitSet,
+            RelNode input,
+            List<? extends RexNode> projects,
+            RelDataType rowType) {
         super(cluster, traitSet, java.util.List.of(), input, projects, rowType);
     }
 
     @Override
-    public Project copy(RelTraitSet traitSet, RelNode input,
-                        List<RexNode> projects, RelDataType rowType) {
+    public Project copy(
+            RelTraitSet traitSet, RelNode input, List<RexNode> projects, RelDataType rowType) {
         return new MiniDbProject(getCluster(), traitSet, input, projects, rowType);
     }
 
@@ -66,21 +70,22 @@ public class MiniDbProject extends Project implements MiniDbRel {
     }
 
     /**
-     * Eager window path: materialize the input, extract every RexOver (in
-     * order) into dedicated window columns referenced by the rewritten
-     * projections, then evaluate the rewritten expressions row-wise.
+     * Eager window path: materialize the input, extract every RexOver (in order) into dedicated
+     * window columns referenced by the rewritten projections, then evaluate the rewritten
+     * expressions row-wise.
      */
     private BatchIterator windowExecute(ExecContext ctx) {
         VectorSchemaRoot rows = WindowFunctions.materialize(getInput(), ctx);
         int inputCols = getInput().getRowType().getFieldCount();
         List<RexOver> windowOvers = new ArrayList<>();
-        RexShuttle overExtractor = new RexShuttle() {
-            @Override
-            public RexNode visitOver(RexOver over) {
-                windowOvers.add(over);
-                return new RexInputRef(inputCols + windowOvers.size() - 1, over.getType());
-            }
-        };
+        RexShuttle overExtractor =
+                new RexShuttle() {
+                    @Override
+                    public RexNode visitOver(RexOver over) {
+                        windowOvers.add(over);
+                        return new RexInputRef(inputCols + windowOvers.size() - 1, over.getType());
+                    }
+                };
         List<RexNode> rewrittenProjects = new ArrayList<>();
         for (RexNode project : getProjects()) {
             rewrittenProjects.add(project.accept(overExtractor));
@@ -89,45 +94,50 @@ public class MiniDbProject extends Project implements MiniDbRel {
         for (RexOver over : windowOvers) {
             windowColumns.add(WindowFunctions.computeOver(over, rows, ctx));
         }
-        VectorSchemaRoot windowBatch = buildWindowBatch(rows, windowColumns, inputCols, windowOvers, ctx);
+        VectorSchemaRoot windowBatch =
+                buildWindowBatch(rows, windowColumns, inputCols, windowOvers, ctx);
         try {
             List<FieldVector> outputVectors = new ArrayList<>();
             for (int projectIdx = 0; projectIdx < rewrittenProjects.size(); projectIdx++) {
-                ValueVector evaluated = ctx.interpreter().eval(rewrittenProjects.get(projectIdx), windowBatch);
+                ValueVector evaluated =
+                        ctx.interpreter().eval(rewrittenProjects.get(projectIdx), windowBatch);
                 RelDataTypeField field = getRowType().getFieldList().get(projectIdx);
                 outputVectors.add(rename(evaluated, field.getName(), ctx));
             }
-            VectorSchemaRoot outputRoot = VectorSchemaRoot.of(outputVectors.toArray(new FieldVector[0]));
+            VectorSchemaRoot outputRoot =
+                    VectorSchemaRoot.of(outputVectors.toArray(new FieldVector[0]));
             outputRoot.setRowCount(rows.getRowCount());
             boolean[] done = {false};
-            return BatchIterator.interruptible(new BatchIterator() {
-                @Override
-                public boolean hasNext() {
-                    return !done[0];
-                }
+            return BatchIterator.interruptible(
+                    new BatchIterator() {
+                        @Override
+                        public boolean hasNext() {
+                            return !done[0];
+                        }
 
-                @Override
-                public VectorSchemaRoot next() {
-                    done[0] = true;
-                    return outputRoot;
-                }
+                        @Override
+                        public VectorSchemaRoot next() {
+                            done[0] = true;
+                            return outputRoot;
+                        }
 
-                @Override
-                public void close() {
-                    outputRoot.close();
-                }
-            });
+                        @Override
+                        public void close() {
+                            outputRoot.close();
+                        }
+                    });
         } finally {
             windowBatch.close();
             rows.close();
         }
     }
 
-    private VectorSchemaRoot buildWindowBatch(VectorSchemaRoot rows,
-                                              List<List<Object>> windowColumns,
-                                              int inputCols,
-                                              List<RexOver> windowOvers,
-                                              ExecContext ctx) {
+    private VectorSchemaRoot buildWindowBatch(
+            VectorSchemaRoot rows,
+            List<List<Object>> windowColumns,
+            int inputCols,
+            List<RexOver> windowOvers,
+            ExecContext ctx) {
         List<FieldVector> vectors = new ArrayList<>();
         for (RelDataTypeField field : getInput().getRowType().getFieldList()) {
             vectors.add(ArrowTypes.field(field).createVector(ctx.allocator()));
@@ -136,22 +146,29 @@ public class MiniDbProject extends Project implements MiniDbRel {
             RelDataType overType = over.getType();
             // AVG/STDDEV 窗口函数提升 DECIMAL scale(避免截断),INTEGER→DOUBLE
             SqlKind aggKind = over.getOperator().getKind();
-            if ((aggKind == SqlKind.AVG || aggKind == SqlKind.STDDEV_SAMP
-                    || aggKind == SqlKind.STDDEV_POP || aggKind == SqlKind.VAR_SAMP
-                    || aggKind == SqlKind.VAR_POP)
+            if ((aggKind == SqlKind.AVG
+                            || aggKind == SqlKind.STDDEV_SAMP
+                            || aggKind == SqlKind.STDDEV_POP
+                            || aggKind == SqlKind.VAR_SAMP
+                            || aggKind == SqlKind.VAR_POP)
                     && overType.getSqlTypeName() != SqlTypeName.DOUBLE
                     && overType.getSqlTypeName() != SqlTypeName.REAL
                     && overType.getSqlTypeName() != SqlTypeName.FLOAT) {
                 if (overType.getSqlTypeName() == SqlTypeName.DECIMAL) {
-                    overType = getCluster().getTypeFactory().createSqlType(SqlTypeName.DECIMAL,
-                            overType.getPrecision() + 4,
-                            Math.min(overType.getScale() + 4, 12));
+                    overType =
+                            getCluster()
+                                    .getTypeFactory()
+                                    .createSqlType(
+                                            SqlTypeName.DECIMAL,
+                                            overType.getPrecision() + 4,
+                                            Math.min(overType.getScale() + 4, 12));
                 } else {
                     overType = getCluster().getTypeFactory().createSqlType(SqlTypeName.DOUBLE);
                 }
             }
-            vectors.add(ArrowTypes.field(overType, "w" + windowOvers.indexOf(over))
-                    .createVector(ctx.allocator()));
+            vectors.add(
+                    ArrowTypes.field(overType, "w" + windowOvers.indexOf(over))
+                            .createVector(ctx.allocator()));
         }
         for (FieldVector vector : vectors) {
             vector.setInitialCapacity(rows.getRowCount());
@@ -167,7 +184,8 @@ public class MiniDbProject extends Project implements MiniDbRel {
         for (int windowColIdx = 0; windowColIdx < windowColumns.size(); windowColIdx++) {
             List<Object> windowColumn = windowColumns.get(windowColIdx);
             for (int rowIdx = 0; rowIdx < windowColumn.size(); rowIdx++) {
-                RowVectors.writeObject(vectors.get(inputCols + windowColIdx), rowIdx, windowColumn.get(rowIdx));
+                RowVectors.writeObject(
+                        vectors.get(inputCols + windowColIdx), rowIdx, windowColumn.get(rowIdx));
             }
         }
         for (FieldVector vector : vectors) {
@@ -179,35 +197,36 @@ public class MiniDbProject extends Project implements MiniDbRel {
     private BatchIterator lazyExecute(ExecContext ctx) {
         BatchIterator input = ((MiniDbRel) getInput()).execute(ctx);
         Deque<VectorSchemaRoot> owned = new ArrayDeque<>();
-        return BatchIterator.interruptible(new BatchIterator() {
-            VectorSchemaRoot pending;
+        return BatchIterator.interruptible(
+                new BatchIterator() {
+                    VectorSchemaRoot pending;
 
-            @Override
-            public boolean hasNext() {
-                if (pending == null && input.hasNext()) {
-                    VectorSchemaRoot batch = input.next();
-                    pending = projectBatch(batch, ctx);
-                    owned.add(pending);
-                }
-                return pending != null;
-            }
+                    @Override
+                    public boolean hasNext() {
+                        if (pending == null && input.hasNext()) {
+                            VectorSchemaRoot batch = input.next();
+                            pending = projectBatch(batch, ctx);
+                            owned.add(pending);
+                        }
+                        return pending != null;
+                    }
 
-            @Override
-            public VectorSchemaRoot next() {
-                VectorSchemaRoot out = pending;
-                pending = null;
-                return out;
-            }
+                    @Override
+                    public VectorSchemaRoot next() {
+                        VectorSchemaRoot out = pending;
+                        pending = null;
+                        return out;
+                    }
 
-            @Override
-            public void close() {
-                input.close();
-                for (VectorSchemaRoot root : owned) {
-                    root.close();
-                }
-                owned.clear();
-            }
-        });
+                    @Override
+                    public void close() {
+                        input.close();
+                        for (VectorSchemaRoot root : owned) {
+                            root.close();
+                        }
+                        owned.clear();
+                    }
+                });
     }
 
     private VectorSchemaRoot projectBatch(VectorSchemaRoot batch, ExecContext ctx) {
@@ -244,5 +263,4 @@ public class MiniDbProject extends Project implements MiniDbRel {
         src.close();
         return dst;
     }
-
 }

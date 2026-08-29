@@ -1,24 +1,21 @@
 package com.minidb.server;
 
-import static org.junit.jupiter.api.Assertions.assertEquals;
-import static org.junit.jupiter.api.Assertions.assertTrue;
+import org.junit.jupiter.api.Test;
+import org.junit.jupiter.api.io.TempDir;
 
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.concurrent.CountDownLatch;
-import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Future;
 import java.util.concurrent.ThreadPoolExecutor;
 import java.util.concurrent.TimeUnit;
-import org.junit.jupiter.api.Test;
-import org.junit.jupiter.api.io.TempDir;
 
-/**
- * 查询线程池行为:固定大小(非 cached 无界)、大小取配置 server.query-threads、
- * 超额任务排队而非建线程。
- */
+import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertTrue;
+
+/** 查询线程池行为:固定大小(非 cached 无界)、大小取配置 server.query-threads、 超额任务排队而非建线程。 */
 class MiniDbServerQueryPoolTest {
 
     @Test
@@ -52,14 +49,16 @@ class MiniDbServerQueryPoolTest {
             CountDownLatch started = new CountDownLatch(n);
             List<Future<?>> futures = new ArrayList<>();
             for (int i = 0; i < n * 4; i++) {
-                futures.add(pool.submit(() -> {
-                    started.countDown();
-                    try {
-                        block.await();
-                    } catch (InterruptedException e) {
-                        Thread.currentThread().interrupt();
-                    }
-                }));
+                futures.add(
+                        pool.submit(
+                                () -> {
+                                    started.countDown();
+                                    try {
+                                        block.await();
+                                    } catch (InterruptedException e) {
+                                        Thread.currentThread().interrupt();
+                                    }
+                                }));
             }
             // fixed pool 线程惰性创建,最多 corePoolSize 个;超额任务进入队列。
             assertTrue(started.await(5, TimeUnit.SECONDS));

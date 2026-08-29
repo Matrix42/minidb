@@ -1,6 +1,5 @@
 package com.minidb.server.exec;
 
-import java.util.Arrays;
 import org.apache.arrow.vector.BigIntVector;
 import org.apache.arrow.vector.BitVector;
 import org.apache.arrow.vector.DateDayVector;
@@ -15,22 +14,22 @@ import org.apache.arrow.vector.ValueVector;
 import org.apache.arrow.vector.VarBinaryVector;
 import org.apache.arrow.vector.VarCharVector;
 
+import java.util.Arrays;
+
 /**
  * 列式比较/hash:直接对 {@link ValueVector} 的原始值操作,不装箱。
  *
- * <p>VarChar/VarBinary 用字节比较({@code Arrays.compareUnsigned})而非 {@code new String}:
- * UTF-8 编码保序,字节字典序与 code point 序一致,故与 {@code String.compareTo} 语义等价,
- * 但避免了每比较一次就分配两个 String 对象的装箱开销。
+ * <p>VarChar/VarBinary 用字节比较({@code Arrays.compareUnsigned})而非 {@code new String}: UTF-8
+ * 编码保序,字节字典序与 code point 序一致,故与 {@code String.compareTo} 语义等价, 但避免了每比较一次就分配两个 String 对象的装箱开销。
  *
- * <p>Decimal 仍走 {@code getObject}(装箱 BigDecimal)——其底层 little-endian 字节比较需处理
- * 符号位且 hash/compare 语义(scale 敏感 vs 不敏感)与既有行为易漂移,正确性优先、暂不列式。
+ * <p>Decimal 仍走 {@code getObject}(装箱 BigDecimal)——其底层 little-endian 字节比较需处理 符号位且 hash/compare
+ * 语义(scale 敏感 vs 不敏感)与既有行为易漂移,正确性优先、暂不列式。
  *
  * <p>本类方法都假设传入的行非 null;null 语义由调用方处理。
  */
 public final class ValueComparators {
 
-    private ValueComparators() {
-    }
+    private ValueComparators() {}
 
     /** 列式比较两行同一逻辑列的值(非 null)。返回 -1/0/1。 */
     public static int compare(ValueVector a, int rowA, ValueVector b, int rowB) {
@@ -70,8 +69,7 @@ public final class ValueComparators {
         if (a instanceof DecimalVector dv) {
             return dv.getObject(rowA).compareTo(((DecimalVector) b).getObject(rowB));
         }
-        throw new UnsupportedOperationException(
-                "cannot compare column type: " + a.getMinorType());
+        throw new UnsupportedOperationException("cannot compare column type: " + a.getMinorType());
     }
 
     /** 列式 hash(非 null)。与 {@link #compare} 一致:compare==0 的两行 hash 必相等。 */
@@ -112,7 +110,6 @@ public final class ValueComparators {
         if (v instanceof DecimalVector dv) {
             return dv.getObject(row).hashCode();
         }
-        throw new UnsupportedOperationException(
-                "cannot hash column type: " + v.getMinorType());
+        throw new UnsupportedOperationException("cannot hash column type: " + v.getMinorType());
     }
 }

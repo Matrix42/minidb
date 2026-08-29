@@ -1,13 +1,7 @@
 package com.minidb.server.exec;
 
-import static org.junit.jupiter.api.Assertions.assertEquals;
-import static org.junit.jupiter.api.Assertions.assertFalse;
-import static org.junit.jupiter.api.Assertions.assertNotNull;
-import static org.junit.jupiter.api.Assertions.assertNull;
-import static org.junit.jupiter.api.Assertions.assertTrue;
-
 import com.minidb.storage.common.BatchIterator;
-import java.util.List;
+
 import org.apache.arrow.memory.RootAllocator;
 import org.apache.arrow.vector.IntVector;
 import org.apache.arrow.vector.VectorSchemaRoot;
@@ -17,6 +11,14 @@ import org.apache.arrow.vector.types.pojo.FieldType;
 import org.apache.arrow.vector.types.pojo.Schema;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.Test;
+
+import java.util.List;
+
+import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertFalse;
+import static org.junit.jupiter.api.Assertions.assertNotNull;
+import static org.junit.jupiter.api.Assertions.assertNull;
+import static org.junit.jupiter.api.Assertions.assertTrue;
 
 class PaginatorTest {
 
@@ -28,8 +30,8 @@ class PaginatorTest {
     }
 
     private static Schema schema() {
-        return new Schema(List.of(
-                new Field("id", FieldType.nullable(new ArrowType.Int(32, true)), null)));
+        return new Schema(
+                List.of(new Field("id", FieldType.nullable(new ArrowType.Int(32, true)), null)));
     }
 
     private VectorSchemaRoot root(int... values) {
@@ -46,9 +48,23 @@ class PaginatorTest {
         return new BatchIterator() {
             int i = 0;
             final List<VectorSchemaRoot> read = new java.util.ArrayList<>();
-            @Override public boolean hasNext() { return i < batches.length; }
-            @Override public VectorSchemaRoot next() { read.add(batches[i]); return batches[i++]; }
-            @Override public void close() { for (VectorSchemaRoot r : read) r.close(); read.clear(); }
+
+            @Override
+            public boolean hasNext() {
+                return i < batches.length;
+            }
+
+            @Override
+            public VectorSchemaRoot next() {
+                read.add(batches[i]);
+                return batches[i++];
+            }
+
+            @Override
+            public void close() {
+                for (VectorSchemaRoot r : read) r.close();
+                read.clear();
+            }
         };
     }
 

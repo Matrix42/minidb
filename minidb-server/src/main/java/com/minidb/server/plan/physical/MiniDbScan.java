@@ -1,32 +1,22 @@
 package com.minidb.server.plan.physical;
-import com.google.common.collect.Range;
+
 import com.minidb.server.calcite.MiniDbCalciteTable;
-import com.minidb.server.storage.IndexManager;
-import com.minidb.storage.common.IndexDef;
 import com.minidb.server.catalog.InformationSchemaCatalog;
 import com.minidb.server.exec.ExecContext;
 import com.minidb.server.exec.InformationSchema;
 import com.minidb.server.exec.RowCopier;
 import com.minidb.server.transaction.TransactionManager;
 import com.minidb.storage.common.ArrowTypes;
-import com.minidb.storage.common.ColumnMeta;
 import com.minidb.storage.common.BatchIterator;
+import com.minidb.storage.common.ColumnMeta;
 import com.minidb.storage.common.ColumnType;
+import com.minidb.storage.common.IndexDef;
 import com.minidb.storage.common.RowValue;
 import com.minidb.storage.common.TableHandle;
 import com.minidb.storage.common.TableSchema;
 import com.minidb.storage.lsm.SSTableWriter;
-import java.util.ArrayDeque;
-import java.util.ArrayList;
-import java.util.Arrays;
-import java.util.Collections;
-import java.util.Deque;
-import java.util.HashMap;
-import java.util.Iterator;
-import java.util.List;
-import java.util.Map;
-import java.util.HashSet;
-import java.util.Set;
+
+import com.google.common.collect.Range;
 import org.apache.arrow.vector.BitVector;
 import org.apache.arrow.vector.FieldVector;
 import org.apache.arrow.vector.ValueVector;
@@ -51,31 +41,47 @@ import org.apache.calcite.sql.fun.SqlStdOperatorTable;
 import org.apache.calcite.sql.type.SqlTypeName;
 import org.apache.calcite.util.Sarg;
 
+import java.util.ArrayDeque;
+import java.util.ArrayList;
+import java.util.Arrays;
+import java.util.Collections;
+import java.util.Deque;
+import java.util.HashMap;
+import java.util.HashSet;
+import java.util.List;
+import java.util.Map;
+import java.util.Set;
 
 public class MiniDbScan extends TableScan implements MiniDbRel {
 
     /** 下推的列裁剪:null→全列;非null→只读这些列索引(0-based)。 */
     private final int[] projectedColumns;
+
     /** 下推的谓词:null→不过滤;非null→扫描时 eval 并过滤。 */
     private final RexNode pushedFilter;
+
     private final String usedIndex;
 
     public MiniDbScan(RelOptCluster cluster, RelTraitSet traitSet, RelOptTable table) {
         this(cluster, traitSet, table, null, null);
     }
 
-    public MiniDbScan(RelOptCluster cluster, RelTraitSet traitSet, RelOptTable table,
-                      int[] projectedColumns, RexNode pushedFilter) {
+    public MiniDbScan(
+            RelOptCluster cluster,
+            RelTraitSet traitSet,
+            RelOptTable table,
+            int[] projectedColumns,
+            RexNode pushedFilter) {
         super(cluster, traitSet, List.of(), table);
         this.projectedColumns = projectedColumns;
         this.pushedFilter = pushedFilter;
         this.usedIndex = selectIndex(table, pushedFilter);
-        if (projectedColumns != null && !isIdentityProjection(projectedColumns,
-                table.getRowType().getFieldCount())) {
+        if (projectedColumns != null
+                && !isIdentityProjection(projectedColumns, table.getRowType().getFieldCount())) {
             // 投影后 rowType = 投影列子集:上层算子的表达式/行类型分析按 rowType 取列,
             // 若 rowType 仍是全表列,投影列非前缀时索引错位(列裁剪的 Planners pass 会触发)。
-            this.rowType = subsetRowType(cluster.getTypeFactory(), table.getRowType(),
-                    projectedColumns);
+            this.rowType =
+                    subsetRowType(cluster.getTypeFactory(), table.getRowType(), projectedColumns);
         }
     }
 
@@ -91,8 +97,8 @@ public class MiniDbScan extends TableScan implements MiniDbRel {
         return true;
     }
 
-    private static RelDataType subsetRowType(RelDataTypeFactory typeFactory,
-                                             RelDataType full, int[] projectedColumns) {
+    private static RelDataType subsetRowType(
+            RelDataTypeFactory typeFactory, RelDataType full, int[] projectedColumns) {
         RelDataTypeFactory.Builder builder = typeFactory.builder();
         for (int p : projectedColumns) {
             RelDataTypeField field = full.getFieldList().get(p);
@@ -156,8 +162,9 @@ public class MiniDbScan extends TableScan implements MiniDbRel {
             tableName = qualified.get(n - 1);
             if (InformationSchemaCatalog.isSystemSchema(schemaName)) {
                 return applyPushdown(
-                        singleBatch(InformationSchema.materialize(
-                                ctx.storage().catalog(), tableName, ctx.allocator())),
+                        singleBatch(
+                                InformationSchema.materialize(
+                                        ctx.storage().catalog(), tableName, ctx.allocator())),
                         ctx);
             }
             // qualified name like [minidb, other, t] — schema is second-to-last
@@ -183,8 +190,9 @@ public class MiniDbScan extends TableScan implements MiniDbRel {
         // (全部主键列绑定)时走 LSM 的 Bloom + getByKey,避免全表扫描 + 逐行
         // 求值(TPC-DS 维度点查主路径)。
         if (pushedFilter != null) {
-            PointLookup lookup = PointLookup.extract(pushedFilter, tableHandle.schema(),
-                    getCluster().getRexBuilder());
+            PointLookup lookup =
+                    PointLookup.extract(
+                            pushedFilter, tableHandle.schema(), getCluster().getRexBuilder());
             if (lookup != null) {
                 return pointLookup(tableHandle, lookup, ctx);
             }
@@ -200,17 +208,13 @@ public class MiniDbScan extends TableScan implements MiniDbRel {
             }
         }
         return applyPushdown(
-                    projectedColumns != null
-                            ? tableHandle.scan(projectedColumns)
-                            : tableHandle.scan(),
-                    ctx);
+                projectedColumns != null ? tableHandle.scan(projectedColumns) : tableHandle.scan(),
+                ctx);
     }
 
     /**
-     * 主键点查:对每个候选键 getByKey,命中的行收集进一个批,残留条件
-     * (非主键绑定)在整批上求值,再按投影列裁剪。批所有权沿链传递:
-     * root → (filtered) → (projected) → 最终批,每步换批就关掉旧批,
-     * 最终批交给 singleBatch 持有。
+     * 主键点查:对每个候选键 getByKey,命中的行收集进一个批,残留条件 (非主键绑定)在整批上求值,再按投影列裁剪。批所有权沿链传递: root → (filtered) →
+     * (projected) → 最终批,每步换批就关掉旧批, 最终批交给 singleBatch 持有。
      */
     private BatchIterator pointLookup(TableHandle table, PointLookup lookup, ExecContext ctx) {
         List<Object[]> matched = new ArrayList<>();
@@ -253,10 +257,10 @@ public class MiniDbScan extends TableScan implements MiniDbRel {
     }
 
     /** 行集 → 全列 VectorSchemaRoot(表 schema,残留条件/投影按原列索引)。 */
-    private static VectorSchemaRoot rowsToRoot(List<Object[]> rows, TableSchema schema,
-                                               ExecContext ctx) {
-        VectorSchemaRoot root = VectorSchemaRoot.create(
-                ArrowTypes.arrowSchema(schema), ctx.allocator());
+    private static VectorSchemaRoot rowsToRoot(
+            List<Object[]> rows, TableSchema schema, ExecContext ctx) {
+        VectorSchemaRoot root =
+                VectorSchemaRoot.create(ArrowTypes.arrowSchema(schema), ctx.allocator());
         root.allocateNew();
         if (!rows.isEmpty()) {
             // 先 setValueCount 保证有效性缓冲区已分配(writeRow 前)
@@ -282,16 +286,21 @@ public class MiniDbScan extends TableScan implements MiniDbRel {
 
     private BatchIterator indexLookup(TableHandle dataTable, ExecContext ctx) {
         List<String> qualified = table.getQualifiedName();
-        String schemaName = qualified.size() >= 3 ? qualified.get(qualified.size() - 2) : ctx.currentSchema();
+        String schemaName =
+                qualified.size() >= 3 ? qualified.get(qualified.size() - 2) : ctx.currentSchema();
         String tableName = qualified.get(qualified.size() - 1);
         MiniDbCalciteTable calciteTable = table.unwrap(MiniDbCalciteTable.class);
         if (calciteTable == null) return null;
         TableSchema dataSchema = calciteTable.tableSchema();
         IndexDef indexDef = null;
         for (IndexDef def : dataSchema.indexes())
-            if (def.name().equals(usedIndex)) { indexDef = def; break; }
+            if (def.name().equals(usedIndex)) {
+                indexDef = def;
+                break;
+            }
         if (indexDef == null) return null;
-        TableHandle indexTable = ctx.storage().indexManager().getIndex(schemaName, tableName, usedIndex);
+        TableHandle indexTable =
+                ctx.storage().indexManager().getIndex(schemaName, tableName, usedIndex);
         if (indexTable == null) return null;
 
         List<RexNode> conjuncts = new ArrayList<>();
@@ -303,7 +312,10 @@ public class MiniDbScan extends TableScan implements MiniDbRel {
             Object bound = null;
             for (RexNode c : conjuncts) {
                 IndexBound b = extractIndexBound(c);
-                if (b != null && b.colIndex == colIdx) { bound = b.value; break; }
+                if (b != null && b.colIndex == colIdx) {
+                    bound = b.value;
+                    break;
+                }
             }
             if (bound == null || "SEARCH".equals(bound) || "OR".equals(bound)) break;
             loPrefix.add(bound);
@@ -319,7 +331,10 @@ public class MiniDbScan extends TableScan implements MiniDbRel {
                     boolean prefixMatch = true;
                     for (int c = 0; c < loPrefix.size(); c++) {
                         Object v = b.getVector(c).getObject(r);
-                        if (v == null || !v.equals(loPrefix.get(c))) { prefixMatch = false; break; }
+                        if (v == null || !v.equals(loPrefix.get(c))) {
+                            prefixMatch = false;
+                            break;
+                        }
                     }
                     if (!prefixMatch) continue;
                     List<Object> pk = new ArrayList<>(pkCount);
@@ -345,19 +360,32 @@ public class MiniDbScan extends TableScan implements MiniDbRel {
                 IndexBound b = extractIndexBound(c);
                 if (b == null || !idxPositions.contains(b.colIndex)) residual.add(c);
             }
-            RexNode residualFilter = residual.isEmpty() ? null
-                    : (residual.size() == 1 ? residual.get(0)
-                    : getCluster().getRexBuilder().makeCall(SqlStdOperatorTable.AND, residual));
+            RexNode residualFilter =
+                    residual.isEmpty()
+                            ? null
+                            : (residual.size() == 1
+                                    ? residual.get(0)
+                                    : getCluster()
+                                            .getRexBuilder()
+                                            .makeCall(SqlStdOperatorTable.AND, residual));
             VectorSchemaRoot filtered = applyFilter(owned, residualFilter, ctx);
             if (filtered == null) return BatchIterator.interruptible(BatchIterator.empty());
-            if (filtered != owned) { owned.close(); owned = filtered; }
+            if (filtered != owned) {
+                owned.close();
+                owned = filtered;
+            }
             if (projectedColumns != null) {
                 VectorSchemaRoot projected = applyProject(owned, ctx);
-                if (projected != owned) { owned.close(); owned = projected; }
+                if (projected != owned) {
+                    owned.close();
+                    owned = projected;
+                }
             }
             out = owned;
             return singleBatch(out);
-        } finally { if (out == null) owned.close(); }
+        } finally {
+            if (out == null) owned.close();
+        }
     }
 
     private static String selectIndex(RelOptTable relTable, RexNode pushedFilter) {
@@ -381,7 +409,8 @@ public class MiniDbScan extends TableScan implements MiniDbRel {
             for (String col : def.columns())
                 if (boundCols.contains(schema.columnIndex(col))) count++;
             if (count > 0 && count == def.columns().size() && count > bestCount) {
-                best = def.name(); bestCount = count;
+                best = def.name();
+                bestCount = count;
             }
         }
         return best;
@@ -398,10 +427,15 @@ public class MiniDbScan extends TableScan implements MiniDbRel {
 
     private static IndexBound boundEqualityGeneral(RexCall call) {
         RexNode l = call.getOperands().get(0), r = call.getOperands().get(1);
-        RexInputRef ref; RexLiteral lit;
-        if (l instanceof RexInputRef a && r instanceof RexLiteral b) { ref = a; lit = b; }
-        else if (l instanceof RexLiteral a && r instanceof RexInputRef b) { ref = b; lit = a; }
-        else return null;
+        RexInputRef ref;
+        RexLiteral lit;
+        if (l instanceof RexInputRef a && r instanceof RexLiteral b) {
+            ref = a;
+            lit = b;
+        } else if (l instanceof RexLiteral a && r instanceof RexInputRef b) {
+            ref = b;
+            lit = a;
+        } else return null;
         Object value = literalValue(lit);
         return value == null ? null : new IndexBound(ref.getIndex(), value);
     }
@@ -447,8 +481,10 @@ public class MiniDbScan extends TableScan implements MiniDbRel {
     /** 整数型字面量取数值(INT→Integer、BIGINT→Long);非整数型返回 null(回退扫描)。 */
     private static Object numericLiteralValue(RexLiteral lit) {
         SqlTypeName tn = lit.getTypeName();
-        if (tn != SqlTypeName.TINYINT && tn != SqlTypeName.SMALLINT
-                && tn != SqlTypeName.INTEGER && tn != SqlTypeName.BIGINT) {
+        if (tn != SqlTypeName.TINYINT
+                && tn != SqlTypeName.SMALLINT
+                && tn != SqlTypeName.INTEGER
+                && tn != SqlTypeName.BIGINT) {
             return null;
         }
         Number v = lit.getValueAs(Number.class);
@@ -458,68 +494,68 @@ public class MiniDbScan extends TableScan implements MiniDbRel {
         return tn == SqlTypeName.BIGINT ? v.longValue() : v.intValue();
     }
 
-    /**
-     * 对底层扫描迭代器套上列裁剪和/或谓词过滤。
-     * 无下推时直接返回原迭代器。
-     */
+    /** 对底层扫描迭代器套上列裁剪和/或谓词过滤。 无下推时直接返回原迭代器。 */
     private BatchIterator applyPushdown(BatchIterator source, ExecContext ctx) {
         if (projectedColumns == null && pushedFilter == null) {
             return source;
         }
         // 存储层已做列裁剪(source 只含投影列),filter 需映射到投影位置后 eval
         boolean sourceAlreadyProjected = projectedColumns != null;
-        final RexNode effectiveFilter = sourceAlreadyProjected && pushedFilter != null
-                ? remapToProjected(pushedFilter, projectedColumns)
-                : pushedFilter;
+        final RexNode effectiveFilter =
+                sourceAlreadyProjected && pushedFilter != null
+                        ? remapToProjected(pushedFilter, projectedColumns)
+                        : pushedFilter;
         Deque<VectorSchemaRoot> owned = new ArrayDeque<>();
-        return BatchIterator.interruptible(new BatchIterator() {
-            VectorSchemaRoot pending;
+        return BatchIterator.interruptible(
+                new BatchIterator() {
+                    VectorSchemaRoot pending;
 
-            @Override
-            public boolean hasNext() {
-                while (pending == null && source.hasNext()) {
-                    VectorSchemaRoot batch = source.next();
-                    VectorSchemaRoot filtered = null;
-                    try {
-                        filtered = applyFilter(batch, effectiveFilter, ctx);
-                        if (filtered == null) {
-                            continue; // 全批被过滤
+                    @Override
+                    public boolean hasNext() {
+                        while (pending == null && source.hasNext()) {
+                            VectorSchemaRoot batch = source.next();
+                            VectorSchemaRoot filtered = null;
+                            try {
+                                filtered = applyFilter(batch, effectiveFilter, ctx);
+                                if (filtered == null) {
+                                    continue; // 全批被过滤
+                                }
+                                VectorSchemaRoot result =
+                                        sourceAlreadyProjected
+                                                ? filtered
+                                                : applyProject(filtered, ctx);
+                                if (result != filtered) {
+                                    filtered.close();
+                                }
+                                owned.add(result);
+                                pending = result;
+                            } catch (RuntimeException e) {
+                                // applyProject/applyFilter 失败时释放中间结果
+                                if (filtered != null && filtered != pending) {
+                                    filtered.close();
+                                }
+                                throw e;
+                            }
                         }
-                        VectorSchemaRoot result = sourceAlreadyProjected
-                                ? filtered
-                                : applyProject(filtered, ctx);
-                        if (result != filtered) {
-                            filtered.close();
-                        }
-                        owned.add(result);
-                        pending = result;
-                    } catch (RuntimeException e) {
-                        // applyProject/applyFilter 失败时释放中间结果
-                        if (filtered != null && filtered != pending) {
-                            filtered.close();
-                        }
-                        throw e;
+                        return pending != null;
                     }
-                }
-                return pending != null;
-            }
 
-            @Override
-            public VectorSchemaRoot next() {
-                VectorSchemaRoot out = pending;
-                pending = null;
-                return out;
-            }
+                    @Override
+                    public VectorSchemaRoot next() {
+                        VectorSchemaRoot out = pending;
+                        pending = null;
+                        return out;
+                    }
 
-            @Override
-            public void close() {
-                source.close();
-                for (VectorSchemaRoot r : owned) {
-                    r.close();
-                }
-                owned.clear();
-            }
-        });
+                    @Override
+                    public void close() {
+                        source.close();
+                        for (VectorSchemaRoot r : owned) {
+                            r.close();
+                        }
+                        owned.clear();
+                    }
+                });
     }
 
     /** 谓词过滤:null→原样返回;全匹配→原样返回;无匹配→null(释放原批)。 */
@@ -579,8 +615,7 @@ public class MiniDbScan extends TableScan implements MiniDbRel {
         }
         for (int c = 0; c < projectedColumns.length; c++) {
             // 列重排批量拷贝:src 列 projectedColumns[c] → dst 列 c,行连续
-            RowCopier.copyRows(batch.getVector(projectedColumns[c]), 0,
-                    outVectors.get(c), 0, rows);
+            RowCopier.copyRows(batch.getVector(projectedColumns[c]), 0, outVectors.get(c), 0, rows);
         }
         for (FieldVector v : outVectors) {
             v.setValueCount(rows);
@@ -588,10 +623,7 @@ public class MiniDbScan extends TableScan implements MiniDbRel {
         return VectorSchemaRoot.of(outVectors.toArray(new FieldVector[0]));
     }
 
-    /**
-     * 将 filter 条件中的列索引从「原表索引」映射到「投影后的位置」。
-     * 存储层已做列裁剪,source 只含投影列,filter 需要引用投影位置而非原位置。
-     */
+    /** 将 filter 条件中的列索引从「原表索引」映射到「投影后的位置」。 存储层已做列裁剪,source 只含投影列,filter 需要引用投影位置而非原位置。 */
     private static RexNode remapToProjected(RexNode node, int[] projectedColumns) {
         int maxCol = 0;
         for (int c : projectedColumns) maxCol = Math.max(maxCol, c);
@@ -600,20 +632,20 @@ public class MiniDbScan extends TableScan implements MiniDbRel {
         for (int i = 0; i < projectedColumns.length; i++) {
             inverse[projectedColumns[i]] = i;
         }
-        return node.accept(new RexShuttle() {
-            @Override
-            public RexNode visitInputRef(RexInputRef inputRef) {
-                int orig = inputRef.getIndex();
-                int proj = orig < inverse.length ? inverse[orig] : -1;
-                return proj >= 0 ? new RexInputRef(proj, inputRef.getType()) : inputRef;
-            }
-        });
+        return node.accept(
+                new RexShuttle() {
+                    @Override
+                    public RexNode visitInputRef(RexInputRef inputRef) {
+                        int orig = inputRef.getIndex();
+                        int proj = orig < inverse.length ? inverse[orig] : -1;
+                        return proj >= 0 ? new RexInputRef(proj, inputRef.getType()) : inputRef;
+                    }
+                });
     }
 
     /**
-     * 解析真实表(非瞬态/系统表)的 {@link TableHandle};瞬态表(单段名,递归 CTE)与
-     * information_schema 系统表没有对应存储表,返回 null。供 COUNT(*) 短路直接读
-     * {@code rowCount()} 而不扫描数据。
+     * 解析真实表(非瞬态/系统表)的 {@link TableHandle};瞬态表(单段名,递归 CTE)与 information_schema 系统表没有对应存储表,返回 null。供
+     * COUNT(*) 短路直接读 {@code rowCount()} 而不扫描数据。
      */
     public TableHandle resolveTable(ExecContext ctx) {
         List<String> qualified = table.getQualifiedName();
@@ -632,46 +664,45 @@ public class MiniDbScan extends TableScan implements MiniDbRel {
     }
 
     private BatchIterator transientScan(List<Object[]> rows, ExecContext ctx) {
-        VectorSchemaRoot root =
-                RowVectors.buildRoot(rows, table.getRowType(), ctx.allocator());
+        VectorSchemaRoot root = RowVectors.buildRoot(rows, table.getRowType(), ctx.allocator());
         return singleBatch(root);
     }
 
     private BatchIterator singleBatch(VectorSchemaRoot root) {
         boolean[] done = {false};
-        return BatchIterator.interruptible(new BatchIterator() {
-            @Override
-            public boolean hasNext() {
-                return !done[0];
-            }
+        return BatchIterator.interruptible(
+                new BatchIterator() {
+                    @Override
+                    public boolean hasNext() {
+                        return !done[0];
+                    }
 
-            @Override
-            public VectorSchemaRoot next() {
-                done[0] = true;
-                return root;
-            }
+                    @Override
+                    public VectorSchemaRoot next() {
+                        done[0] = true;
+                        return root;
+                    }
 
-            @Override
-            public void close() {
-                root.close();
-            }
-        });
+                    @Override
+                    public void close() {
+                        root.close();
+                    }
+                });
     }
 
     /**
      * 从下推 filter 提取主键点查。仅当:
+     *
      * <ul>
-     *   <li>每个主键列都被 AND 级联的绑定条件覆盖:单等值 `col = literal`、
-     *       IN 点集 `col SEARCH {v1,v2,...}`、或同列等值 OR 链(顺序任意,字面量
-     *       在左/右均可);</li>
-     *   <li>主键列类型为 INTEGER/BIGINT——LSM 的零填充十进制 key 编码只对
-     *       Integer/Long 往返保类型,其余类型(如 VARCHAR 的 Text key)比较会错;</li>
-     *   <li>候选键数(各列值集合的笛卡尔积)不超过 {@link #MAX_POINT_LOOKUP_KEYS}——
-     *       防多列 IN 的候选爆炸(超阈值回退扫描,正确性不受影响);</li>
-     *   <li>主键列未被重复绑定(如 `id=1 AND id=2`,重复条件保留为 residual 避免丢语义)。</li>
+     *   <li>每个主键列都被 AND 级联的绑定条件覆盖:单等值 `col = literal`、 IN 点集 `col SEARCH {v1,v2,...}`、或同列等值 OR
+     *       链(顺序任意,字面量 在左/右均可);
+     *   <li>主键列类型为 INTEGER/BIGINT——LSM 的零填充十进制 key 编码只对 Integer/Long 往返保类型,其余类型(如 VARCHAR 的 Text
+     *       key)比较会错;
+     *   <li>候选键数(各列值集合的笛卡尔积)不超过 {@link #MAX_POINT_LOOKUP_KEYS}—— 防多列 IN 的候选爆炸(超阈值回退扫描,正确性不受影响);
+     *   <li>主键列未被重复绑定(如 `id=1 AND id=2`,重复条件保留为 residual 避免丢语义)。
      * </ul>
-     * 其余条件保留为 {@link #residual},在命中的行上求值。返回 null 表示不可点查
-     * (回退全表扫描 + 逐行过滤)。
+     *
+     * 其余条件保留为 {@link #residual},在命中的行上求值。返回 null 表示不可点查 (回退全表扫描 + 逐行过滤)。
      */
     private static final class PointLookup {
         /** 候选主键(各列候选值的笛卡尔积);空或超阈值时不点查。 */
@@ -723,9 +754,12 @@ public class MiniDbScan extends TableScan implements MiniDbRel {
         }
 
         /** 按 PK 列顺序对各列候选值做笛卡尔积,超阈值剪枝(由调用方判定回退)。 */
-        private static void cartesianKeys(Map<Integer, List<Object>> valuesByCol,
-                                          TableSchema schema, int pkPos, List<Object> prefix,
-                                          List<List<Object>> out) {
+        private static void cartesianKeys(
+                Map<Integer, List<Object>> valuesByCol,
+                TableSchema schema,
+                int pkPos,
+                List<Object> prefix,
+                List<List<Object>> out) {
             if (out.size() > MAX_POINT_LOOKUP_KEYS) {
                 return;
             }
@@ -742,8 +776,7 @@ public class MiniDbScan extends TableScan implements MiniDbRel {
         }
 
         /**
-         * 提取「单列绑定值集」:单等值、SEARCH 点集(IN)、同列等值 OR 链。
-         * 含范围/多列 OR/非等值 → 返回 null(留给 residual)。
+         * 提取「单列绑定值集」:单等值、SEARCH 点集(IN)、同列等值 OR 链。 含范围/多列 OR/非等值 → 返回 null(留给 residual)。
          * (splitConjuncts/numericLiteralValue 与外层共用)。
          */
         private static BoundVals boundValues(RexNode node) {
@@ -835,20 +868,16 @@ public class MiniDbScan extends TableScan implements MiniDbRel {
     }
 
     /** {@code col = literal} 的绑定结果:列索引 + 数值。 */
-    private record BoundEq(int colIndex, Object value) {
-    }
+    private record BoundEq(int colIndex, Object value) {}
 
     /** 单列的绑定值集(等值/IN 点集/OR 链):列索引 + 候选值列表。 */
-    private record BoundVals(int colIndex, List<Object> values) {
-    }
+    private record BoundVals(int colIndex, List<Object> values) {}
 
     /**
-     * 主键范围裁剪:从下推 filter 提取主键序上的闭区间 [lo, hi](元素 null = 该列无界),
-     * 只读与区间相交的 SSTable 文件/块(超集语义:区间外行由原条件 residual 过滤,
-     * 正确性不依赖本裁剪)。约束按主键列顺序消费:每列取等值(优先,与范围并存时以
-     * 等值为准,范围由 residual 兜底)或下/上界的最大/最小值;遇到无约束列即停止
-     * (后续列的约束无法表示为前缀区间)。仅 INTEGER/BIGINT 主键(与点查同因:
-     * 块索引零填充编码只对 Integer/Long 保序)。
+     * 主键范围裁剪:从下推 filter 提取主键序上的闭区间 [lo, hi](元素 null = 该列无界), 只读与区间相交的 SSTable 文件/块(超集语义:区间外行由原条件
+     * residual 过滤, 正确性不依赖本裁剪)。约束按主键列顺序消费:每列取等值(优先,与范围并存时以 等值为准,范围由 residual
+     * 兜底)或下/上界的最大/最小值;遇到无约束列即停止 (后续列的约束无法表示为前缀区间)。仅 INTEGER/BIGINT 主键(与点查同因: 块索引零填充编码只对
+     * Integer/Long 保序)。
      */
     private static final class RangeBounds {
         final List<Object> lo;
@@ -898,8 +927,7 @@ public class MiniDbScan extends TableScan implements MiniDbRel {
                             case GREATER_THAN_OR_EQUAL -> lower = maxBound(lower, bc.value);
                             case LESS_THAN -> upper = minBound(upper, dec(bc.value));
                             case LESS_THAN_OR_EQUAL -> upper = minBound(upper, bc.value);
-                            default -> {
-                            }
+                            default -> {}
                         }
                     }
                 }
@@ -936,16 +964,21 @@ public class MiniDbScan extends TableScan implements MiniDbRel {
             } else {
                 return null;
             }
-            SqlKind k = switch (kind) {
-                case EQUALS -> SqlKind.EQUALS;
-                case GREATER_THAN -> reversed ? SqlKind.LESS_THAN : SqlKind.GREATER_THAN;
-                case GREATER_THAN_OR_EQUAL -> reversed
-                        ? SqlKind.LESS_THAN_OR_EQUAL : SqlKind.GREATER_THAN_OR_EQUAL;
-                case LESS_THAN -> reversed ? SqlKind.GREATER_THAN : SqlKind.LESS_THAN;
-                case LESS_THAN_OR_EQUAL -> reversed
-                        ? SqlKind.GREATER_THAN_OR_EQUAL : SqlKind.LESS_THAN_OR_EQUAL;
-                default -> null;
-            };
+            SqlKind k =
+                    switch (kind) {
+                        case EQUALS -> SqlKind.EQUALS;
+                        case GREATER_THAN -> reversed ? SqlKind.LESS_THAN : SqlKind.GREATER_THAN;
+                        case GREATER_THAN_OR_EQUAL ->
+                                reversed
+                                        ? SqlKind.LESS_THAN_OR_EQUAL
+                                        : SqlKind.GREATER_THAN_OR_EQUAL;
+                        case LESS_THAN -> reversed ? SqlKind.GREATER_THAN : SqlKind.LESS_THAN;
+                        case LESS_THAN_OR_EQUAL ->
+                                reversed
+                                        ? SqlKind.GREATER_THAN_OR_EQUAL
+                                        : SqlKind.LESS_THAN_OR_EQUAL;
+                        default -> null;
+                    };
             if (k == null) {
                 return null;
             }
@@ -988,13 +1021,11 @@ public class MiniDbScan extends TableScan implements MiniDbRel {
     }
 
     /** 比较条件:列索引 + 规范化 kind + 数值。 */
-    private record BoundCmp(int colIndex, SqlKind kind, Object value) {
-    }
+    private record BoundCmp(int colIndex, SqlKind kind, Object value) {}
 
     /**
-     * Serializable 隔离级别:记录扫描的列到读集。
-     * 键格式为 schema.table.column,按列粒度记录以支持 SSI 冲突检测。
-     * 非事务或非 Serializable 时 TransactionManager.recordRead 内部短路,无开销。
+     * Serializable 隔离级别:记录扫描的列到读集。 键格式为 schema.table.column,按列粒度记录以支持 SSI 冲突检测。 非事务或非 Serializable
+     * 时 TransactionManager.recordRead 内部短路,无开销。
      */
     private void recordReadSet(ExecContext ctx, String schemaName, String tableName) {
         if (!ctx.inTransaction()) return;

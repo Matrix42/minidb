@@ -7,6 +7,7 @@ import com.minidb.server.plan.physical.MiniDbRel;
 import com.minidb.server.plan.physical.MiniDbScan;
 import com.minidb.server.storage.StorageManager;
 import com.minidb.storage.common.*;
+
 import org.apache.arrow.memory.BufferAllocator;
 import org.apache.arrow.vector.VectorSchemaRoot;
 import org.apache.calcite.rel.RelNode;
@@ -22,15 +23,20 @@ public class MVManager {
     private final BufferAllocator allocator;
     private final Planner planner;
 
-    public MVManager(MiniDbCatalog catalog, StorageManager storage,
-                     BufferAllocator allocator, Planner planner) {
+    public MVManager(
+            MiniDbCatalog catalog,
+            StorageManager storage,
+            BufferAllocator allocator,
+            Planner planner) {
         this.catalog = catalog;
         this.storage = storage;
         this.allocator = allocator;
         this.planner = planner;
     }
 
-    public IncrementalRefreshEngine refreshEngine() { return new IncrementalRefreshEngine(storage, allocator, planner); }
+    public IncrementalRefreshEngine refreshEngine() {
+        return new IncrementalRefreshEngine(storage, allocator, planner);
+    }
 
     public Set<String> getDependentMVs(String schemaName, String tableName) {
         return catalog.getDependentMVs(schemaName, tableName);
@@ -49,13 +55,22 @@ public class MVManager {
         List<ColumnMeta> columns = columnsFromRowType(plan.getRowType());
 
         // 4. 构建 MVDefinition
-        MVDefinition mvDef = new MVDefinition(schemaName, mvName, querySql,
-                columns, deps, structure);
+        MVDefinition mvDef =
+                new MVDefinition(schemaName, mvName, querySql, columns, deps, structure);
 
         // 5. 创建存储表
-        TableSchema ts = new TableSchema(schemaName, mvName, columns,
-                List.of(), List.of(), List.of(), StorageFormat.DEFAULT,
-                TableType.MATERIALIZED_VIEW, null, mvDef);
+        TableSchema ts =
+                new TableSchema(
+                        schemaName,
+                        mvName,
+                        columns,
+                        List.of(),
+                        List.of(),
+                        List.of(),
+                        StorageFormat.DEFAULT,
+                        TableType.MATERIALIZED_VIEW,
+                        null,
+                        mvDef);
         storage.createTable(ts);
 
         // 6. 全量填充
@@ -101,8 +116,7 @@ public class MVManager {
         if (plan instanceof MiniDbAggregate agg) {
             RelNode input = agg.getInput();
             if (findSingleScan(input) == null) {
-                throw new UnsupportedOperationException(
-                        "物化视图仅支持单表聚合，不支持 JOIN");
+                throw new UnsupportedOperationException("物化视图仅支持单表聚合，不支持 JOIN");
             }
 
             List<String> outputCols = new ArrayList<>();
@@ -112,24 +126,29 @@ public class MVManager {
 
             List<String> groupByCols = new ArrayList<>();
             for (int g : agg.getGroupSet()) {
-                groupByCols.add(agg.getInput().getRowType()
-                        .getFieldList().get(g).getName());
+                groupByCols.add(agg.getInput().getRowType().getFieldList().get(g).getName());
             }
 
             List<MVStructure.AggFunc> funcs = new ArrayList<>();
             for (AggregateCall call : agg.getAggCallList()) {
                 String funcName = call.getAggregation().getKind().name();
-                MVStructure.AggType aggType = switch (funcName) {
-                    case "SUM" -> MVStructure.AggType.SUM;
-                    case "COUNT" -> MVStructure.AggType.COUNT;
-                    case "AVG" -> MVStructure.AggType.AVG;
-                    case "MIN" -> MVStructure.AggType.MIN;
-                    case "MAX" -> MVStructure.AggType.MAX;
-                    default -> throw new UnsupportedOperationException(
-                            "不支持的聚合函数: " + funcName);
-                };
-                String inputCol = agg.getInput().getRowType()
-                        .getFieldList().get(call.getArgList().get(0)).getName();
+                MVStructure.AggType aggType =
+                        switch (funcName) {
+                            case "SUM" -> MVStructure.AggType.SUM;
+                            case "COUNT" -> MVStructure.AggType.COUNT;
+                            case "AVG" -> MVStructure.AggType.AVG;
+                            case "MIN" -> MVStructure.AggType.MIN;
+                            case "MAX" -> MVStructure.AggType.MAX;
+                            default ->
+                                    throw new UnsupportedOperationException(
+                                            "不支持的聚合函数: " + funcName);
+                        };
+                String inputCol =
+                        agg.getInput()
+                                .getRowType()
+                                .getFieldList()
+                                .get(call.getArgList().get(0))
+                                .getName();
                 funcs.add(new MVStructure.AggFunc(call.name, aggType, inputCol));
             }
 
@@ -139,8 +158,7 @@ public class MVManager {
         // SPJ 路径
         MiniDbScan scan = findSingleScan(plan);
         if (scan == null) {
-            throw new UnsupportedOperationException(
-                    "物化视图仅支持单表 SPJ 或聚合查询");
+            throw new UnsupportedOperationException("物化视图仅支持单表 SPJ 或聚合查询");
         }
 
         List<String> outputCols = new ArrayList<>();
@@ -188,8 +206,8 @@ public class MVManager {
             org.apache.calcite.rel.type.RelDataType rowType) {
         List<ColumnMeta> columns = new ArrayList<>();
         for (RelDataTypeField field : rowType.getFieldList()) {
-            ColumnType type = ArrowTypes.fromSqlTypeName(
-                    field.getType().getSqlTypeName().getName());
+            ColumnType type =
+                    ArrowTypes.fromSqlTypeName(field.getType().getSqlTypeName().getName());
             columns.add(new ColumnMeta(field.getName(), type));
         }
         return columns;

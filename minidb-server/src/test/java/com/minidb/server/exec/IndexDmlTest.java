@@ -1,19 +1,11 @@
 package com.minidb.server.exec;
 
-import static org.junit.jupiter.api.Assertions.assertEquals;
-import static org.junit.jupiter.api.Assertions.assertNotNull;
-import static org.junit.jupiter.api.Assertions.assertTrue;
-
 import com.minidb.server.catalog.MiniDbCatalog;
 import com.minidb.server.stats.StatsManager;
 import com.minidb.server.storage.StorageManager;
 import com.minidb.storage.common.BatchIterator;
 import com.minidb.storage.common.TableHandle;
-import java.nio.file.Path;
-import java.util.ArrayList;
-import java.util.HashSet;
-import java.util.List;
-import java.util.Set;
+
 import org.apache.arrow.memory.BufferAllocator;
 import org.apache.arrow.memory.RootAllocator;
 import org.apache.arrow.vector.IntVector;
@@ -23,10 +15,19 @@ import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
 
+import java.nio.file.Path;
+import java.util.ArrayList;
+import java.util.HashSet;
+import java.util.List;
+import java.util.Set;
+
+import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertNotNull;
+import static org.junit.jupiter.api.Assertions.assertTrue;
+
 class IndexDmlTest {
 
-    @TempDir
-    Path dataDir;
+    @TempDir Path dataDir;
 
     BufferAllocator allocator;
     MiniDbCatalog catalog;

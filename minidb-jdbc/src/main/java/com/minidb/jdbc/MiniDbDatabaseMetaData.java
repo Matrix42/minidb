@@ -1,5 +1,8 @@
 package com.minidb.jdbc;
 
+import org.apache.arrow.vector.VarCharVector;
+import org.apache.arrow.vector.VectorSchemaRoot;
+
 import java.nio.charset.StandardCharsets;
 import java.sql.Connection;
 import java.sql.DatabaseMetaData;
@@ -7,8 +10,6 @@ import java.sql.ResultSet;
 import java.sql.RowIdLifetime;
 import java.sql.SQLException;
 import java.sql.SQLFeatureNotSupportedException;
-import org.apache.arrow.vector.VarCharVector;
-import org.apache.arrow.vector.VectorSchemaRoot;
 
 public class MiniDbDatabaseMetaData implements DatabaseMetaData {
 
@@ -612,9 +613,9 @@ public class MiniDbDatabaseMetaData implements DatabaseMetaData {
     @Override
     public boolean supportsTransactionIsolationLevel(int level) {
         return level == Connection.TRANSACTION_READ_UNCOMMITTED
-            || level == Connection.TRANSACTION_READ_COMMITTED
-            || level == Connection.TRANSACTION_REPEATABLE_READ
-            || level == Connection.TRANSACTION_SERIALIZABLE;
+                || level == Connection.TRANSACTION_READ_COMMITTED
+                || level == Connection.TRANSACTION_REPEATABLE_READ
+                || level == Connection.TRANSACTION_SERIALIZABLE;
     }
 
     @Override
@@ -638,19 +639,28 @@ public class MiniDbDatabaseMetaData implements DatabaseMetaData {
     }
 
     @Override
-    public ResultSet getProcedures(String catalog, String schemaPattern, String procedureNamePattern) throws SQLException {
+    public ResultSet getProcedures(
+            String catalog, String schemaPattern, String procedureNamePattern) throws SQLException {
         throw new SQLFeatureNotSupportedException();
     }
 
     @Override
-    public ResultSet getProcedureColumns(String catalog, String schemaPattern, String procedureNamePattern, String columnNamePattern) throws SQLException {
+    public ResultSet getProcedureColumns(
+            String catalog,
+            String schemaPattern,
+            String procedureNamePattern,
+            String columnNamePattern)
+            throws SQLException {
         throw new SQLFeatureNotSupportedException();
     }
 
     @Override
-    public ResultSet getTables(String catalog, String schemaPattern, String tableNamePattern, String[] types) throws SQLException {
+    public ResultSet getTables(
+            String catalog, String schemaPattern, String tableNamePattern, String[] types)
+            throws SQLException {
         MiniDbStatement stmt = (MiniDbStatement) connection.createStatement();
-        return new MiniDbResultSet(stmt, connection.client().tables(schemaPattern, tableNamePattern, types), true);
+        return new MiniDbResultSet(
+                stmt, connection.client().tables(schemaPattern, tableNamePattern, types), true);
     }
 
     @Override
@@ -667,8 +677,7 @@ public class MiniDbDatabaseMetaData implements DatabaseMetaData {
     public ResultSet getTableTypes() throws SQLException {
         // MiniDB 支持基表、视图、系统表(information_schema)。
         MiniDbStatement stmt = (MiniDbStatement) connection.createStatement();
-        VarCharVector tableType =
-                new VarCharVector("TABLE_TYPE", connection.client().allocator());
+        VarCharVector tableType = new VarCharVector("TABLE_TYPE", connection.client().allocator());
         tableType.allocateNew();
         tableType.setSafe(0, "TABLE".getBytes(StandardCharsets.UTF_8));
         tableType.setSafe(1, "VIEW".getBytes(StandardCharsets.UTF_8));
@@ -678,48 +687,69 @@ public class MiniDbDatabaseMetaData implements DatabaseMetaData {
     }
 
     @Override
-    public ResultSet getColumns(String catalog, String schemaPattern, String tableNamePattern, String columnNamePattern) throws SQLException {
+    public ResultSet getColumns(
+            String catalog, String schemaPattern, String tableNamePattern, String columnNamePattern)
+            throws SQLException {
         MiniDbStatement stmt = (MiniDbStatement) connection.createStatement();
-        return new MiniDbResultSet(stmt, connection.client().columns(schemaPattern, tableNamePattern, columnNamePattern), true);
+        return new MiniDbResultSet(
+                stmt,
+                connection.client().columns(schemaPattern, tableNamePattern, columnNamePattern),
+                true);
     }
 
     @Override
-    public ResultSet getColumnPrivileges(String catalog, String schema, String table, String columnNamePattern) throws SQLException {
+    public ResultSet getColumnPrivileges(
+            String catalog, String schema, String table, String columnNamePattern)
+            throws SQLException {
         throw new SQLFeatureNotSupportedException();
     }
 
     @Override
-    public ResultSet getTablePrivileges(String catalog, String schemaPattern, String tableNamePattern) throws SQLException {
+    public ResultSet getTablePrivileges(
+            String catalog, String schemaPattern, String tableNamePattern) throws SQLException {
         throw new SQLFeatureNotSupportedException();
     }
 
     @Override
-    public ResultSet getBestRowIdentifier(String catalog, String schema, String table, int scope, boolean nullable) throws SQLException {
+    public ResultSet getBestRowIdentifier(
+            String catalog, String schema, String table, int scope, boolean nullable)
+            throws SQLException {
         throw new SQLFeatureNotSupportedException();
     }
 
     @Override
-    public ResultSet getVersionColumns(String catalog, String schema, String table) throws SQLException {
+    public ResultSet getVersionColumns(String catalog, String schema, String table)
+            throws SQLException {
         throw new SQLFeatureNotSupportedException();
     }
 
     @Override
-    public ResultSet getPrimaryKeys(String catalog, String schema, String table) throws SQLException {
+    public ResultSet getPrimaryKeys(String catalog, String schema, String table)
+            throws SQLException {
         throw new SQLFeatureNotSupportedException();
     }
 
     @Override
-    public ResultSet getImportedKeys(String catalog, String schema, String table) throws SQLException {
+    public ResultSet getImportedKeys(String catalog, String schema, String table)
+            throws SQLException {
         throw new SQLFeatureNotSupportedException();
     }
 
     @Override
-    public ResultSet getExportedKeys(String catalog, String schema, String table) throws SQLException {
+    public ResultSet getExportedKeys(String catalog, String schema, String table)
+            throws SQLException {
         throw new SQLFeatureNotSupportedException();
     }
 
     @Override
-    public ResultSet getCrossReference(String parentCatalog, String parentSchema, String parentTable, String foreignCatalog, String foreignSchema, String foreignTable) throws SQLException {
+    public ResultSet getCrossReference(
+            String parentCatalog,
+            String parentSchema,
+            String parentTable,
+            String foreignCatalog,
+            String foreignSchema,
+            String foreignTable)
+            throws SQLException {
         throw new SQLFeatureNotSupportedException();
     }
 
@@ -729,7 +759,9 @@ public class MiniDbDatabaseMetaData implements DatabaseMetaData {
     }
 
     @Override
-    public ResultSet getIndexInfo(String catalog, String schema, String table, boolean unique, boolean approximate) throws SQLException {
+    public ResultSet getIndexInfo(
+            String catalog, String schema, String table, boolean unique, boolean approximate)
+            throws SQLException {
         throw new SQLFeatureNotSupportedException();
     }
 
@@ -870,17 +902,25 @@ public class MiniDbDatabaseMetaData implements DatabaseMetaData {
     }
 
     @Override
-    public ResultSet getFunctions(String catalog, String schemaPattern, String functionNamePattern) throws SQLException {
+    public ResultSet getFunctions(String catalog, String schemaPattern, String functionNamePattern)
+            throws SQLException {
         throw new SQLFeatureNotSupportedException();
     }
 
     @Override
-    public ResultSet getFunctionColumns(String catalog, String schemaPattern, String functionNamePattern, String columnNamePattern) throws SQLException {
+    public ResultSet getFunctionColumns(
+            String catalog,
+            String schemaPattern,
+            String functionNamePattern,
+            String columnNamePattern)
+            throws SQLException {
         throw new SQLFeatureNotSupportedException();
     }
 
     @Override
-    public ResultSet getPseudoColumns(String catalog, String schemaPattern, String tableNamePattern, String columnNamePattern) throws SQLException {
+    public ResultSet getPseudoColumns(
+            String catalog, String schemaPattern, String tableNamePattern, String columnNamePattern)
+            throws SQLException {
         throw new SQLFeatureNotSupportedException();
     }
 
@@ -890,24 +930,31 @@ public class MiniDbDatabaseMetaData implements DatabaseMetaData {
     }
 
     @Override
-    public ResultSet getAttributes(String catalog, String schemaPattern,
-                                   String typeNamePattern, String attributeNamePattern)
+    public ResultSet getAttributes(
+            String catalog,
+            String schemaPattern,
+            String typeNamePattern,
+            String attributeNamePattern)
             throws SQLException {
         throw new SQLFeatureNotSupportedException();
     }
 
     @Override
-    public ResultSet getSuperTypes(String catalog, String schemaPattern, String typeNamePattern) throws SQLException {
+    public ResultSet getSuperTypes(String catalog, String schemaPattern, String typeNamePattern)
+            throws SQLException {
         throw new SQLFeatureNotSupportedException();
     }
 
     @Override
-    public ResultSet getSuperTables(String catalog, String schemaPattern, String tableNamePattern) throws SQLException {
+    public ResultSet getSuperTables(String catalog, String schemaPattern, String tableNamePattern)
+            throws SQLException {
         throw new SQLFeatureNotSupportedException();
     }
 
     @Override
-    public ResultSet getUDTs(String catalog, String schemaPattern, String typeNamePattern, int[] types) throws SQLException {
+    public ResultSet getUDTs(
+            String catalog, String schemaPattern, String typeNamePattern, int[] types)
+            throws SQLException {
         throw new SQLFeatureNotSupportedException();
     }
 

@@ -1,6 +1,19 @@
 package com.minidb.storage.arrow;
 
 import com.minidb.storage.common.PartFormat;
+
+import org.apache.arrow.flatbuf.Message;
+import org.apache.arrow.flatbuf.RecordBatch;
+import org.apache.arrow.memory.BufferAllocator;
+import org.apache.arrow.vector.VectorSchemaRoot;
+import org.apache.arrow.vector.ipc.ArrowFileReader;
+import org.apache.arrow.vector.ipc.ArrowFileWriter;
+import org.apache.arrow.vector.ipc.message.ArrowBlock;
+import org.apache.arrow.vector.ipc.message.MessageSerializer;
+import org.apache.arrow.vector.types.pojo.Field;
+import org.apache.arrow.vector.types.pojo.Schema;
+import org.apache.arrow.vector.util.ByteArrayReadableSeekableByteChannel;
+
 import java.io.ByteArrayOutputStream;
 import java.io.EOFException;
 import java.io.IOException;
@@ -11,15 +24,8 @@ import java.nio.channels.SeekableByteChannel;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.nio.file.StandardOpenOption;
-import org.apache.arrow.flatbuf.Message;
-import org.apache.arrow.flatbuf.RecordBatch;
-import org.apache.arrow.memory.BufferAllocator;
-import org.apache.arrow.vector.VectorSchemaRoot;
-import org.apache.arrow.vector.ipc.ArrowFileReader;
-import org.apache.arrow.vector.ipc.ArrowFileWriter;
-import org.apache.arrow.vector.ipc.message.ArrowBlock;
-import org.apache.arrow.vector.ipc.message.MessageSerializer;
-import org.apache.arrow.vector.util.ByteArrayReadableSeekableByteChannel;
+import java.util.ArrayList;
+import java.util.List;
 
 /** Arrow IPC 文件格式的 part 读写。 */
 public class ArrowPartFormat implements PartFormat {
@@ -28,10 +34,13 @@ public class ArrowPartFormat implements PartFormat {
     public void write(Path part, VectorSchemaRoot batch) {
         try {
             Files.createDirectories(part.getParent());
-            try (SeekableByteChannel channel = Files.newByteChannel(part,
-                    StandardOpenOption.CREATE, StandardOpenOption.WRITE,
-                    StandardOpenOption.TRUNCATE_EXISTING);
-                 ArrowFileWriter writer = new ArrowFileWriter(batch, null, channel)) {
+            try (SeekableByteChannel channel =
+                            Files.newByteChannel(
+                                    part,
+                                    StandardOpenOption.CREATE,
+                                    StandardOpenOption.WRITE,
+                                    StandardOpenOption.TRUNCATE_EXISTING);
+                    ArrowFileWriter writer = new ArrowFileWriter(batch, null, channel)) {
                 writer.start();
                 writer.writeBatch();
                 writer.end();
@@ -42,29 +51,28 @@ public class ArrowPartFormat implements PartFormat {
     }
 
     @Override
-    public VectorSchemaRoot read(Path part, org.apache.arrow.vector.types.pojo.Schema schema,
-                                 BufferAllocator allocator) {
+    public VectorSchemaRoot read(Path part, Schema schema, BufferAllocator allocator) {
         return read(part, schema, allocator, null);
     }
 
     @Override
-    public VectorSchemaRoot read(Path part, org.apache.arrow.vector.types.pojo.Schema schema,
-                                 BufferAllocator allocator, int[] projectedColumns) {
+    public VectorSchemaRoot read(
+            Path part, Schema schema, BufferAllocator allocator, int[] projectedColumns) {
         try (SeekableByteChannel channel = Files.newByteChannel(part, StandardOpenOption.READ);
-             ArrowFileReader reader = new ArrowFileReader(channel, allocator)) {
+                ArrowFileReader reader = new ArrowFileReader(channel, allocator)) {
             VectorSchemaRoot src = reader.getVectorSchemaRoot();
             // 列裁剪:只分配投影列的输出向量
-            org.apache.arrow.vector.types.pojo.Schema projSchema;
+            Schema projSchema;
             int[] cols;
             if (projectedColumns == null || projectedColumns.length == schema.getFields().size()) {
                 projSchema = schema;
                 cols = null;
             } else {
-                java.util.List<org.apache.arrow.vector.types.pojo.Field> projFields = new java.util.ArrayList<>();
+                List<Field> projFields = new ArrayList<>();
                 for (int col : projectedColumns) {
                     projFields.add(schema.getFields().get(col));
                 }
-                projSchema = new org.apache.arrow.vector.types.pojo.Schema(projFields, schema.getCustomMetadata());
+                projSchema = new Schema(projFields, schema.getCustomMetadata());
                 cols = projectedColumns;
             }
             VectorSchemaRoot out = VectorSchemaRoot.create(projSchema, allocator);
@@ -92,8 +100,8 @@ public class ArrowPartFormat implements PartFormat {
     public byte[] writeToBytes(VectorSchemaRoot batch) {
         try {
             ByteArrayOutputStream out = new ByteArrayOutputStream();
-            try (ArrowFileWriter writer = new ArrowFileWriter(batch, null,
-                    Channels.newChannel(out))) {
+            try (ArrowFileWriter writer =
+                    new ArrowFileWriter(batch, null, Channels.newChannel(out))) {
                 writer.start();
                 writer.writeBatch();
                 writer.end();
@@ -105,10 +113,9 @@ public class ArrowPartFormat implements PartFormat {
     }
 
     @Override
-    public VectorSchemaRoot read(byte[] data, org.apache.arrow.vector.types.pojo.Schema schema,
-                                 BufferAllocator allocator) {
+    public VectorSchemaRoot read(byte[] data, Schema schema, BufferAllocator allocator) {
         try (SeekableByteChannel channel = new ByteArrayReadableSeekableByteChannel(data);
-             ArrowFileReader reader = new ArrowFileReader(channel, allocator)) {
+                ArrowFileReader reader = new ArrowFileReader(channel, allocator)) {
             VectorSchemaRoot src = reader.getVectorSchemaRoot();
             VectorSchemaRoot out = VectorSchemaRoot.create(schema, allocator);
             out.allocateNew();
@@ -132,7 +139,7 @@ public class ArrowPartFormat implements PartFormat {
     @Override
     public long rowCount(Path part, BufferAllocator allocator) {
         try (SeekableByteChannel channel = Files.newByteChannel(part, StandardOpenOption.READ);
-             ArrowFileReader reader = new ArrowFileReader(channel, allocator)) {
+                ArrowFileReader reader = new ArrowFileReader(channel, allocator)) {
             long count = 0;
             for (ArrowBlock block : reader.getRecordBlocks()) {
                 count += recordBatchLength(channel, block);
@@ -154,8 +161,10 @@ public class ArrowPartFormat implements PartFormat {
             }
         }
         buf.flip();
-        int prefixSize = buf.remaining() >= 4
-                && buf.getInt(0) == MessageSerializer.IPC_CONTINUATION_TOKEN ? 8 : 4;
+        int prefixSize =
+                buf.remaining() >= 4 && buf.getInt(0) == MessageSerializer.IPC_CONTINUATION_TOKEN
+                        ? 8
+                        : 4;
         buf.position(prefixSize);
         Message message = Message.getRootAsMessage(buf);
         RecordBatch recordBatch = (RecordBatch) message.header(new RecordBatch());

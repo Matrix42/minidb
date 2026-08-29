@@ -1,27 +1,14 @@
 package com.minidb.server.exec;
 
-import com.minidb.storage.common.ArrowTypes;
-import com.minidb.storage.common.ColumnMeta;
-import com.minidb.storage.common.ColumnType;
 import com.minidb.server.exec.functions.BuiltInFunctions;
 import com.minidb.server.exec.functions.Function;
 import com.minidb.server.exec.functions.FunctionRegistry;
 import com.minidb.server.exec.functions.Kernels;
 import com.minidb.server.plan.physical.RowVectors;
-import java.math.BigDecimal;
-import java.nio.charset.StandardCharsets;
-import java.time.Instant;
-import java.time.LocalDate;
-import java.time.LocalDateTime;
-import java.time.ZoneOffset;
-import java.time.temporal.ChronoField;
-import java.time.temporal.WeekFields;
-import java.util.ArrayList;
-import java.util.Arrays;
-import java.util.Calendar;
-import java.util.List;
-import java.util.Objects;
-import java.util.concurrent.TimeUnit;
+import com.minidb.storage.common.ArrowTypes;
+import com.minidb.storage.common.ColumnMeta;
+import com.minidb.storage.common.ColumnType;
+
 import org.apache.arrow.memory.BufferAllocator;
 import org.apache.arrow.vector.BigIntVector;
 import org.apache.arrow.vector.BitVector;
@@ -49,11 +36,23 @@ import org.apache.calcite.rex.RexUnknownAs;
 import org.apache.calcite.sql.SqlKind;
 import org.apache.calcite.sql.fun.SqlTrimFunction;
 import org.apache.calcite.sql.type.SqlTypeName;
-import org.apache.calcite.util.DateString;
 import org.apache.calcite.util.NlsString;
 import org.apache.calcite.util.Sarg;
-import org.apache.calcite.util.TimestampString;
-import com.google.common.collect.RangeSet;
+
+import java.math.BigDecimal;
+import java.nio.charset.StandardCharsets;
+import java.time.Instant;
+import java.time.LocalDate;
+import java.time.LocalDateTime;
+import java.time.ZoneOffset;
+import java.time.temporal.ChronoField;
+import java.time.temporal.WeekFields;
+import java.util.ArrayList;
+import java.util.Arrays;
+import java.util.Calendar;
+import java.util.List;
+import java.util.Objects;
+import java.util.concurrent.TimeUnit;
 
 public class RexInterpreter {
 
@@ -106,9 +105,11 @@ public class RexInterpreter {
             case IS_NOT_NULL:
                 return nullTest(call.getOperands().get(0), input, false);
             case IS_NOT_DISTINCT_FROM:
-                return nullSafeComparison(call.getOperands().get(0), call.getOperands().get(1), input, true);
+                return nullSafeComparison(
+                        call.getOperands().get(0), call.getOperands().get(1), input, true);
             case IS_DISTINCT_FROM:
-                return nullSafeComparison(call.getOperands().get(0), call.getOperands().get(1), input, false);
+                return nullSafeComparison(
+                        call.getOperands().get(0), call.getOperands().get(1), input, false);
             case IS_TRUE:
                 return booleanTest(call.getOperands().get(0), input, true, false);
             case IS_NOT_TRUE:
@@ -117,27 +118,29 @@ public class RexInterpreter {
                 return booleanTest(call.getOperands().get(0), input, false, false);
             case IS_NOT_FALSE:
                 return booleanTest(call.getOperands().get(0), input, false, true);
-            default: {
-                List<ValueVector> args = new ArrayList<>();
-                for (RexNode operand : call.getOperands()) {
-                    args.add(eval(operand, input));
-                }
-                Function f = functions.lookup(call.getOperator());
-                if (f == null) {
-                    for (ValueVector a : args) {
-                        a.close();
+            default:
+                {
+                    List<ValueVector> args = new ArrayList<>();
+                    for (RexNode operand : call.getOperands()) {
+                        args.add(eval(operand, input));
                     }
-                    throw new UnsupportedOperationException("unsupported operator: " + call.getOperator());
+                    Function f = functions.lookup(call.getOperator());
+                    if (f == null) {
+                        for (ValueVector a : args) {
+                            a.close();
+                        }
+                        throw new UnsupportedOperationException(
+                                "unsupported operator: " + call.getOperator());
+                    }
+                    return f.evaluate(args, call.getType(), input.getRowCount(), allocator);
                 }
-                return f.evaluate(args, call.getType(), input.getRowCount(), allocator);
-            }
         }
     }
 
     /**
-     * TRIM 的 3 参形式(Calcite 把 `TRIM(s)` 解析期重写为 `TRIM(Flag, ' ', s)`):第一参是
-     * SYMBOL 字面量(LEADING/TRAILING/BOTH,经 RexBuilder.makeFlag 产出),不是列值,无法走
-     * 常规字面量向量,故从 RexLiteral 直接取 Flag;第二/三参(trim 字符集、输入串)正常求值。
+     * TRIM 的 3 参形式(Calcite 把 `TRIM(s)` 解析期重写为 `TRIM(Flag, ' ', s)`):第一参是 SYMBOL
+     * 字面量(LEADING/TRAILING/BOTH,经 RexBuilder.makeFlag 产出),不是列值,无法走 常规字面量向量,故从 RexLiteral 直接取
+     * Flag;第二/三参(trim 字符集、输入串)正常求值。
      */
     private ValueVector evalTrim(RexCall call, VectorSchemaRoot input) {
         SqlTrimFunction.Flag flag =
@@ -154,10 +157,13 @@ public class RexInterpreter {
                     out.setNull(i);
                     continue;
                 }
-                String chars = new String(((VarCharVector) trimChars).get(i), StandardCharsets.UTF_8);
+                String chars =
+                        new String(((VarCharVector) trimChars).get(i), StandardCharsets.UTF_8);
                 String s = new String(((VarCharVector) str).get(i), StandardCharsets.UTF_8);
-                out.setSafe(i, trim(s, chars, flag.getLeft() == 1, flag.getRight() == 1)
-                        .getBytes(StandardCharsets.UTF_8));
+                out.setSafe(
+                        i,
+                        trim(s, chars, flag.getLeft() == 1, flag.getRight() == 1)
+                                .getBytes(StandardCharsets.UTF_8));
             }
             out.setValueCount(rows);
             return out;
@@ -171,7 +177,8 @@ public class RexInterpreter {
     }
 
     /** 按 Flag 的 left/right 掩码,从字符串两端剥离 chars 集合内的字符(按 Unicode code point)。 */
-    private static String trim(String s, String chars, boolean stripLeading, boolean stripTrailing) {
+    private static String trim(
+            String s, String chars, boolean stripLeading, boolean stripTrailing) {
         int[] codePoints = s.codePoints().toArray();
         int[] trimSet = chars.codePoints().toArray();
         int begin = 0;
@@ -256,9 +263,8 @@ public class RexInterpreter {
     }
 
     /**
-     * IS NULL / IS NOT NULL:非 STRICT 谓词 —— 操作数为 null 时仍产出 true/false(而非 null),
-     * 且类型无关(任意向量)。逐行读 isNull 位写 BitVector。去相关后的 NOT EXISTS(IS NULL)与
-     * 相关 EXISTS(IS NOT NULL)都依赖它。
+     * IS NULL / IS NOT NULL:非 STRICT 谓词 —— 操作数为 null 时仍产出 true/false(而非 null), 且类型无关(任意向量)。逐行读
+     * isNull 位写 BitVector。去相关后的 NOT EXISTS(IS NULL)与 相关 EXISTS(IS NOT NULL)都依赖它。
      */
     private ValueVector nullTest(RexNode operand, VectorSchemaRoot input, boolean isNull) {
         int rows = input.getRowCount();
@@ -275,17 +281,18 @@ public class RexInterpreter {
     }
 
     /**
-     * IS NOT DISTINCT FROM / IS DISTINCT FROM:null-safe 等值比较(非 STRICT)。两侧都为 null →
-     * 结果取决于 isNotDistinct;仅一侧 null → 取反;都非 null → 按值判等。类型无关:用
-     * RowVectors.readObject 读盒装值 + Objects.equals 判等。去相关后的标量子查询(相关键的
-     * null-safe 等值 join)由 RelDecorrelator 直接产出 IS NOT DISTINCT FROM。
+     * IS NOT DISTINCT FROM / IS DISTINCT FROM:null-safe 等值比较(非 STRICT)。两侧都为 null → 结果取决于
+     * isNotDistinct;仅一侧 null → 取反;都非 null → 按值判等。类型无关:用 RowVectors.readObject 读盒装值 + Objects.equals
+     * 判等。去相关后的标量子查询(相关键的 null-safe 等值 join)由 RelDecorrelator 直接产出 IS NOT DISTINCT FROM。
      */
-    private ValueVector nullSafeComparison(RexNode left, RexNode right,
-                                           VectorSchemaRoot input, boolean isNotDistinct) {
+    private ValueVector nullSafeComparison(
+            RexNode left, RexNode right, VectorSchemaRoot input, boolean isNotDistinct) {
         int rows = input.getRowCount();
-        try (ValueVector l = eval(left, input); ValueVector r = eval(right, input)) {
-            BitVector out = new BitVector(
-                    isNotDistinct ? "is_not_distinct_from" : "is_distinct_from", allocator);
+        try (ValueVector l = eval(left, input);
+                ValueVector r = eval(right, input)) {
+            BitVector out =
+                    new BitVector(
+                            isNotDistinct ? "is_not_distinct_from" : "is_distinct_from", allocator);
             out.allocateNew(rows);
             for (int i = 0; i < rows; i++) {
                 boolean lNull = l.isNull(i);
@@ -296,8 +303,9 @@ public class RexInterpreter {
                 } else if (lNull || rNull) {
                     result = !isNotDistinct;
                 } else {
-                    boolean eq = Objects.equals(
-                            RowVectors.readObject(l, i), RowVectors.readObject(r, i));
+                    boolean eq =
+                            Objects.equals(
+                                    RowVectors.readObject(l, i), RowVectors.readObject(r, i));
                     result = isNotDistinct == eq;
                 }
                 out.setSafe(i, result ? 1 : 0);
@@ -308,14 +316,13 @@ public class RexInterpreter {
     }
 
     /**
-     * IS TRUE / IS NOT TRUE / IS FALSE / IS NOT FALSE:非 STRICT 布尔谓词。Calcite 把
-     * `x IS NOT DISTINCT FROM y` 解析期改写为 `IS TRUE(x = y)`(IS DISTINCT FROM 改写为
-     * `IS NOT TRUE(x = y)`),故直接 WHERE 里的 null-safe 比较走这里,而非 nullSafeComparison。
-     * null 操作数按「被测值的反面」处理(IS TRUE/IS FALSE 中 null → false;IS NOT TRUE/IS NOT FALSE
-     * 中 null → true)。
+     * IS TRUE / IS NOT TRUE / IS FALSE / IS NOT FALSE:非 STRICT 布尔谓词。Calcite 把 `x IS NOT DISTINCT
+     * FROM y` 解析期改写为 `IS TRUE(x = y)`(IS DISTINCT FROM 改写为 `IS NOT TRUE(x = y)`),故直接 WHERE 里的
+     * null-safe 比较走这里,而非 nullSafeComparison。 null 操作数按「被测值的反面」处理(IS TRUE/IS FALSE 中 null → false;IS
+     * NOT TRUE/IS NOT FALSE 中 null → true)。
      */
-    private ValueVector booleanTest(RexNode operand, VectorSchemaRoot input,
-                                    boolean testTrue, boolean negate) {
+    private ValueVector booleanTest(
+            RexNode operand, VectorSchemaRoot input, boolean testTrue, boolean negate) {
         int rows = input.getRowCount();
         ValueVector v = eval(operand, input);
         try {
@@ -339,12 +346,12 @@ public class RexInterpreter {
     }
 
     /**
-     * EXTRACT(field FROM expr):operand 0 是 SYMBOL 字面量(TimeUnitRange),operand 1 是
-     * DATE/TIMESTAMP。与 TRIM 同理,SYMBOL 走不了常规字面量向量,从 RexLiteral 直接取。
+     * EXTRACT(field FROM expr):operand 0 是 SYMBOL 字面量(TimeUnitRange),operand 1 是 DATE/TIMESTAMP。与
+     * TRIM 同理,SYMBOL 走不了常规字面量向量,从 RexLiteral 直接取。
      */
     private ValueVector evalExtract(RexCall call, VectorSchemaRoot input) {
-        TimeUnitRange range = ((RexLiteral) call.getOperands().get(0))
-                .getValueAs(TimeUnitRange.class);
+        TimeUnitRange range =
+                ((RexLiteral) call.getOperands().get(0)).getValueAs(TimeUnitRange.class);
         try (ValueVector v = eval(call.getOperands().get(1), input)) {
             int rows = input.getRowCount();
             BigIntVector out = new BigIntVector("extract", allocator);
@@ -383,16 +390,16 @@ public class RexInterpreter {
             case MINUTE -> dt.getMinute();
             case SECOND -> dt.getSecond();
             case MILLISECOND -> dt.get(ChronoField.MILLI_OF_SECOND);
-            default -> throw new UnsupportedOperationException("EXTRACT " + range + " not supported");
+            default ->
+                    throw new UnsupportedOperationException("EXTRACT " + range + " not supported");
         };
     }
 
     /**
-     * SEARCH(input, sarg):判断 input 每行是否落在 Sarg 表示的值集合内。Calcite 1.42 把
-     * `x > a AND x < b` 这类闭合范围谓词经 RexSimplify 折叠成 SEARCH + SARG 字面量,故求值器
-     * 必须能处理(否则 SARG 字面量被当普通 INTEGER 字面量、getValueAs(BigDecimal) 失败)。
-     * NULL 输入按 sarg.nullAs:TRUE/FALSE 返回该值、UNKNOWN 返回 null。数值统一转 BigDecimal
-     * 与 rangeSet 边界比较(与 Calcite 的 RexInterpreter.number 语义一致)。
+     * SEARCH(input, sarg):判断 input 每行是否落在 Sarg 表示的值集合内。Calcite 1.42 把 `x > a AND x < b` 这类闭合范围谓词经
+     * RexSimplify 折叠成 SEARCH + SARG 字面量,故求值器 必须能处理(否则 SARG 字面量被当普通 INTEGER
+     * 字面量、getValueAs(BigDecimal) 失败)。 NULL 输入按 sarg.nullAs:TRUE/FALSE 返回该值、UNKNOWN 返回 null。数值统一转
+     * BigDecimal 与 rangeSet 边界比较(与 Calcite 的 RexInterpreter.number 语义一致)。
      */
     @SuppressWarnings({"rawtypes", "unchecked"})
     private ValueVector search(RexCall call, VectorSchemaRoot input) {
@@ -438,8 +445,10 @@ public class RexInterpreter {
         if (value instanceof BigDecimal bd) {
             return bd;
         }
-        if (value instanceof Byte || value instanceof Short
-                || value instanceof Integer || value instanceof Long) {
+        if (value instanceof Byte
+                || value instanceof Short
+                || value instanceof Integer
+                || value instanceof Long) {
             return BigDecimal.valueOf(((Number) value).longValue());
         }
         if (value instanceof Float || value instanceof Double) {
@@ -451,7 +460,8 @@ public class RexInterpreter {
         return (Comparable<?>) value;
     }
 
-    private ValueVector caseExpr(RexCall call, VectorSchemaRoot input) {        int rows = input.getRowCount();
+    private ValueVector caseExpr(RexCall call, VectorSchemaRoot input) {
+        int rows = input.getRowCount();
         List<RexNode> operands = call.getOperands();
         List<ValueVector> conds = new java.util.ArrayList<>();
         List<ValueVector> thens = new java.util.ArrayList<>();
@@ -465,9 +475,10 @@ public class RexInterpreter {
         // CASE 输出类型:取 plan 类型,但如果 then/else 分支实际是浮点(AVG/STDDEV 提升后),
         // 而 plan 类型是整数,用 Float8Vector 避免截断。
         SqlTypeName outTypeName = call.getType().getSqlTypeName();
-        boolean needFloat = (outTypeName == SqlTypeName.INTEGER
-                || outTypeName == SqlTypeName.BIGINT
-                || outTypeName == SqlTypeName.SMALLINT);
+        boolean needFloat =
+                (outTypeName == SqlTypeName.INTEGER
+                        || outTypeName == SqlTypeName.BIGINT
+                        || outTypeName == SqlTypeName.SMALLINT);
         if (needFloat) {
             boolean anyFloat = isFloatingVector(elseV);
             for (ValueVector t : thens) {
@@ -481,7 +492,8 @@ public class RexInterpreter {
             }
         }
         FieldVector out;
-        if (outTypeName == SqlTypeName.DOUBLE && call.getType().getSqlTypeName() != SqlTypeName.DOUBLE) {
+        if (outTypeName == SqlTypeName.DOUBLE
+                && call.getType().getSqlTypeName() != SqlTypeName.DOUBLE) {
             out = new Float8Vector("case", allocator);
         } else {
             out = newVector(call.getType());
@@ -573,7 +585,8 @@ public class RexInterpreter {
 
     private ValueVector evalCast(RexCall call, VectorSchemaRoot input) {
         try (ValueVector v = eval(call.getOperands().get(0), input)) {
-            ColumnType target = ArrowTypes.fromSqlTypeName(call.getType().getSqlTypeName().getName());
+            ColumnType target =
+                    ArrowTypes.fromSqlTypeName(call.getType().getSqlTypeName().getName());
             int precision = ColumnMeta.PRECISION_UNSET;
             int scale = ColumnMeta.SCALE_UNSET;
             if (target == ColumnType.DECIMAL || target == ColumnType.NUMERIC) {
@@ -595,172 +608,192 @@ public class RexInterpreter {
         }
         switch (typeName) {
             case TINYINT:
-            case INTEGER: {
-                IntVector out = new IntVector("lit", allocator);
-                out.allocateNew(rows);
-                int value = literal.getValueAs(BigDecimal.class).intValue();
-                for (int i = 0; i < rows; i++) {
-                    out.setSafe(i, value);
+            case INTEGER:
+                {
+                    IntVector out = new IntVector("lit", allocator);
+                    out.allocateNew(rows);
+                    int value = literal.getValueAs(BigDecimal.class).intValue();
+                    for (int i = 0; i < rows; i++) {
+                        out.setSafe(i, value);
+                    }
+                    out.setValueCount(rows);
+                    return out;
                 }
-                out.setValueCount(rows);
-                return out;
-            }
-            case SMALLINT: {
-                SmallIntVector out = new SmallIntVector("lit", allocator);
-                out.allocateNew(rows);
-                short value = literal.getValueAs(BigDecimal.class).shortValue();
-                for (int i = 0; i < rows; i++) {
-                    out.setSafe(i, value);
+            case SMALLINT:
+                {
+                    SmallIntVector out = new SmallIntVector("lit", allocator);
+                    out.allocateNew(rows);
+                    short value = literal.getValueAs(BigDecimal.class).shortValue();
+                    for (int i = 0; i < rows; i++) {
+                        out.setSafe(i, value);
+                    }
+                    out.setValueCount(rows);
+                    return out;
                 }
-                out.setValueCount(rows);
-                return out;
-            }
-            case BIGINT: {
-                BigIntVector out = new BigIntVector("lit", allocator);
-                out.allocateNew(rows);
-                long value = literal.getValueAs(BigDecimal.class).longValue();
-                for (int i = 0; i < rows; i++) {
-                    out.setSafe(i, value);
+            case BIGINT:
+                {
+                    BigIntVector out = new BigIntVector("lit", allocator);
+                    out.allocateNew(rows);
+                    long value = literal.getValueAs(BigDecimal.class).longValue();
+                    for (int i = 0; i < rows; i++) {
+                        out.setSafe(i, value);
+                    }
+                    out.setValueCount(rows);
+                    return out;
                 }
-                out.setValueCount(rows);
-                return out;
-            }
             case REAL:
-            case FLOAT: {
-                Float4Vector out = new Float4Vector("lit", allocator);
-                out.allocateNew(rows);
-                float value = literal.getValueAs(BigDecimal.class).floatValue();
-                for (int i = 0; i < rows; i++) {
-                    out.setSafe(i, value);
+            case FLOAT:
+                {
+                    Float4Vector out = new Float4Vector("lit", allocator);
+                    out.allocateNew(rows);
+                    float value = literal.getValueAs(BigDecimal.class).floatValue();
+                    for (int i = 0; i < rows; i++) {
+                        out.setSafe(i, value);
+                    }
+                    out.setValueCount(rows);
+                    return out;
                 }
-                out.setValueCount(rows);
-                return out;
-            }
-            case DOUBLE: {
-                Float8Vector out = new Float8Vector("lit", allocator);
-                out.allocateNew(rows);
-                double value = literal.getValueAs(BigDecimal.class).doubleValue();
-                for (int i = 0; i < rows; i++) {
-                    out.setSafe(i, value);
+            case DOUBLE:
+                {
+                    Float8Vector out = new Float8Vector("lit", allocator);
+                    out.allocateNew(rows);
+                    double value = literal.getValueAs(BigDecimal.class).doubleValue();
+                    for (int i = 0; i < rows; i++) {
+                        out.setSafe(i, value);
+                    }
+                    out.setValueCount(rows);
+                    return out;
                 }
-                out.setValueCount(rows);
-                return out;
-            }
-            case DECIMAL: {
-                // DecimalVector 构造需要 precision/scale,只能经 ArrowTypes.field 从 RelDataType 取。
-                DecimalVector out = (DecimalVector) ArrowTypes.field(literal.getType(), "lit")
-                        .createVector(allocator);
-                out.allocateNew(rows);
-                BigDecimal value = literal.getValueAs(BigDecimal.class);
-                for (int i = 0; i < rows; i++) {
-                    out.setSafe(i, Kernels.scaleTo(out, value));
+            case DECIMAL:
+                {
+                    // DecimalVector 构造需要 precision/scale,只能经 ArrowTypes.field 从 RelDataType 取。
+                    DecimalVector out =
+                            (DecimalVector)
+                                    ArrowTypes.field(literal.getType(), "lit")
+                                            .createVector(allocator);
+                    out.allocateNew(rows);
+                    BigDecimal value = literal.getValueAs(BigDecimal.class);
+                    for (int i = 0; i < rows; i++) {
+                        out.setSafe(i, Kernels.scaleTo(out, value));
+                    }
+                    out.setValueCount(rows);
+                    return out;
                 }
-                out.setValueCount(rows);
-                return out;
-            }
             case CHAR:
-            case VARCHAR: {
-                VarCharVector out = new VarCharVector("lit", allocator);
-                out.allocateNew();
-                byte[] bytes = literal.getValueAs(String.class)
-                        .getBytes(StandardCharsets.UTF_8);
-                for (int i = 0; i < rows; i++) {
-                    out.setSafe(i, bytes);
+            case VARCHAR:
+                {
+                    VarCharVector out = new VarCharVector("lit", allocator);
+                    out.allocateNew();
+                    byte[] bytes =
+                            literal.getValueAs(String.class).getBytes(StandardCharsets.UTF_8);
+                    for (int i = 0; i < rows; i++) {
+                        out.setSafe(i, bytes);
+                    }
+                    out.setValueCount(rows);
+                    return out;
                 }
-                out.setValueCount(rows);
-                return out;
-            }
-            case BOOLEAN: {
-                BitVector out = new BitVector("lit", allocator);
-                out.allocateNew(rows);
-                boolean value = Boolean.TRUE.equals(literal.getValueAs(Boolean.class));
-                for (int i = 0; i < rows; i++) {
-                    out.setSafe(i, value ? 1 : 0);
+            case BOOLEAN:
+                {
+                    BitVector out = new BitVector("lit", allocator);
+                    out.allocateNew(rows);
+                    boolean value = Boolean.TRUE.equals(literal.getValueAs(Boolean.class));
+                    for (int i = 0; i < rows; i++) {
+                        out.setSafe(i, value ? 1 : 0);
+                    }
+                    out.setValueCount(rows);
+                    return out;
                 }
-                out.setValueCount(rows);
-                return out;
-            }
-            case DATE: {
-                DateDayVector out = new DateDayVector("lit", allocator);
-                out.allocateNew(rows);
-                Calendar cal = literal.getValueAs(Calendar.class);
-                int days = (int) TimeUnit.MILLISECONDS.toDays(cal.getTimeInMillis());
-                for (int i = 0; i < rows; i++) {
-                    out.setSafe(i, days);
+            case DATE:
+                {
+                    DateDayVector out = new DateDayVector("lit", allocator);
+                    out.allocateNew(rows);
+                    Calendar cal = literal.getValueAs(Calendar.class);
+                    int days = (int) TimeUnit.MILLISECONDS.toDays(cal.getTimeInMillis());
+                    for (int i = 0; i < rows; i++) {
+                        out.setSafe(i, days);
+                    }
+                    out.setValueCount(rows);
+                    return out;
                 }
-                out.setValueCount(rows);
-                return out;
-            }
-            case TIME: {
-                TimeMilliVector out = new TimeMilliVector("lit", allocator);
-                out.allocateNew(rows);
-                Calendar cal = literal.getValueAs(Calendar.class);
-                int millis = (int) (cal.get(Calendar.HOUR_OF_DAY) * 3_600_000L
-                        + cal.get(Calendar.MINUTE) * 60_000L
-                        + cal.get(Calendar.SECOND) * 1_000L
-                        + cal.get(Calendar.MILLISECOND));
-                for (int i = 0; i < rows; i++) {
-                    out.setSafe(i, millis);
+            case TIME:
+                {
+                    TimeMilliVector out = new TimeMilliVector("lit", allocator);
+                    out.allocateNew(rows);
+                    Calendar cal = literal.getValueAs(Calendar.class);
+                    int millis =
+                            (int)
+                                    (cal.get(Calendar.HOUR_OF_DAY) * 3_600_000L
+                                            + cal.get(Calendar.MINUTE) * 60_000L
+                                            + cal.get(Calendar.SECOND) * 1_000L
+                                            + cal.get(Calendar.MILLISECOND));
+                    for (int i = 0; i < rows; i++) {
+                        out.setSafe(i, millis);
+                    }
+                    out.setValueCount(rows);
+                    return out;
                 }
-                out.setValueCount(rows);
-                return out;
-            }
-            case TIMESTAMP: {
-                TimeStampMilliVector out = new TimeStampMilliVector("lit", allocator);
-                out.allocateNew(rows);
-                Calendar cal = literal.getValueAs(Calendar.class);
-                long millis = cal.getTimeInMillis();
-                for (int i = 0; i < rows; i++) {
-                    out.setSafe(i, millis);
+            case TIMESTAMP:
+                {
+                    TimeStampMilliVector out = new TimeStampMilliVector("lit", allocator);
+                    out.allocateNew(rows);
+                    Calendar cal = literal.getValueAs(Calendar.class);
+                    long millis = cal.getTimeInMillis();
+                    for (int i = 0; i < rows; i++) {
+                        out.setSafe(i, millis);
+                    }
+                    out.setValueCount(rows);
+                    return out;
                 }
-                out.setValueCount(rows);
-                return out;
-            }
             case BINARY:
-            case VARBINARY: {
-                VarBinaryVector out = new VarBinaryVector("lit", allocator);
-                out.allocateNew();
-                byte[] bytes = literalBytes(literal);
-                for (int i = 0; i < rows; i++) {
-                    out.setSafe(i, bytes);
+            case VARBINARY:
+                {
+                    VarBinaryVector out = new VarBinaryVector("lit", allocator);
+                    out.allocateNew();
+                    byte[] bytes = literalBytes(literal);
+                    for (int i = 0; i < rows; i++) {
+                        out.setSafe(i, bytes);
+                    }
+                    out.setValueCount(rows);
+                    return out;
                 }
-                out.setValueCount(rows);
-                return out;
-            }
             default:
-                throw new UnsupportedOperationException(
-                        "unsupported literal type: " + typeName);
+                throw new UnsupportedOperationException("unsupported literal type: " + typeName);
         }
     }
 
     private ValueVector nullLiteral(RelDataType type, int rows) {
         SqlTypeName typeName = type.getSqlTypeName();
-        ValueVector out = switch (typeName) {
-            case TINYINT, INTEGER -> new IntVector("lit", allocator);
-            case SMALLINT -> new SmallIntVector("lit", allocator);
-            case BIGINT -> new BigIntVector("lit", allocator);
-            case REAL, FLOAT -> new Float4Vector("lit", allocator);
-            case DOUBLE -> new Float8Vector("lit", allocator);
-            case DECIMAL ->
-                // DecimalVector 构造需要 precision/scale,经 ArrowTypes.field 从 RelDataType 取。
-                    ArrowTypes.field(type, "lit").createVector(allocator);
-            case CHAR, VARCHAR -> new VarCharVector("lit", allocator);
-            case BOOLEAN -> new BitVector("lit", allocator);
-            case DATE -> new DateDayVector("lit", allocator);
-            case TIME -> new TimeMilliVector("lit", allocator);
-            case TIMESTAMP -> new TimeStampMilliVector("lit", allocator);
-            case BINARY, VARBINARY -> new VarBinaryVector("lit", allocator);
-            default -> throw new UnsupportedOperationException(
-                    "unsupported literal type: " + typeName);
-        };
+        ValueVector out =
+                switch (typeName) {
+                    case TINYINT, INTEGER -> new IntVector("lit", allocator);
+                    case SMALLINT -> new SmallIntVector("lit", allocator);
+                    case BIGINT -> new BigIntVector("lit", allocator);
+                    case REAL, FLOAT -> new Float4Vector("lit", allocator);
+                    case DOUBLE -> new Float8Vector("lit", allocator);
+                    case DECIMAL ->
+                            // DecimalVector 构造需要 precision/scale,经 ArrowTypes.field 从 RelDataType
+                            // 取。
+                            ArrowTypes.field(type, "lit").createVector(allocator);
+                    case CHAR, VARCHAR -> new VarCharVector("lit", allocator);
+                    case BOOLEAN -> new BitVector("lit", allocator);
+                    case DATE -> new DateDayVector("lit", allocator);
+                    case TIME -> new TimeMilliVector("lit", allocator);
+                    case TIMESTAMP -> new TimeStampMilliVector("lit", allocator);
+                    case BINARY, VARBINARY -> new VarBinaryVector("lit", allocator);
+                    default ->
+                            throw new UnsupportedOperationException(
+                                    "unsupported literal type: " + typeName);
+                };
         out.setInitialCapacity(rows);
         out.allocateNew();
         out.setValueCount(rows); // all null by default
         return out;
     }
 
-    /** BINARY/VARBINARY 字面量的字节值:Calcite 1.42 把 `X'...'`/`B'...'` 存为 ByteString,
-     * 旧版本可能存 byte[] 或 BitString,三者都兼容。 */
+    /**
+     * BINARY/VARBINARY 字面量的字节值:Calcite 1.42 把 `X'...'`/`B'...'` 存为 ByteString, 旧版本可能存 byte[] 或
+     * BitString,三者都兼容。
+     */
     private static byte[] literalBytes(RexLiteral literal) {
         Object raw = literal.getValue();
         if (raw instanceof ByteString byteString) {

@@ -4,14 +4,16 @@ import com.minidb.protocol.Message;
 import com.minidb.server.catalog.MiniDbCatalog;
 import com.minidb.server.exec.MetadataExecutor;
 import com.minidb.server.exec.QueryExecutor;
-import com.minidb.server.storage.StorageManager;
 import com.minidb.server.stats.StatsManager;
-import io.netty.channel.embedded.EmbeddedChannel;
-import java.nio.file.Path;
+import com.minidb.server.storage.StorageManager;
+
 import com.google.common.util.concurrent.MoreExecutors;
+import io.netty.channel.embedded.EmbeddedChannel;
 import org.apache.arrow.memory.RootAllocator;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
+
+import java.nio.file.Path;
 
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
@@ -24,12 +26,15 @@ class SessionHandlerSchemaTest {
         StorageManager storage = new StorageManager(catalog, allocator, dir);
         StatsManager stats = new StatsManager(storage);
         QueryExecutor executor = new QueryExecutor(catalog, storage, allocator, stats);
-        EmbeddedChannel ch = new EmbeddedChannel(
-                new SessionHandler(executor, new MetadataExecutor(catalog, allocator), MoreExecutors.newDirectExecutorService()));
+        EmbeddedChannel ch =
+                new EmbeddedChannel(
+                        new SessionHandler(
+                                executor,
+                                new MetadataExecutor(catalog, allocator),
+                                MoreExecutors.newDirectExecutorService()));
         try {
             ch.writeInbound(new Message.ExecuteRequest(1, "CREATE SCHEMA other"));
-            ch.writeInbound(new Message.ExecuteRequest(2,
-                    "CREATE TABLE other.t (id INTEGER)"));
+            ch.writeInbound(new Message.ExecuteRequest(2, "CREATE TABLE other.t (id INTEGER)"));
             // USE SCHEMA other → UpdateCount, switches this channel's schema
             ch.writeInbound(new Message.ExecuteRequest(3, "USE SCHEMA other"));
             Object out3 = ch.outboundMessages().poll();
@@ -51,8 +56,12 @@ class SessionHandlerSchemaTest {
         StorageManager storage = new StorageManager(catalog, allocator, dir);
         StatsManager stats = new StatsManager(storage);
         QueryExecutor executor = new QueryExecutor(catalog, storage, allocator, stats);
-        EmbeddedChannel ch = new EmbeddedChannel(
-                new SessionHandler(executor, new MetadataExecutor(catalog, allocator), MoreExecutors.newDirectExecutorService()));
+        EmbeddedChannel ch =
+                new EmbeddedChannel(
+                        new SessionHandler(
+                                executor,
+                                new MetadataExecutor(catalog, allocator),
+                                MoreExecutors.newDirectExecutorService()));
         try {
             ch.writeInbound(new Message.ExecuteRequest(1, "USE SCHEMA ghost"));
             Object out = ch.outboundMessages().poll();

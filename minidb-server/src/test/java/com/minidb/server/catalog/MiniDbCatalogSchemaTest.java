@@ -1,10 +1,12 @@
 package com.minidb.server.catalog;
-import com.minidb.storage.common.ColumnType;
+
 import com.minidb.storage.common.ColumnMeta;
+import com.minidb.storage.common.ColumnType;
 import com.minidb.storage.common.TableSchema;
 
-import java.util.List;
 import org.junit.jupiter.api.Test;
+
+import java.util.List;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
@@ -14,8 +16,7 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
 class MiniDbCatalogSchemaTest {
 
     private TableSchema table(String schema, String name) {
-        return new TableSchema(schema, name, List.of(
-                new ColumnMeta("id", ColumnType.INTEGER)));
+        return new TableSchema(schema, name, List.of(new ColumnMeta("id", ColumnType.INTEGER)));
     }
 
     @Test
@@ -35,8 +36,7 @@ class MiniDbCatalogSchemaTest {
     void createDuplicateSchemaThrows() {
         MiniDbCatalog catalog = new MiniDbCatalog();
         catalog.createSchema("other");
-        assertThrows(IllegalArgumentException.class,
-                () -> catalog.createSchema("other"));
+        assertThrows(IllegalArgumentException.class, () -> catalog.createSchema("other"));
     }
 
     @Test
@@ -69,8 +69,8 @@ class MiniDbCatalogSchemaTest {
     @Test
     void createTableInMissingSchemaThrows() {
         MiniDbCatalog catalog = new MiniDbCatalog();
-        assertThrows(IllegalArgumentException.class,
-                () -> catalog.createTable(table("ghost", "t")));
+        assertThrows(
+                IllegalArgumentException.class, () -> catalog.createTable(table("ghost", "t")));
     }
 
     @Test
@@ -93,7 +93,8 @@ class MiniDbCatalogSchemaTest {
     @Test
     void dropInformationSchemaThrows() {
         MiniDbCatalog catalog = new MiniDbCatalog();
-        assertThrows(IllegalArgumentException.class, () -> catalog.dropSchema("information_schema"));
+        assertThrows(
+                IllegalArgumentException.class, () -> catalog.dropSchema("information_schema"));
     }
 
     @Test
@@ -105,8 +106,8 @@ class MiniDbCatalogSchemaTest {
     @Test
     void legacyPublicDelegatesStillWork() {
         MiniDbCatalog catalog = new MiniDbCatalog();
-        catalog.createTable(new TableSchema("t", List.of(
-                new ColumnMeta("id", ColumnType.INTEGER))));
+        catalog.createTable(
+                new TableSchema("t", List.of(new ColumnMeta("id", ColumnType.INTEGER))));
         assertTrue(catalog.hasTable("public", "t"));
         assertEquals("public", catalog.getTable("public", "t").schemaName());
         assertEquals(1, catalog.tableNames("public").size());

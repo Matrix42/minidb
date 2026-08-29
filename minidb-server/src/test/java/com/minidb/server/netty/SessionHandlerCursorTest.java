@@ -1,22 +1,16 @@
 package com.minidb.server.netty;
 
-import static org.junit.jupiter.api.Assertions.assertEquals;
-import static org.junit.jupiter.api.Assertions.assertFalse;
-import static org.junit.jupiter.api.Assertions.assertNull;
-import static org.junit.jupiter.api.Assertions.assertTrue;
-
 import com.minidb.protocol.Message;
 import com.minidb.server.catalog.MiniDbCatalog;
 import com.minidb.server.exec.MetadataExecutor;
 import com.minidb.server.exec.QueryExecutor;
-import com.minidb.server.storage.StorageManager;
 import com.minidb.server.stats.StatsManager;
+import com.minidb.server.storage.StorageManager;
+
+import com.google.common.util.concurrent.MoreExecutors;
 import io.netty.buffer.ByteBuf;
 import io.netty.buffer.ByteBufInputStream;
 import io.netty.channel.embedded.EmbeddedChannel;
-import java.nio.channels.Channels;
-import java.nio.file.Path;
-import com.google.common.util.concurrent.MoreExecutors;
 import org.apache.arrow.memory.BufferAllocator;
 import org.apache.arrow.memory.RootAllocator;
 import org.apache.arrow.vector.ipc.ArrowStreamReader;
@@ -26,20 +20,33 @@ import org.apache.arrow.vector.ipc.message.MessageSerializer;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
 
+import java.nio.channels.Channels;
+import java.nio.file.Path;
+
+import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertFalse;
+import static org.junit.jupiter.api.Assertions.assertNull;
+import static org.junit.jupiter.api.Assertions.assertTrue;
+
 class SessionHandlerCursorTest {
 
     private static int rowCount(ByteBuf data, BufferAllocator allocator) throws Exception {
-        try (ArrowStreamReader reader = new ArrowStreamReader(
-                new ByteBufInputStream(data), allocator)) {
+        try (ArrowStreamReader reader =
+                new ArrowStreamReader(new ByteBufInputStream(data), allocator)) {
             reader.loadNextBatch();
             return reader.getVectorSchemaRoot().getRowCount();
         }
     }
 
-    /** 分页续批(仅 record-batch message,无 schema/stream 头)必须用 deserializeRecordBatch 解码,不能用 ArrowStreamReader。 */
+    /**
+     * 分页续批(仅 record-batch message,无 schema/stream 头)必须用 deserializeRecordBatch 解码,不能用
+     * ArrowStreamReader。
+     */
     private static int recordCount(ByteBuf data, BufferAllocator allocator) throws Exception {
-        try (ReadChannel channel = new ReadChannel(Channels.newChannel(new ByteBufInputStream(data)))) {
-            try (ArrowRecordBatch batch = MessageSerializer.deserializeRecordBatch(channel, allocator)) {
+        try (ReadChannel channel =
+                new ReadChannel(Channels.newChannel(new ByteBufInputStream(data)))) {
+            try (ArrowRecordBatch batch =
+                    MessageSerializer.deserializeRecordBatch(channel, allocator)) {
                 return batch.getLength();
             }
         }
@@ -52,8 +59,12 @@ class SessionHandlerCursorTest {
         StorageManager storage = new StorageManager(catalog, allocator, dir);
         StatsManager stats = new StatsManager(storage);
         QueryExecutor executor = new QueryExecutor(catalog, storage, allocator, stats);
-        EmbeddedChannel ch = new EmbeddedChannel(
-                new SessionHandler(executor, new MetadataExecutor(catalog, allocator), MoreExecutors.newDirectExecutorService()));
+        EmbeddedChannel ch =
+                new EmbeddedChannel(
+                        new SessionHandler(
+                                executor,
+                                new MetadataExecutor(catalog, allocator),
+                                MoreExecutors.newDirectExecutorService()));
         try {
             ch.writeInbound(new Message.ExecuteRequest(1, "CREATE TABLE t (id INTEGER)"));
             ch.outboundMessages().poll(); // UpdateCount
@@ -69,7 +80,8 @@ class SessionHandlerCursorTest {
 
             ch.writeInbound(new Message.FetchRequest(10, 3, 2));
             // 分页续批是 ArrowContinuation(仅 record-batch message,无 schema)
-            Message.ArrowContinuation second = (Message.ArrowContinuation) ch.outboundMessages().poll();
+            Message.ArrowContinuation second =
+                    (Message.ArrowContinuation) ch.outboundMessages().poll();
             assertEquals(10, second.requestId());
             assertEquals(3, second.cursorId());
             assertTrue(second.lastBatch());
@@ -97,8 +109,12 @@ class SessionHandlerCursorTest {
         StorageManager storage = new StorageManager(catalog, allocator, dir);
         StatsManager stats = new StatsManager(storage);
         QueryExecutor executor = new QueryExecutor(catalog, storage, allocator, stats);
-        EmbeddedChannel ch = new EmbeddedChannel(
-                new SessionHandler(executor, new MetadataExecutor(catalog, allocator), MoreExecutors.newDirectExecutorService()));
+        EmbeddedChannel ch =
+                new EmbeddedChannel(
+                        new SessionHandler(
+                                executor,
+                                new MetadataExecutor(catalog, allocator),
+                                MoreExecutors.newDirectExecutorService()));
         try {
             ch.writeInbound(new Message.ExecuteRequest(1, "CREATE TABLE t (id INTEGER)"));
             ch.outboundMessages().poll(); // UpdateCount

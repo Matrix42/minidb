@@ -3,7 +3,7 @@ package com.minidb.server.exec;
 import com.minidb.server.catalog.MiniDbCatalog;
 import com.minidb.server.stats.StatsManager;
 import com.minidb.server.storage.StorageManager;
-import java.nio.file.Path;
+
 import org.apache.arrow.memory.BufferAllocator;
 import org.apache.arrow.memory.RootAllocator;
 import org.apache.arrow.vector.BigIntVector;
@@ -15,13 +15,14 @@ import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
 
+import java.nio.file.Path;
+
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
 
 class DateTimeFunctionTest {
 
-    @TempDir
-    Path dataDir;
+    @TempDir Path dataDir;
     BufferAllocator allocator;
     MiniDbCatalog catalog;
     StorageManager storage;
@@ -46,8 +47,10 @@ class DateTimeFunctionTest {
     }
 
     private long extract(String expr) {
-        VectorSchemaRoot root = ((QueryResult.Rows) executor.execute(
-                "SELECT " + expr + " AS v FROM t WHERE id = 1")).data();
+        VectorSchemaRoot root =
+                ((QueryResult.Rows)
+                                executor.execute("SELECT " + expr + " AS v FROM t WHERE id = 1"))
+                        .data();
         long v = ((BigIntVector) root.getVector("v")).get(0);
         root.close();
         return v;
@@ -70,8 +73,9 @@ class DateTimeFunctionTest {
 
     @Test
     void currentDate() {
-        VectorSchemaRoot root = ((QueryResult.Rows) executor.execute(
-                "SELECT CURRENT_DATE FROM t WHERE id = 1")).data();
+        VectorSchemaRoot root =
+                ((QueryResult.Rows) executor.execute("SELECT CURRENT_DATE FROM t WHERE id = 1"))
+                        .data();
         DateDayVector d = (DateDayVector) root.getVector(0);
         assertFalse(d.isNull(0));
         root.close();
@@ -79,8 +83,10 @@ class DateTimeFunctionTest {
 
     @Test
     void currentTimestamp() {
-        VectorSchemaRoot root = ((QueryResult.Rows) executor.execute(
-                "SELECT CURRENT_TIMESTAMP FROM t WHERE id = 1")).data();
+        VectorSchemaRoot root =
+                ((QueryResult.Rows)
+                                executor.execute("SELECT CURRENT_TIMESTAMP FROM t WHERE id = 1"))
+                        .data();
         TimeStampMilliVector ts = (TimeStampMilliVector) root.getVector(0);
         assertFalse(ts.isNull(0));
         root.close();

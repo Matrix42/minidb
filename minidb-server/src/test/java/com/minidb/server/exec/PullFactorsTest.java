@@ -5,11 +5,9 @@ import com.minidb.server.plan.Planner;
 import com.minidb.server.plan.physical.MiniDbHashJoin;
 import com.minidb.server.plan.physical.MiniDbJoin;
 import com.minidb.server.plan.physical.MiniDbNestedLoopJoin;
-import com.minidb.server.storage.StorageManager;
 import com.minidb.server.stats.StatsManager;
-import java.nio.file.Path;
-import java.util.ArrayList;
-import java.util.List;
+import com.minidb.server.storage.StorageManager;
+
 import org.apache.arrow.memory.BufferAllocator;
 import org.apache.arrow.memory.RootAllocator;
 import org.apache.arrow.vector.VectorSchemaRoot;
@@ -19,17 +17,20 @@ import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
 
+import java.nio.file.Path;
+import java.util.ArrayList;
+import java.util.List;
+
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 /**
- * FilterPullFactorsRule / JoinPullFactorsRule:把 OR 里公共等值键因子化到顶层 AND,
- * 让 JoinInfo 能抽成 HashJoin 键,而不是整体退化成交叉连接(query13 的回归)。
+ * FilterPullFactorsRule / JoinPullFactorsRule:把 OR 里公共等值键因子化到顶层 AND, 让 JoinInfo 能抽成 HashJoin
+ * 键,而不是整体退化成交叉连接(query13 的回归)。
  */
 class PullFactorsTest {
 
-    @TempDir
-    Path dataDir;
+    @TempDir Path dataDir;
     BufferAllocator allocator;
     MiniDbCatalog catalog;
     StorageManager storage;
@@ -58,9 +59,11 @@ class PullFactorsTest {
     void factorOrPreservesSemantics() {
         // (a.x=b.x AND a.y=10) OR (a.x=b.x AND a.y=20) 等价于 a.x=b.x AND a.y IN (10,20)。
         // a: (1,10),(2,20),(3,30); b.x: 1,2 -> 结果 (1,100),(2,200)。
-        VectorSchemaRoot root = rows("SELECT a.x, b.y FROM a JOIN b ON"
-                + " (a.x = b.x AND a.y = 10) OR (a.x = b.x AND a.y = 20)"
-                + " ORDER BY a.x");
+        VectorSchemaRoot root =
+                rows(
+                        "SELECT a.x, b.y FROM a JOIN b ON"
+                                + " (a.x = b.x AND a.y = 10) OR (a.x = b.x AND a.y = 20)"
+                                + " ORDER BY a.x");
         try {
             assertEquals(2, root.getRowCount());
             assertEquals(1, root.getVector("x").getObject(0));
@@ -76,13 +79,17 @@ class PullFactorsTest {
     void factorOrWhereClauseProducesHashJoinNotNestedLoop() {
         // WHERE 子句的 OR 先经 FilterPullFactorsRule 因子化,再由 FilterIntoJoinRule
         // 把等值键下推成 HashJoin 键、单表残留下推成表过滤(query13 的模式)。
-        RelNode plan = new Planner(catalog).plan(
-                "SELECT a.x FROM a, b WHERE (a.x = b.x AND a.y = 10) OR (a.x = b.x AND a.y = 20)");
+        RelNode plan =
+                new Planner(catalog)
+                        .plan(
+                                "SELECT a.x FROM a, b WHERE (a.x = b.x AND a.y = 10) OR (a.x = b.x AND a.y = 20)");
         List<MiniDbJoin> joins = new ArrayList<>();
         collectJoins(plan, joins);
-        assertTrue(joins.stream().anyMatch(j -> j instanceof MiniDbHashJoin),
+        assertTrue(
+                joins.stream().anyMatch(j -> j instanceof MiniDbHashJoin),
                 "expected a HashJoin (equijoin factored out), got " + joins);
-        assertTrue(joins.stream().noneMatch(j -> j instanceof MiniDbNestedLoopJoin),
+        assertTrue(
+                joins.stream().noneMatch(j -> j instanceof MiniDbNestedLoopJoin),
                 "expected no NestedLoopJoin (cartesian), got " + joins);
     }
 

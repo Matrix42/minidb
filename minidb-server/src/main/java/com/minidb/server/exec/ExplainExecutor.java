@@ -1,6 +1,7 @@
 package com.minidb.server.exec;
-import com.minidb.storage.common.BatchIterator;
 
+import com.minidb.server.catalog.MiniDbCatalog;
+import com.minidb.server.plan.Planner;
 import com.minidb.server.plan.physical.MiniDbAggregate;
 import com.minidb.server.plan.physical.MiniDbCalc;
 import com.minidb.server.plan.physical.MiniDbFilter;
@@ -13,20 +14,14 @@ import com.minidb.server.plan.physical.MiniDbSetOp;
 import com.minidb.server.plan.physical.MiniDbSort;
 import com.minidb.server.plan.physical.MiniDbUnion;
 import com.minidb.server.plan.physical.MiniDbValues;
-import com.minidb.server.plan.Planner;
-import com.minidb.server.catalog.MiniDbCatalog;
 import com.minidb.server.stats.Histogram;
 import com.minidb.server.stats.StatsEstimator;
 import com.minidb.server.stats.StatsManager;
 import com.minidb.server.stats.TableStats;
-import com.minidb.storage.common.TableHandle;
 import com.minidb.server.storage.StorageManager;
-import java.math.BigDecimal;
-import java.util.ArrayList;
-import java.util.IdentityHashMap;
-import java.util.List;
-import java.util.Locale;
-import java.util.Map;
+import com.minidb.storage.common.BatchIterator;
+import com.minidb.storage.common.TableHandle;
+
 import org.apache.arrow.memory.BufferAllocator;
 import org.apache.arrow.vector.BigIntVector;
 import org.apache.arrow.vector.FieldVector;
@@ -41,6 +36,13 @@ import org.apache.calcite.rex.RexLiteral;
 import org.apache.calcite.rex.RexLocalRef;
 import org.apache.calcite.rex.RexNode;
 
+import java.math.BigDecimal;
+import java.util.ArrayList;
+import java.util.IdentityHashMap;
+import java.util.List;
+import java.util.Locale;
+import java.util.Map;
+
 public class ExplainExecutor {
 
     private final Planner planner;
@@ -48,8 +50,11 @@ public class ExplainExecutor {
     private final StorageManager storage;
     private final BufferAllocator allocator;
 
-    public ExplainExecutor(Planner planner, StatsManager stats,
-                           StorageManager storage, BufferAllocator allocator) {
+    public ExplainExecutor(
+            Planner planner,
+            StatsManager stats,
+            StorageManager storage,
+            BufferAllocator allocator) {
         this.planner = planner;
         this.stats = stats;
         this.storage = storage;
@@ -98,8 +103,8 @@ public class ExplainExecutor {
         return new QueryResult.Rows(buildRoot(rows));
     }
 
-    private void analyzeRows(RelNode node, Integer parentId, List<Row> out,
-                             Map<RelNode, NodeStats> sink) {
+    private void analyzeRows(
+            RelNode node, Integer parentId, List<Row> out, Map<RelNode, NodeStats> sink) {
         // Trivial Project nodes (added by Calcite for column selection) are
         // collapsed into their parent to keep the ANALYZE tree consistent
         // with the EXPLAIN tree (see planRows). Window projects are NOT
@@ -162,8 +167,7 @@ public class ExplainExecutor {
 
     private static boolean isIdentity(List<? extends RexNode> projects) {
         for (int i = 0; i < projects.size(); i++) {
-            if (!(projects.get(i) instanceof RexInputRef ref)
-                    || ref.getIndex() != i) {
+            if (!(projects.get(i) instanceof RexInputRef ref) || ref.getIndex() != i) {
                 return false;
             }
         }
@@ -266,8 +270,8 @@ public class ExplainExecutor {
                 return new Est(sum, null, null);
             }
             Long distinct = firstColumnDistinct(union, currentSchema);
-            long est = distinct == null ? Math.max(1, sum / 2)
-                    : Math.min(sum, Math.max(1, distinct));
+            long est =
+                    distinct == null ? Math.max(1, sum / 2) : Math.min(sum, Math.max(1, distinct));
             return new Est(est, null, "estimated");
         }
         if (node instanceof MiniDbSetOp setOp) {
@@ -301,8 +305,7 @@ public class ExplainExecutor {
             return null;
         }
         TableHandle arrowTable = storage.getTable(st[0], st[1]);
-        List<com.minidb.storage.common.ColumnMeta> columns =
-                arrowTable.schema().columns();
+        List<com.minidb.storage.common.ColumnMeta> columns = arrowTable.schema().columns();
         if (firstCol < 0 || firstCol >= columns.size()) {
             return null;
         }
@@ -321,8 +324,7 @@ public class ExplainExecutor {
             return null;
         }
         TableHandle arrowTable = storage.getTable(st[0], st[1]);
-        List<com.minidb.storage.common.ColumnMeta> columns =
-                arrowTable.schema().columns();
+        List<com.minidb.storage.common.ColumnMeta> columns = arrowTable.schema().columns();
         if (columns.isEmpty()) {
             return null;
         }
@@ -341,8 +343,7 @@ public class ExplainExecutor {
         return r == null ? 0L : r;
     }
 
-    private record Sel(double selectivity, String remarks) {
-    }
+    private record Sel(double selectivity, String remarks) {}
 
     private Sel filterSelectivity(RexNode cond, RelNode node, String currentSchema) {
         String[] st = scanTableOf(node, currentSchema);
@@ -356,8 +357,9 @@ public class ExplainExecutor {
         if (ts.stale()) {
             return new Sel(Histogram.DEFAULT_SELECTIVITY, "stats stale");
         }
-        Histogram h = StatsEstimator.histogramForCondition(
-                cond, storage.getTable(st[0], st[1]).schema(), ts);
+        Histogram h =
+                StatsEstimator.histogramForCondition(
+                        cond, storage.getTable(st[0], st[1]).schema(), ts);
         if (h == null) {
             return new Sel(Histogram.DEFAULT_SELECTIVITY, "default selectivity");
         }
@@ -382,7 +384,7 @@ public class ExplainExecutor {
         List<String> q = scan.getTable().getQualifiedName();
         String table = q.get(q.size() - 1);
         String schema = q.size() >= 3 ? q.get(q.size() - 2) : currentSchema;
-        return new String[]{schema, table};
+        return new String[] {schema, table};
     }
 
     private static int literalInt(RexNode node, int defaultValue) {
@@ -400,7 +402,8 @@ public class ExplainExecutor {
         IntVector batches = new IntVector("batches", allocator);
         Float8Vector elapsed = new Float8Vector("elapsed_ms", allocator);
         VarCharVector remarks = new VarCharVector("remarks", allocator);
-        List<FieldVector> vectors = List.of(id, parentId, operation, rowVec, batches, elapsed, remarks);
+        List<FieldVector> vectors =
+                List.of(id, parentId, operation, rowVec, batches, elapsed, remarks);
         int n = rows.size();
         for (FieldVector v : vectors) {
             v.setInitialCapacity(n);
@@ -449,10 +452,14 @@ public class ExplainExecutor {
         }
     }
 
-    private record Row(Integer id, Integer parentId, String operation,
-                       Long rows, Integer batches, Double elapsedMs, String remarks) {
-    }
+    private record Row(
+            Integer id,
+            Integer parentId,
+            String operation,
+            Long rows,
+            Integer batches,
+            Double elapsedMs,
+            String remarks) {}
 
-    private record Est(Long rows, Integer batches, String remarks) {
-    }
+    private record Est(Long rows, Integer batches, String remarks) {}
 }

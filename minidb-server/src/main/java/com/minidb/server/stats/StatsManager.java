@@ -1,19 +1,21 @@
 package com.minidb.server.stats;
 
-import com.minidb.storage.common.ColumnType;
 import com.minidb.server.catalog.InformationSchemaCatalog;
 import com.minidb.server.catalog.MiniDbCatalog;
-import com.minidb.storage.common.TableSchema;
-import com.minidb.storage.common.BatchIterator;
-import com.minidb.storage.common.TableHandle;
 import com.minidb.server.storage.StorageManager;
+import com.minidb.storage.common.BatchIterator;
+import com.minidb.storage.common.ColumnType;
+import com.minidb.storage.common.TableHandle;
+import com.minidb.storage.common.TableSchema;
+
+import org.apache.arrow.vector.ValueVector;
+import org.apache.arrow.vector.VectorSchemaRoot;
+
 import java.util.ArrayList;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Locale;
 import java.util.Map;
-import org.apache.arrow.vector.ValueVector;
-import org.apache.arrow.vector.VectorSchemaRoot;
 
 public class StatsManager implements AutoCloseable {
 
@@ -48,12 +50,16 @@ public class StatsManager implements AutoCloseable {
             for (int col = 0; col < numCols; col++) {
                 String colName = schema.columns().get(col).name();
                 ColumnType colType = schema.columns().get(col).type();
-                columnHistograms.put(colName.toLowerCase(Locale.ROOT),
+                columnHistograms.put(
+                        colName.toLowerCase(Locale.ROOT),
                         HistogramBuilder.build(allColumnVectors.get(col), colType));
             }
         }
-        storage.catalog().setStats(st[0], st[1],
-                new TableStats(columnHistograms, arrowTable.rowCount(), false));
+        storage.catalog()
+                .setStats(
+                        st[0],
+                        st[1],
+                        new TableStats(columnHistograms, arrowTable.rowCount(), false));
     }
 
     public void analyzeAll() {
@@ -73,13 +79,14 @@ public class StatsManager implements AutoCloseable {
         return storage.catalog().getStats(st[0], st[1]);
     }
 
-    @Override public void close() {}
+    @Override
+    public void close() {}
 
     private static String[] split(String table, String defaultSchema) {
         int dot = table.indexOf('.');
         if (dot >= 0) {
-            return new String[]{table.substring(0, dot), table.substring(dot + 1)};
+            return new String[] {table.substring(0, dot), table.substring(dot + 1)};
         }
-        return new String[]{defaultSchema, table};
+        return new String[] {defaultSchema, table};
     }
 }

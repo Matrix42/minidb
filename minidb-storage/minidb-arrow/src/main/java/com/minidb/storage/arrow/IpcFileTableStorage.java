@@ -1,6 +1,7 @@
 package com.minidb.storage.arrow;
 
 import com.minidb.storage.common.TableStorage;
+
 import java.io.IOException;
 import java.io.UncheckedIOException;
 import java.nio.file.DirectoryStream;
@@ -11,8 +12,8 @@ import java.util.List;
 import java.util.Locale;
 
 /**
- * Arrow IPC 文件存储引擎:每表一个目录 {@code data/<schema>/<table>/},目录(可嵌套)里是
- * part 文件(.arrow)。part 读写由 {@link ArrowTable} 负责,本类只管目录定位与删除。
+ * Arrow IPC 文件存储引擎:每表一个目录 {@code data/<schema>/<table>/},目录(可嵌套)里是 part 文件(.arrow)。part 读写由 {@link
+ * ArrowTable} 负责,本类只管目录定位与删除。
  */
 public class IpcFileTableStorage implements TableStorage {
 

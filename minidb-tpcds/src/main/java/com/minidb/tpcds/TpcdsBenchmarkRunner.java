@@ -1,11 +1,16 @@
 package com.minidb.tpcds;
 
-import com.fasterxml.jackson.databind.ObjectMapper;
 import com.minidb.server.MiniDbServer;
 import com.minidb.server.catalog.MiniDbCatalog;
 import com.minidb.server.exec.QueryExecutor;
 import com.minidb.server.stats.StatsManager;
 import com.minidb.server.storage.StorageManager;
+
+import com.fasterxml.jackson.databind.ObjectMapper;
+import jdk.jfr.Recording;
+import org.apache.arrow.memory.BufferAllocator;
+import org.apache.arrow.memory.RootAllocator;
+
 import java.io.IOException;
 import java.nio.file.Files;
 import java.nio.file.Path;
@@ -18,22 +23,21 @@ import java.util.ArrayList;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
-import jdk.jfr.Recording;
-import org.apache.arrow.memory.BufferAllocator;
-import org.apache.arrow.memory.RootAllocator;
 
-/**
- * TPC-DS 查询执行器:启动 MiniDbServer,用 JDBC 逐条跑 SQL(按 query 号排序),
- * 记录耗时/返回行数/成败,结果写 JSON。失败不中断后续查询。
- */
+/** TPC-DS 查询执行器:启动 MiniDbServer,用 JDBC 逐条跑 SQL(按 query 号排序), 记录耗时/返回行数/成败,结果写 JSON。失败不中断后续查询。 */
 public class TpcdsBenchmarkRunner {
 
-    public record QueryResult(String name, long elapsedMs, long rowCount,
-                              boolean success, String error) {
-    }
+    public record QueryResult(
+            String name, long elapsedMs, long rowCount, boolean success, String error) {}
 
-    public void run(Map<String, String> queries, Path dataDir, Path outputJson, double scale,
-                    String name, long perQueryTimeoutMs, Path flamegraphOutput)
+    public void run(
+            Map<String, String> queries,
+            Path dataDir,
+            Path outputJson,
+            double scale,
+            String name,
+            long perQueryTimeoutMs,
+            Path flamegraphOutput)
             throws Exception {
         List<QueryResult> results = new ArrayList<>();
         MiniDbServer server = new MiniDbServer();
@@ -41,23 +45,42 @@ public class TpcdsBenchmarkRunner {
 
         Recording jfrRecording = startJfrIfNeeded(flamegraphOutput);
 
-        try (Connection c = DriverManager.getConnection("jdbc:minidb://127.0.0.1:" + server.port() + "?timeout=0");
-             Statement s = c.createStatement()) {
+        try (Connection c =
+                        DriverManager.getConnection(
+                                "jdbc:minidb://127.0.0.1:" + server.port() + "?timeout=0");
+                Statement s = c.createStatement()) {
             int total = queries.size();
             int idx = 0;
             for (Map.Entry<String, String> e : queries.entrySet()) {
                 idx++;
-                System.out.println("[" + idx + "/" + total + "] " + e.getKey()
-                        + " (timeout=" + (perQueryTimeoutMs > 0 ? perQueryTimeoutMs + "ms" : "none") + ") ...");
+                System.out.println(
+                        "["
+                                + idx
+                                + "/"
+                                + total
+                                + "] "
+                                + e.getKey()
+                                + " (timeout="
+                                + (perQueryTimeoutMs > 0 ? perQueryTimeoutMs + "ms" : "none")
+                                + ") ...");
                 long qstart = System.nanoTime();
                 if (perQueryTimeoutMs > 0) {
                     s.setQueryTimeout((int) Math.max(1, perQueryTimeoutMs / 1000));
                 }
                 QueryResult qr = runOne(s, e.getKey(), e.getValue());
-                System.out.println("[" + idx + "/" + total + "] " + e.getKey()
-                        + " -> " + (qr.success() ? "ok " + qr.rowCount() + " rows" : "FAIL")
-                        + " in " + (System.nanoTime() - qstart) / 1_000_000 + " ms"
-                        + (qr.error() != null ? " (" + qr.error() + ")" : ""));
+                System.out.println(
+                        "["
+                                + idx
+                                + "/"
+                                + total
+                                + "] "
+                                + e.getKey()
+                                + " -> "
+                                + (qr.success() ? "ok " + qr.rowCount() + " rows" : "FAIL")
+                                + " in "
+                                + (System.nanoTime() - qstart) / 1_000_000
+                                + " ms"
+                                + (qr.error() != null ? " (" + qr.error() + ")" : ""));
                 results.add(qr);
             }
         } finally {
@@ -73,13 +96,18 @@ public class TpcdsBenchmarkRunner {
     }
 
     /**
-     * 同 {@link #run} 但直接构造 {@link QueryExecutor} 执行,不走 MiniDbServer/JDBC
-     * 网络层,更快、更稳定(失败时能直接看到内核异常)。
+     * 同 {@link #run} 但直接构造 {@link QueryExecutor} 执行,不走 MiniDbServer/JDBC 网络层,更快、更稳定(失败时能直接看到内核异常)。
      *
      * @param perQueryTimeoutMs 单条查询超时(ms),0 表示不限。超时的查询记 success=false 跳过。
      */
-    public void runDirect(Map<String, String> queries, Path dataDir, Path outputJson, double scale,
-                          String name, long perQueryTimeoutMs, Path flamegraphOutput)
+    public void runDirect(
+            Map<String, String> queries,
+            Path dataDir,
+            Path outputJson,
+            double scale,
+            String name,
+            long perQueryTimeoutMs,
+            Path flamegraphOutput)
             throws Exception {
         List<QueryResult> results = new ArrayList<>();
         MiniDbCatalog catalog = new MiniDbCatalog();
@@ -93,15 +121,36 @@ public class TpcdsBenchmarkRunner {
             int idx = 0;
             for (Map.Entry<String, String> e : queries.entrySet()) {
                 idx++;
-                System.out.println("[" + idx + "/" + total + "] " + e.getKey()
-                        + " (timeout=" + (perQueryTimeoutMs > 0 ? perQueryTimeoutMs + "ms" : "none") + ") ...");
+                System.out.println(
+                        "["
+                                + idx
+                                + "/"
+                                + total
+                                + "] "
+                                + e.getKey()
+                                + " (timeout="
+                                + (perQueryTimeoutMs > 0 ? perQueryTimeoutMs + "ms" : "none")
+                                + ") ...");
                 long qstart = System.nanoTime();
-                QueryResult qr = runOneDirect(executor, e.getKey(), e.getValue(), perQueryTimeoutMs);
-                System.out.println("[" + idx + "/" + total + "] " + e.getKey()
-                        + " -> " + (qr.success() ? "ok " + qr.rowCount() + " rows" : "FAIL")
-                        + " in " + (System.nanoTime() - qstart) / 1_000_000 + " ms"
-                        + " alloc=" + allocator.getAllocatedMemory() + "/" + allocator.getLimit()
-                        + (qr.error() != null ? " (" + qr.error() + ")" : ""));
+                QueryResult qr =
+                        runOneDirect(executor, e.getKey(), e.getValue(), perQueryTimeoutMs);
+                System.out.println(
+                        "["
+                                + idx
+                                + "/"
+                                + total
+                                + "] "
+                                + e.getKey()
+                                + " -> "
+                                + (qr.success() ? "ok " + qr.rowCount() + " rows" : "FAIL")
+                                + " in "
+                                + (System.nanoTime() - qstart) / 1_000_000
+                                + " ms"
+                                + " alloc="
+                                + allocator.getAllocatedMemory()
+                                + "/"
+                                + allocator.getLimit()
+                                + (qr.error() != null ? " (" + qr.error() + ")" : ""));
                 results.add(qr);
             }
             storage.close();
@@ -110,15 +159,18 @@ public class TpcdsBenchmarkRunner {
         writeReport(results, outputJson, scale, name);
     }
 
-    private QueryResult runOneDirect(QueryExecutor executor, String name, String sql,
-                                     long timeoutMs) {
+    private QueryResult runOneDirect(
+            QueryExecutor executor, String name, String sql, long timeoutMs) {
         long start = System.nanoTime();
-        java.util.concurrent.ExecutorService pool = java.util.concurrent.Executors.newSingleThreadExecutor(r -> {
-            Thread t = new Thread(r, "tpcds-" + name);
-            t.setDaemon(true);
-            return t;
-        });
-        java.util.concurrent.Future<QueryResult> future = pool.submit(() -> doRunOneDirect(executor, name, sql, start));
+        java.util.concurrent.ExecutorService pool =
+                java.util.concurrent.Executors.newSingleThreadExecutor(
+                        r -> {
+                            Thread t = new Thread(r, "tpcds-" + name);
+                            t.setDaemon(true);
+                            return t;
+                        });
+        java.util.concurrent.Future<QueryResult> future =
+                pool.submit(() -> doRunOneDirect(executor, name, sql, start));
         try {
             if (timeoutMs > 0) {
                 return future.get(timeoutMs, java.util.concurrent.TimeUnit.MILLISECONDS);
@@ -126,8 +178,12 @@ public class TpcdsBenchmarkRunner {
             return future.get();
         } catch (java.util.concurrent.TimeoutException te) {
             future.cancel(true);
-            return new QueryResult(name, (System.nanoTime() - start) / 1_000_000,
-                    -1, false, "timeout after " + timeoutMs + " ms");
+            return new QueryResult(
+                    name,
+                    (System.nanoTime() - start) / 1_000_000,
+                    -1,
+                    false,
+                    "timeout after " + timeoutMs + " ms");
         } catch (Exception ex) {
             String msg = ex.getCause() != null ? ex.getCause().getMessage() : ex.getMessage();
             if (msg == null) {
@@ -142,7 +198,8 @@ public class TpcdsBenchmarkRunner {
         }
     }
 
-    private QueryResult doRunOneDirect(QueryExecutor executor, String name, String sql, long startNanos) {
+    private QueryResult doRunOneDirect(
+            QueryExecutor executor, String name, String sql, long startNanos) {
         try {
             com.minidb.server.exec.QueryResult r = executor.execute(sql);
             long rows;
@@ -164,8 +221,7 @@ public class TpcdsBenchmarkRunner {
         }
     }
 
-    private void writeReport(List<QueryResult> results, Path outputJson, double scale,
-                            String name)
+    private void writeReport(List<QueryResult> results, Path outputJson, double scale, String name)
             throws IOException {
         Map<String, Object> out = new LinkedHashMap<>();
         out.put("name", name != null ? name : "unknown");
@@ -175,7 +231,8 @@ public class TpcdsBenchmarkRunner {
         if (outputJson.getParent() != null) {
             Files.createDirectories(outputJson.getParent());
         }
-        Files.writeString(outputJson,
+        Files.writeString(
+                outputJson,
                 new ObjectMapper().writerWithDefaultPrettyPrinter().writeValueAsString(out));
     }
 
@@ -213,10 +270,10 @@ public class TpcdsBenchmarkRunner {
             return null;
         }
         Recording recording = new Recording();
-        recording.setSettings(Map.of(
-                "jdk.ExecutionSample#enabled", "true",
-                "jdk.ExecutionSample#period", "10 ms"
-        ));
+        recording.setSettings(
+                Map.of(
+                        "jdk.ExecutionSample#enabled", "true",
+                        "jdk.ExecutionSample#period", "10 ms"));
         recording.setName("tpcds-benchmark");
         recording.start();
         return recording;

@@ -1,15 +1,10 @@
 package com.minidb.server.plan.physical;
 
-import static org.junit.jupiter.api.Assertions.assertArrayEquals;
-import static org.junit.jupiter.api.Assertions.assertEquals;
-import static org.junit.jupiter.api.Assertions.assertTrue;
-
+import com.minidb.server.exec.RowCopier;
 import com.minidb.storage.common.ArrowTypes;
 import com.minidb.storage.common.ColumnMeta;
 import com.minidb.storage.common.ColumnType;
-import com.minidb.server.exec.RowCopier;
-import java.math.BigDecimal;
-import java.util.List;
+
 import org.apache.arrow.memory.BufferAllocator;
 import org.apache.arrow.memory.RootAllocator;
 import org.apache.arrow.vector.DecimalVector;
@@ -23,34 +18,57 @@ import org.junit.jupiter.api.AfterAll;
 import org.junit.jupiter.api.BeforeAll;
 import org.junit.jupiter.api.Test;
 
+import java.math.BigDecimal;
+import java.util.List;
+
+import static org.junit.jupiter.api.Assertions.assertArrayEquals;
+import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertTrue;
+
 class RowVectorsTest {
     static BufferAllocator allocator;
 
     @BeforeAll
-    static void setUp() { allocator = new RootAllocator(); }
+    static void setUp() {
+        allocator = new RootAllocator();
+    }
+
     @AfterAll
-    static void tearDown() { allocator.close(); }
+    static void tearDown() {
+        allocator.close();
+    }
 
     @Test
     void readWriteRoundTripsNewTypes() {
-        List<FieldVector> vecs = List.of(
-                ArrowTypes.field(new ColumnMeta("s", ColumnType.SMALLINT)).createVector(allocator),
-                ArrowTypes.field(new ColumnMeta("p", ColumnType.DECIMAL, 10, 2)).createVector(allocator),
-                ArrowTypes.field(new ColumnMeta("t", ColumnType.TIME)).createVector(allocator),
-                ArrowTypes.field(new ColumnMeta("b", ColumnType.VARBINARY)).createVector(allocator));
-        for (FieldVector v : vecs) { v.setInitialCapacity(1); v.allocateNew(); }
+        List<FieldVector> vecs =
+                List.of(
+                        ArrowTypes.field(new ColumnMeta("s", ColumnType.SMALLINT))
+                                .createVector(allocator),
+                        ArrowTypes.field(new ColumnMeta("p", ColumnType.DECIMAL, 10, 2))
+                                .createVector(allocator),
+                        ArrowTypes.field(new ColumnMeta("t", ColumnType.TIME))
+                                .createVector(allocator),
+                        ArrowTypes.field(new ColumnMeta("b", ColumnType.VARBINARY))
+                                .createVector(allocator));
+        for (FieldVector v : vecs) {
+            v.setInitialCapacity(1);
+            v.allocateNew();
+        }
         ((SmallIntVector) vecs.get(0)).setSafe(0, (short) 42);
         ((DecimalVector) vecs.get(1)).setSafe(0, new BigDecimal("1.23"));
         ((TimeMilliVector) vecs.get(2)).setSafe(0, 45296000); // 12:34:56
-        ((VarBinaryVector) vecs.get(3)).setSafe(0, new byte[]{1, 2, 3});
-        for (FieldVector v : vecs) { v.setValueCount(1); }
+        ((VarBinaryVector) vecs.get(3)).setSafe(0, new byte[] {1, 2, 3});
+        for (FieldVector v : vecs) {
+            v.setValueCount(1);
+        }
         VectorSchemaRoot root = VectorSchemaRoot.of(vecs.toArray(new FieldVector[0]));
         root.setRowCount(1);
         try {
             assertEquals((short) 42, RowVectors.readObject(root.getVector(0), 0));
             assertEquals(new BigDecimal("1.23"), RowVectors.readObject(root.getVector(1), 0));
             assertEquals(45296000, RowVectors.readObject(root.getVector(2), 0));
-            assertArrayEquals(new byte[]{1, 2, 3}, (byte[]) RowVectors.readObject(root.getVector(3), 0));
+            assertArrayEquals(
+                    new byte[] {1, 2, 3}, (byte[]) RowVectors.readObject(root.getVector(3), 0));
         } finally {
             root.close();
         }
@@ -61,12 +79,16 @@ class RowVectorsTest {
         // writeObject round-trips the remaining native vector (Float4), then
         // RowCopier.writeValue must coerce between the new types and null them
         // without tripping the "unsupported vector for null" path.
-        DecimalVector dstDecimal = (DecimalVector) ArrowTypes.field(
-                new ColumnMeta("d", ColumnType.DECIMAL, 10, 2)).createVector(allocator);
+        DecimalVector dstDecimal =
+                (DecimalVector)
+                        ArrowTypes.field(new ColumnMeta("d", ColumnType.DECIMAL, 10, 2))
+                                .createVector(allocator);
         dstDecimal.setInitialCapacity(2);
         dstDecimal.allocateNew();
-        DecimalVector srcDecimal = (DecimalVector) ArrowTypes.field(
-                new ColumnMeta("d", ColumnType.DECIMAL, 10, 2)).createVector(allocator);
+        DecimalVector srcDecimal =
+                (DecimalVector)
+                        ArrowTypes.field(new ColumnMeta("d", ColumnType.DECIMAL, 10, 2))
+                                .createVector(allocator);
         srcDecimal.setInitialCapacity(2);
         srcDecimal.allocateNew();
         srcDecimal.setSafe(0, new BigDecimal("1.23"));
@@ -90,7 +112,8 @@ class RowVectorsTest {
         srcSmall.setSafe(0, (short) 7);
         srcSmall.setNull(1);
         srcSmall.setValueCount(2);
-        org.apache.arrow.vector.IntVector dstInt = new org.apache.arrow.vector.IntVector("i", allocator);
+        org.apache.arrow.vector.IntVector dstInt =
+                new org.apache.arrow.vector.IntVector("i", allocator);
         dstInt.setInitialCapacity(2);
         dstInt.allocateNew();
         try {

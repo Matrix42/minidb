@@ -121,8 +121,7 @@ public class MiniDbStatement implements Statement {
     }
 
     @Override
-    public void setMaxFieldSize(int max) {
-    }
+    public void setMaxFieldSize(int max) {}
 
     @Override
     public int getMaxRows() {
@@ -130,12 +129,10 @@ public class MiniDbStatement implements Statement {
     }
 
     @Override
-    public void setMaxRows(int max) {
-    }
+    public void setMaxRows(int max) {}
 
     @Override
-    public void setEscapeProcessing(boolean enable) {
-    }
+    public void setEscapeProcessing(boolean enable) {}
 
     @Override
     public int getQueryTimeout() {
@@ -143,8 +140,7 @@ public class MiniDbStatement implements Statement {
     }
 
     @Override
-    public void setQueryTimeout(int seconds) {
-    }
+    public void setQueryTimeout(int seconds) {}
 
     @Override
     public void cancel() throws SQLException {
@@ -157,8 +153,7 @@ public class MiniDbStatement implements Statement {
     }
 
     @Override
-    public void clearWarnings() {
-    }
+    public void clearWarnings() {}
 
     @Override
     public void setCursorName(String name) throws SQLException {
@@ -166,8 +161,7 @@ public class MiniDbStatement implements Statement {
     }
 
     @Override
-    public void setFetchDirection(int direction) {
-    }
+    public void setFetchDirection(int direction) {}
 
     @Override
     public int getFetchDirection() {
@@ -260,12 +254,10 @@ public class MiniDbStatement implements Statement {
     }
 
     @Override
-    public void setPoolable(boolean poolable) {
-    }
+    public void setPoolable(boolean poolable) {}
 
     @Override
-    public void closeOnCompletion() {
-    }
+    public void closeOnCompletion() {}
 
     @Override
     public boolean isCloseOnCompletion() {

@@ -1,9 +1,5 @@
 package com.minidb.storage.common;
 
-import java.util.List;
-import java.util.Locale;
-import java.util.Map;
-import org.apache.arrow.memory.BufferAllocator;
 import org.apache.arrow.vector.types.DateUnit;
 import org.apache.arrow.vector.types.FloatingPointPrecision;
 import org.apache.arrow.vector.types.TimeUnit;
@@ -16,15 +12,20 @@ import org.apache.calcite.rel.type.RelDataTypeFactory;
 import org.apache.calcite.rel.type.RelDataTypeField;
 import org.apache.calcite.sql.type.SqlTypeName;
 
+import java.util.ArrayList;
+import java.util.List;
+import java.util.Locale;
+import java.util.Map;
+
 public final class ArrowTypes {
 
     /** 保存到 Arrow Field 元数据里、标识声明类型名的 key(类型名端到端保真的核心)。 */
     public static final String TYPE_NAME_METADATA = "minidb.type";
+
     private static final int DEFAULT_DECIMAL_PRECISION = 10;
     private static final int DEFAULT_DECIMAL_SCALE = 0;
 
-    private ArrowTypes() {
-    }
+    private ArrowTypes() {}
 
     public static ColumnType fromSqlTypeName(String name) {
         String upper = name.toUpperCase(Locale.ROOT);
@@ -47,8 +48,7 @@ public final class ArrowTypes {
             case "TIMESTAMP" -> ColumnType.TIMESTAMP;
             case "BINARY" -> ColumnType.BINARY;
             case "VARBINARY", "BINARY VARYING" -> ColumnType.VARBINARY;
-            default -> throw new IllegalArgumentException(
-                    "unsupported column type: " + name);
+            default -> throw new IllegalArgumentException("unsupported column type: " + name);
         };
     }
 
@@ -76,22 +76,25 @@ public final class ArrowTypes {
         };
     }
 
-    public static ArrowType arrowType(ColumnType type, BufferAllocator allocator) {
+    public static ArrowType arrowType(ColumnType type) {
         return arrowTypeOf(type, DEFAULT_DECIMAL_PRECISION, DEFAULT_DECIMAL_SCALE);
     }
 
     public static Field field(ColumnMeta meta) {
         // field 可空性由 ColumnMeta.nullable 决定:NOT NULL/主键列(TableSchema 已强制)
         // 报 non-nullable FieldType,JDBC getMetaData().isNullable 才能正确反馈可空性。
-        return new Field(meta.name(),
-                new FieldType(Boolean.TRUE.equals(meta.nullable()),
+        return new Field(
+                meta.name(),
+                new FieldType(
+                        Boolean.TRUE.equals(meta.nullable()),
                         arrowTypeOf(meta.type(), meta.precision(), meta.scale()),
-                        null, Map.of(TYPE_NAME_METADATA, meta.type().name())),
+                        null,
+                        Map.of(TYPE_NAME_METADATA, meta.type().name())),
                 List.of());
     }
 
     public static Schema arrowSchema(TableSchema schema) {
-        List<Field> fields = new java.util.ArrayList<>();
+        List<Field> fields = new ArrayList<>();
         for (ColumnMeta column : schema.columns()) {
             fields.add(field(column));
         }
@@ -99,15 +102,14 @@ public final class ArrowTypes {
     }
 
     public static Field field(RelDataTypeField dataTypeField) {
-        return new Field(dataTypeField.getName(),
+        return new Field(
+                dataTypeField.getName(),
                 FieldType.nullable(arrowTypeOf(dataTypeField.getType())),
                 List.of());
     }
 
     public static Field field(RelDataType type, String name) {
-        return new Field(name,
-                FieldType.nullable(arrowTypeOf(type)),
-                List.of());
+        return new Field(name, FieldType.nullable(arrowTypeOf(type)), List.of());
     }
 
     private static ArrowType arrowTypeOf(RelDataType type) {
@@ -132,15 +134,15 @@ public final class ArrowTypes {
             case BIGINT -> new ArrowType.Int(64, true);
             case REAL, FLOAT -> new ArrowType.FloatingPoint(FloatingPointPrecision.SINGLE);
             case DOUBLE -> new ArrowType.FloatingPoint(FloatingPointPrecision.DOUBLE);
-            case DECIMAL -> new ArrowType.Decimal(DEFAULT_DECIMAL_PRECISION, DEFAULT_DECIMAL_SCALE, 128);
+            case DECIMAL ->
+                    new ArrowType.Decimal(DEFAULT_DECIMAL_PRECISION, DEFAULT_DECIMAL_SCALE, 128);
             case VARCHAR, CHAR -> ArrowType.Utf8.INSTANCE;
             case BOOLEAN -> ArrowType.Bool.INSTANCE;
             case DATE -> new ArrowType.Date(DateUnit.DAY);
             case TIME -> new ArrowType.Time(TimeUnit.MILLISECOND, 32);
             case TIMESTAMP -> new ArrowType.Timestamp(TimeUnit.MILLISECOND, null);
             case BINARY, VARBINARY -> ArrowType.Binary.INSTANCE;
-            default -> throw new IllegalArgumentException(
-                    "unsupported sql type: " + type);
+            default -> throw new IllegalArgumentException("unsupported sql type: " + type);
         };
     }
 
@@ -158,11 +160,12 @@ public final class ArrowTypes {
             case DOUBLE:
                 return new ArrowType.FloatingPoint(FloatingPointPrecision.DOUBLE);
             case DECIMAL:
-            case NUMERIC: {
-                int p = precision >= 0 ? precision : DEFAULT_DECIMAL_PRECISION;
-                int s = scale >= 0 ? scale : DEFAULT_DECIMAL_SCALE;
-                return new ArrowType.Decimal(p, s, 128);
-            }
+            case NUMERIC:
+                {
+                    int p = precision >= 0 ? precision : DEFAULT_DECIMAL_PRECISION;
+                    int s = scale >= 0 ? scale : DEFAULT_DECIMAL_SCALE;
+                    return new ArrowType.Decimal(p, s, 128);
+                }
             case VARCHAR:
             case CHAR:
             case NCHAR:
@@ -190,28 +193,29 @@ public final class ArrowTypes {
             int scale = meta.scale() >= 0 ? meta.scale() : DEFAULT_DECIMAL_SCALE;
             return factory.createSqlType(SqlTypeName.DECIMAL, precision, scale);
         }
-        SqlTypeName sqlType = switch (meta.type()) {
-            case SMALLINT -> SqlTypeName.SMALLINT;
-            case INTEGER -> SqlTypeName.INTEGER;
-            case BIGINT -> SqlTypeName.BIGINT;
-            case REAL, FLOAT -> SqlTypeName.REAL;
-            case DOUBLE -> SqlTypeName.DOUBLE;
-            case VARCHAR, CHAR, NCHAR, NVARCHAR ->
-                // CHAR/NCHAR/NVARCHAR 都变长存储、不做定长空格填充(设计简化,见
-                // data-types-design「CHAR/NCHAR/NVARCHAR 语义」),故 Calcite 侧统一映射为
-                // VARCHAR;若映射为 SqlTypeName.CHAR,Calcite 会把插入值空格填充到声明长度。
-                    SqlTypeName.VARCHAR;
-            case BOOLEAN -> SqlTypeName.BOOLEAN;
-            case DATE -> SqlTypeName.DATE;
-            case TIME -> SqlTypeName.TIME;
-            case TIMESTAMP -> SqlTypeName.TIMESTAMP;
-            case BINARY, VARBINARY ->
-                // BINARY 与 VARBINARY 同为变长 Binary 存储(设计简化,落 VarBinaryVector);
-                // Calcite 侧统一映射为 VARBINARY,若映射 SqlTypeName.BINARY 会触发定长零填充
-                // 且其 CAST 路径对 VarBinaryVector 源抛异常。声明名靠 Arrow 元数据保真。
-                    SqlTypeName.VARBINARY;
-            default -> throw new IllegalArgumentException("unknown type: " + meta.type());
-        };
+        SqlTypeName sqlType =
+                switch (meta.type()) {
+                    case SMALLINT -> SqlTypeName.SMALLINT;
+                    case INTEGER -> SqlTypeName.INTEGER;
+                    case BIGINT -> SqlTypeName.BIGINT;
+                    case REAL, FLOAT -> SqlTypeName.REAL;
+                    case DOUBLE -> SqlTypeName.DOUBLE;
+                    case VARCHAR, CHAR, NCHAR, NVARCHAR ->
+                            // CHAR/NCHAR/NVARCHAR 都变长存储、不做定长空格填充(设计简化,见
+                            // data-types-design「CHAR/NCHAR/NVARCHAR 语义」),故 Calcite 侧统一映射为
+                            // VARCHAR;若映射为 SqlTypeName.CHAR,Calcite 会把插入值空格填充到声明长度。
+                            SqlTypeName.VARCHAR;
+                    case BOOLEAN -> SqlTypeName.BOOLEAN;
+                    case DATE -> SqlTypeName.DATE;
+                    case TIME -> SqlTypeName.TIME;
+                    case TIMESTAMP -> SqlTypeName.TIMESTAMP;
+                    case BINARY, VARBINARY ->
+                            // BINARY 与 VARBINARY 同为变长 Binary 存储(设计简化,落 VarBinaryVector);
+                            // Calcite 侧统一映射为 VARBINARY,若映射 SqlTypeName.BINARY 会触发定长零填充
+                            // 且其 CAST 路径对 VarBinaryVector 源抛异常。声明名靠 Arrow 元数据保真。
+                            SqlTypeName.VARBINARY;
+                    default -> throw new IllegalArgumentException("unknown type: " + meta.type());
+                };
         if (sqlType == SqlTypeName.VARCHAR || sqlType == SqlTypeName.VARBINARY) {
             return factory.createSqlType(sqlType, Integer.MAX_VALUE);
         }

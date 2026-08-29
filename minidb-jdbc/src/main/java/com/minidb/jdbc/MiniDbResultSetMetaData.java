@@ -1,15 +1,16 @@
 package com.minidb.jdbc;
 
-import java.sql.ResultSetMetaData;
-import java.sql.SQLException;
-import java.util.ArrayList;
-import java.util.List;
-import java.util.Map;
 import org.apache.arrow.vector.FieldVector;
 import org.apache.arrow.vector.VectorSchemaRoot;
 import org.apache.arrow.vector.types.FloatingPointPrecision;
 import org.apache.arrow.vector.types.pojo.ArrowType;
 import org.apache.arrow.vector.types.pojo.Field;
+
+import java.sql.ResultSetMetaData;
+import java.sql.SQLException;
+import java.util.ArrayList;
+import java.util.List;
+import java.util.Map;
 
 public class MiniDbResultSetMetaData implements ResultSetMetaData {
 
@@ -50,8 +51,12 @@ public class MiniDbResultSetMetaData implements ResultSetMetaData {
             return meta.get("minidb.type");
         }
         return switch (f.getType().getTypeID()) {
-            case Int -> ((ArrowType.Int) f.getType()).getBitWidth() == 16 ? "SMALLINT"
-                    : ((ArrowType.Int) f.getType()).getBitWidth() == 32 ? "INTEGER" : "BIGINT";
+            case Int ->
+                    ((ArrowType.Int) f.getType()).getBitWidth() == 16
+                            ? "SMALLINT"
+                            : ((ArrowType.Int) f.getType()).getBitWidth() == 32
+                                    ? "INTEGER"
+                                    : "BIGINT";
             case FloatingPoint -> "DOUBLE";
             case Decimal -> "DECIMAL";
             case Utf8 -> "VARCHAR";
@@ -70,11 +75,15 @@ public class MiniDbResultSetMetaData implements ResultSetMetaData {
         return switch (f.getType().getTypeID()) {
             case Int -> {
                 int bitWidth = ((ArrowType.Int) f.getType()).getBitWidth();
-                yield bitWidth == 16 ? java.sql.Types.SMALLINT
+                yield bitWidth == 16
+                        ? java.sql.Types.SMALLINT
                         : bitWidth == 32 ? java.sql.Types.INTEGER : java.sql.Types.BIGINT;
             }
-            case FloatingPoint -> ((ArrowType.FloatingPoint) f.getType()).getPrecision()
-                    == FloatingPointPrecision.SINGLE ? java.sql.Types.REAL : java.sql.Types.DOUBLE;
+            case FloatingPoint ->
+                    ((ArrowType.FloatingPoint) f.getType()).getPrecision()
+                                    == FloatingPointPrecision.SINGLE
+                            ? java.sql.Types.REAL
+                            : java.sql.Types.DOUBLE;
             case Decimal -> java.sql.Types.DECIMAL;
             case Utf8 -> java.sql.Types.VARCHAR;
             case Bool -> java.sql.Types.BOOLEAN;
@@ -206,11 +215,15 @@ public class MiniDbResultSetMetaData implements ResultSetMetaData {
         return switch (f.getType().getTypeID()) {
             case Int -> {
                 int bw = ((ArrowType.Int) f.getType()).getBitWidth();
-                yield bw == 16 ? Short.class.getName()
+                yield bw == 16
+                        ? Short.class.getName()
                         : bw == 32 ? Integer.class.getName() : Long.class.getName();
             }
-            case FloatingPoint -> ((ArrowType.FloatingPoint) f.getType()).getPrecision()
-                    == FloatingPointPrecision.SINGLE ? Float.class.getName() : Double.class.getName();
+            case FloatingPoint ->
+                    ((ArrowType.FloatingPoint) f.getType()).getPrecision()
+                                    == FloatingPointPrecision.SINGLE
+                            ? Float.class.getName()
+                            : Double.class.getName();
             case Decimal -> java.math.BigDecimal.class.getName();
             case Utf8 -> String.class.getName();
             case Bool -> Boolean.class.getName();

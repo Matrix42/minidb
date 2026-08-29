@@ -1,5 +1,10 @@
 package com.minidb.storage.lsm;
+
 import com.minidb.storage.common.*;
+
+import org.apache.arrow.memory.BufferAllocator;
+import org.apache.arrow.vector.VectorSchemaRoot;
+
 import java.io.*;
 import java.nio.ByteBuffer;
 import java.nio.channels.FileChannel;
@@ -10,9 +15,6 @@ import java.nio.file.StandardOpenOption;
 import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.List;
-import org.apache.arrow.memory.BufferAllocator;
-import org.apache.arrow.vector.VectorSchemaRoot;
-
 
 public class SSTableReader implements AutoCloseable {
     private static final byte[] MAGIC = "LSMTBL".getBytes(StandardCharsets.UTF_8);
@@ -25,8 +27,8 @@ public class SSTableReader implements AutoCloseable {
     private final SSTable metadata;
     private final List<BlockIndex> blockIndex;
 
-    public SSTableReader(Path file, TableSchema schema, PartFormat format,
-                         BufferAllocator allocator) {
+    public SSTableReader(
+            Path file, TableSchema schema, PartFormat format, BufferAllocator allocator) {
         this.file = file;
         this.schema = schema;
         this.format = format;
@@ -110,8 +112,8 @@ public class SSTableReader implements AutoCloseable {
     }
 
     /**
-     * 范围扫描:只读与闭区间 [rangeLo, rangeHi] 相交的 block(块索引 startKey 二分裁剪)。
-     * 块内行不过滤(超集语义,调用方按原条件过滤);lo/hi 元素为 null 表示该列无界。
+     * 范围扫描:只读与闭区间 [rangeLo, rangeHi] 相交的 block(块索引 startKey 二分裁剪)。 块内行不过滤(超集语义,调用方按原条件过滤);lo/hi 元素为
+     * null 表示该列无界。
      */
     public BatchIterator scan(List<Object> rangeLo, List<Object> rangeHi) {
         // 块 i 的 key 范围 = [startKey[i], startKey[i+1])(最后一块上界 +∞),
@@ -265,8 +267,8 @@ public class SSTableReader implements AutoCloseable {
                     readFully(channel, data);
 
                     // 块字节直接内存解码,不落临时文件(format.read(byte[]) 内存读)
-                    VectorSchemaRoot root = format.read(data.array(),
-                            ArrowTypes.arrowSchema(schema), allocator);
+                    VectorSchemaRoot root =
+                            format.read(data.array(), ArrowTypes.arrowSchema(schema), allocator);
                     read.add(root);
                     return root;
                 } catch (IOException e) {
@@ -300,10 +302,7 @@ public class SSTableReader implements AutoCloseable {
         }
     }
 
-    /**
-     * 解码 key 字节数组(encodeKey 的逆):按主键列类型逐列读回。
-     * 整数读翻转符号位后还原,其余列读长度前缀 + UTF-8 字符串。
-     */
+    /** 解码 key 字节数组(encodeKey 的逆):按主键列类型逐列读回。 整数读翻转符号位后还原,其余列读长度前缀 + UTF-8 字符串。 */
     static List<Object> decodeKey(byte[] keyBytes, TableSchema schema) {
         List<Object> key = new ArrayList<>();
         try {

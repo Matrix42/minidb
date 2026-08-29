@@ -3,6 +3,7 @@ package com.minidb.server.exec;
 import com.minidb.parser.ddl.SqlAlterTable;
 import com.minidb.server.calcite.CalciteContext;
 import com.minidb.server.catalog.MiniDbCatalog;
+
 import org.apache.calcite.sql.SqlKind;
 import org.apache.calcite.sql.SqlNode;
 import org.junit.jupiter.api.BeforeEach;
@@ -26,7 +27,8 @@ class AlterTableParseTest {
 
     private SqlAlterTable alter(String sql) {
         SqlNode node = calcite.parse(sql);
-        assertTrue(node instanceof SqlAlterTable,
+        assertTrue(
+                node instanceof SqlAlterTable,
                 "expected SqlAlterTable but got " + node.getClass().getSimpleName());
         return (SqlAlterTable) node;
     }

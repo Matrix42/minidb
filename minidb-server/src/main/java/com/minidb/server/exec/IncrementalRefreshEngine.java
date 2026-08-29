@@ -2,24 +2,18 @@ package com.minidb.server.exec;
 
 import com.minidb.server.plan.Planner;
 import com.minidb.server.plan.physical.MiniDbRel;
-import org.apache.calcite.rel.RelNode;
 import com.minidb.server.storage.StorageManager;
 import com.minidb.storage.common.*;
+
 import org.apache.arrow.memory.BufferAllocator;
-import org.apache.arrow.vector.BigIntVector;
-import org.apache.arrow.vector.BitVector;
-import org.apache.arrow.vector.Float8Vector;
-import org.apache.arrow.vector.IntVector;
-import org.apache.arrow.vector.VarCharVector;
 import org.apache.arrow.vector.VectorSchemaRoot;
-import org.apache.arrow.vector.util.JsonStringHashMap;
+import org.apache.calcite.rel.RelNode;
 
 import java.util.*;
 
 /**
- * 物化视图增量刷新引擎。
- * SPJ 路径：将 delta 行注册为瞬态表，重新执行定义查询，结果追加/删除到 MV。
- * 聚合路径：delta 行按 GROUP BY 分组，手动合并 SUM/COUNT/AVG/MIN/MAX 到 MV。
+ * 物化视图增量刷新引擎。 SPJ 路径：将 delta 行注册为瞬态表，重新执行定义查询，结果追加/删除到 MV。 聚合路径：delta 行按 GROUP BY 分组，手动合并
+ * SUM/COUNT/AVG/MIN/MAX 到 MV。
  */
 public class IncrementalRefreshEngine {
 
@@ -27,10 +21,14 @@ public class IncrementalRefreshEngine {
     private final BufferAllocator allocator;
     private final Planner planner;
 
-    public enum DmlOperation { INSERT, DELETE, UPDATE }
+    public enum DmlOperation {
+        INSERT,
+        DELETE,
+        UPDATE
+    }
 
-    public IncrementalRefreshEngine(StorageManager storage,
-                                     BufferAllocator allocator, Planner planner) {
+    public IncrementalRefreshEngine(
+            StorageManager storage, BufferAllocator allocator, Planner planner) {
         this.storage = storage;
         this.allocator = allocator;
         this.planner = planner;
@@ -38,6 +36,7 @@ public class IncrementalRefreshEngine {
 
     /**
      * 增量刷新物化视图。
+     *
      * @return true 表示完全成功，false 表示部分组退化为 stale
      */
     public boolean refresh(MVDefinition mv, VectorSchemaRoot delta, DmlOperation op) {
@@ -53,8 +52,8 @@ public class IncrementalRefreshEngine {
 
     // ---- SPJ 路径 ----
 
-    private boolean refreshSpj(MVDefinition mv, MVStructure.Spj spj,
-                                VectorSchemaRoot delta, DmlOperation op) {
+    private boolean refreshSpj(
+            MVDefinition mv, MVStructure.Spj spj, VectorSchemaRoot delta, DmlOperation op) {
         TableHandle mvTable = storage.getTable(mv.schemaName(), mv.name());
         MVDefinition.TableRef dep = mv.dependencies().get(0);
         String baseTable = dep.tableName();
@@ -84,8 +83,8 @@ public class IncrementalRefreshEngine {
 
     // ---- 聚合路径 ----
 
-    private boolean refreshAggregate(MVDefinition mv, MVStructure.Aggregate agg,
-                                      VectorSchemaRoot delta, DmlOperation op) {
+    private boolean refreshAggregate(
+            MVDefinition mv, MVStructure.Aggregate agg, VectorSchemaRoot delta, DmlOperation op) {
         TableHandle mvTable = storage.getTable(mv.schemaName(), mv.name());
         TableSchema mvSchema = mvTable.schema();
         int numCols = mvSchema.columns().size();
@@ -120,9 +119,11 @@ public class IncrementalRefreshEngine {
             AggDelta ad = groups.computeIfAbsent(key, k -> new AggDelta(agg.aggFuncs().size()));
             for (int f = 0; f < agg.aggFuncs().size(); f++) {
                 MVStructure.AggFunc func = agg.aggFuncs().get(f);
-                Object val = func.type() == MVStructure.AggType.COUNT
-                        ? null
-                        : delta.getVector(mvSchema.columnIndex(func.inputColumn())).getObject(r);
+                Object val =
+                        func.type() == MVStructure.AggType.COUNT
+                                ? null
+                                : delta.getVector(mvSchema.columnIndex(func.inputColumn()))
+                                        .getObject(r);
                 ad.add(f, func.type(), val);
             }
         }
@@ -130,8 +131,11 @@ public class IncrementalRefreshEngine {
     }
 
     /** INSERT 聚合增量：合并到 MV 现有行 */
-    private boolean applyAggInsert(TableHandle mvTable, TableSchema mvSchema,
-                                    MVStructure.Aggregate agg, Map<List<Object>, AggDelta> groups) {
+    private boolean applyAggInsert(
+            TableHandle mvTable,
+            TableSchema mvSchema,
+            MVStructure.Aggregate agg,
+            Map<List<Object>, AggDelta> groups) {
         // 读取现有 MV 全部行
         List<Object[]> existing = readAllRows(mvTable, mvSchema);
         List<Integer> groupByIdx = new ArrayList<>();
@@ -174,8 +178,11 @@ public class IncrementalRefreshEngine {
     }
 
     /** DELETE 聚合增量：从 MV 中减去 */
-    private boolean applyAggDelete(TableHandle mvTable, TableSchema mvSchema,
-                                    MVStructure.Aggregate agg, Map<List<Object>, AggDelta> groups) {
+    private boolean applyAggDelete(
+            TableHandle mvTable,
+            TableSchema mvSchema,
+            MVStructure.Aggregate agg,
+            Map<List<Object>, AggDelta> groups) {
         List<Object[]> existing = readAllRows(mvTable, mvSchema);
         List<Integer> groupByIdx = new ArrayList<>();
         for (String col : agg.groupByColumns()) {
@@ -210,8 +217,12 @@ public class IncrementalRefreshEngine {
         return allOk;
     }
 
-    private void mergeAggRow(Object[] row, TableSchema mvSchema,
-                              MVStructure.Aggregate agg, AggDelta delta, boolean isAdd) {
+    private void mergeAggRow(
+            Object[] row,
+            TableSchema mvSchema,
+            MVStructure.Aggregate agg,
+            AggDelta delta,
+            boolean isAdd) {
         for (int f = 0; f < agg.aggFuncs().size(); f++) {
             MVStructure.AggFunc func = agg.aggFuncs().get(f);
             int colIdx = mvSchema.columnIndex(func.outputColumn());
@@ -252,8 +263,7 @@ public class IncrementalRefreshEngine {
         }
     }
 
-    private boolean isCountZero(Object[] row, TableSchema mvSchema,
-                                 MVStructure.Aggregate agg) {
+    private boolean isCountZero(Object[] row, TableSchema mvSchema, MVStructure.Aggregate agg) {
         for (MVStructure.AggFunc func : agg.aggFuncs()) {
             if (func.type() == MVStructure.AggType.COUNT) {
                 int idx = mvSchema.columnIndex(func.outputColumn());
@@ -319,12 +329,13 @@ public class IncrementalRefreshEngine {
 
         TableSchema schema = table.schema();
         List<Object[]> existing = readAllRows(table, schema);
-        existing.removeIf(row -> {
-            for (Object[] del : toDelete) {
-                if (rowsEqual(row, del)) return true;
-            }
-            return false;
-        });
+        existing.removeIf(
+                row -> {
+                    for (Object[] del : toDelete) {
+                        if (rowsEqual(row, del)) return true;
+                    }
+                    return false;
+                });
         rewriteMVTable(table, schema, existing);
     }
 
@@ -345,8 +356,7 @@ public class IncrementalRefreshEngine {
         return rows;
     }
 
-    private void rewriteMVTable(TableHandle table, TableSchema schema,
-                                 List<Object[]> rows) {
+    private void rewriteMVTable(TableHandle table, TableSchema schema, List<Object[]> rows) {
         table.clearParts();
         if (rows.isEmpty()) return;
         VectorSchemaRoot out = table.newBatchRoot();
@@ -369,7 +379,8 @@ public class IncrementalRefreshEngine {
     }
 
     @SuppressWarnings("unchecked")
-    private static void setVectorValue(org.apache.arrow.vector.ValueVector vec, int index, Object val) {
+    private static void setVectorValue(
+            org.apache.arrow.vector.ValueVector vec, int index, Object val) {
         if (val instanceof Integer i) {
             ((org.apache.arrow.vector.IntVector) vec).setSafe(index, i);
         } else if (val instanceof Long l) {
@@ -379,7 +390,8 @@ public class IncrementalRefreshEngine {
         } else if (val instanceof byte[] b) {
             ((org.apache.arrow.vector.VarCharVector) vec).setSafe(index, b);
         } else if (val instanceof String s) {
-            ((org.apache.arrow.vector.VarCharVector) vec).setSafe(index, s.getBytes(java.nio.charset.StandardCharsets.UTF_8));
+            ((org.apache.arrow.vector.VarCharVector) vec)
+                    .setSafe(index, s.getBytes(java.nio.charset.StandardCharsets.UTF_8));
         } else if (val instanceof Boolean b) {
             ((org.apache.arrow.vector.BitVector) vec).setSafe(index, b ? 1 : 0);
         }
@@ -407,25 +419,25 @@ public class IncrementalRefreshEngine {
             counts[funcIdx]++;
             switch (type) {
                 case SUM, AVG -> {
-                    Number cur = values[funcIdx] instanceof Number
-                            ? (Number) values[funcIdx] : 0;
+                    Number cur = values[funcIdx] instanceof Number ? (Number) values[funcIdx] : 0;
                     Number v = val instanceof Number ? (Number) val : 0;
                     values[funcIdx] = cur.doubleValue() + v.doubleValue();
                 }
                 case COUNT -> {
-                    Number cur = values[funcIdx] instanceof Number
-                            ? (Number) values[funcIdx] : 0;
+                    Number cur = values[funcIdx] instanceof Number ? (Number) values[funcIdx] : 0;
                     values[funcIdx] = cur.longValue() + 1;
                 }
                 case MIN -> {
                     if (values[funcIdx] == null
-                            || (val instanceof Comparable && ((Comparable) val).compareTo(values[funcIdx]) < 0)) {
+                            || (val instanceof Comparable
+                                    && ((Comparable) val).compareTo(values[funcIdx]) < 0)) {
                         values[funcIdx] = val;
                     }
                 }
                 case MAX -> {
                     if (values[funcIdx] == null
-                            || (val instanceof Comparable && ((Comparable) val).compareTo(values[funcIdx]) > 0)) {
+                            || (val instanceof Comparable
+                                    && ((Comparable) val).compareTo(values[funcIdx]) > 0)) {
                         values[funcIdx] = val;
                     }
                 }

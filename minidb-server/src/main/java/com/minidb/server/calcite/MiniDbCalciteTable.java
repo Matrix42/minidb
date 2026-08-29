@@ -1,16 +1,14 @@
 package com.minidb.server.calcite;
 
-import com.minidb.storage.common.ArrowTypes;
-import com.minidb.storage.common.ColumnMeta;
 import com.minidb.server.catalog.MiniDbCatalog;
-import com.minidb.storage.common.IndexDef;
-import com.minidb.storage.common.TableSchema;
 import com.minidb.server.stats.Histogram;
 import com.minidb.server.stats.StatsEstimator;
 import com.minidb.server.stats.TableStats;
-import java.util.ArrayList;
-import java.util.List;
-import java.util.Locale;
+import com.minidb.storage.common.ArrowTypes;
+import com.minidb.storage.common.ColumnMeta;
+import com.minidb.storage.common.IndexDef;
+import com.minidb.storage.common.TableSchema;
+
 import org.apache.calcite.rel.RelNode;
 import org.apache.calcite.rel.metadata.BuiltInMetadata;
 import org.apache.calcite.rel.metadata.RelMetadataQuery;
@@ -22,6 +20,10 @@ import org.apache.calcite.schema.Statistics;
 import org.apache.calcite.schema.impl.AbstractTable;
 import org.apache.calcite.util.ImmutableBitSet;
 import org.checkerframework.checker.nullness.qual.Nullable;
+
+import java.util.ArrayList;
+import java.util.List;
+import java.util.Locale;
 
 public class MiniDbCalciteTable extends AbstractTable {
 
@@ -87,14 +89,12 @@ public class MiniDbCalciteTable extends AbstractTable {
     }
 
     /**
-     * Returns the metadata handler for this table. Selectivity and distinct-row
-     * count cannot be implemented on this class directly: both
-     * {@code BuiltInMetadata.Selectivity.Handler} and
-     * {@code BuiltInMetadata.DistinctRowCount.Handler} declare a
-     * {@code getDef()} whose return types are unrelated
-     * ({@code MetadataDef<Selectivity>} vs {@code MetadataDef<DistinctRowCount>}),
-     * so a single class implementing both triggers a name clash. Each handler
-     * therefore lives in its own private class below.
+     * Returns the metadata handler for this table. Selectivity and distinct-row count cannot be
+     * implemented on this class directly: both {@code BuiltInMetadata.Selectivity.Handler} and
+     * {@code BuiltInMetadata.DistinctRowCount.Handler} declare a {@code getDef()} whose return
+     * types are unrelated ({@code MetadataDef<Selectivity>} vs {@code
+     * MetadataDef<DistinctRowCount>}), so a single class implementing both triggers a name clash.
+     * Each handler therefore lives in its own private class below.
      */
     @Override
     public <C> C unwrap(Class<C> aClass) {
@@ -109,8 +109,8 @@ public class MiniDbCalciteTable extends AbstractTable {
 
     private final class SelectivityHandler implements BuiltInMetadata.Selectivity.Handler {
         @Override
-        public @Nullable Double getSelectivity(RelNode r, RelMetadataQuery mq,
-                                               @Nullable RexNode predicate) {
+        public @Nullable Double getSelectivity(
+                RelNode r, RelMetadataQuery mq, @Nullable RexNode predicate) {
             if (predicate == null) {
                 return null;
             }
@@ -123,10 +123,14 @@ public class MiniDbCalciteTable extends AbstractTable {
         }
     }
 
-    private final class DistinctRowCountHandler implements BuiltInMetadata.DistinctRowCount.Handler {
+    private final class DistinctRowCountHandler
+            implements BuiltInMetadata.DistinctRowCount.Handler {
         @Override
-        public @Nullable Double getDistinctRowCount(RelNode r, RelMetadataQuery mq,
-                                                    ImmutableBitSet groupKey, @Nullable RexNode predicate) {
+        public @Nullable Double getDistinctRowCount(
+                RelNode r,
+                RelMetadataQuery mq,
+                ImmutableBitSet groupKey,
+                @Nullable RexNode predicate) {
             if (groupKey.cardinality() != 1) {
                 return null;
             }

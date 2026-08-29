@@ -1,9 +1,5 @@
 package com.minidb.jdbc;
 
-import java.math.BigDecimal;
-import java.sql.Date;
-import java.sql.SQLException;
-import java.util.List;
 import org.apache.arrow.memory.BufferAllocator;
 import org.apache.arrow.memory.RootAllocator;
 import org.apache.arrow.vector.BigIntVector;
@@ -18,6 +14,9 @@ import org.apache.arrow.vector.types.Types;
 import org.junit.jupiter.api.AfterAll;
 import org.junit.jupiter.api.BeforeAll;
 import org.junit.jupiter.api.Test;
+
+import java.math.BigDecimal;
+import java.sql.SQLException;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 

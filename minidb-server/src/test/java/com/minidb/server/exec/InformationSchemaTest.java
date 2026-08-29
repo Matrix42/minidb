@@ -1,10 +1,10 @@
 package com.minidb.server.exec;
 
+import com.minidb.server.catalog.MiniDbCatalog;
 import com.minidb.storage.common.ColumnMeta;
 import com.minidb.storage.common.ColumnType;
-import com.minidb.server.catalog.MiniDbCatalog;
 import com.minidb.storage.common.TableSchema;
-import java.util.List;
+
 import org.apache.arrow.memory.BufferAllocator;
 import org.apache.arrow.memory.RootAllocator;
 import org.apache.arrow.vector.IntVector;
@@ -14,6 +14,8 @@ import org.junit.jupiter.api.AfterAll;
 import org.junit.jupiter.api.BeforeAll;
 import org.junit.jupiter.api.Test;
 
+import java.util.List;
+
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
@@ -22,18 +24,27 @@ class InformationSchemaTest {
     static BufferAllocator allocator;
 
     @BeforeAll
-    static void setUp() { allocator = new RootAllocator(); }
+    static void setUp() {
+        allocator = new RootAllocator();
+    }
+
     @AfterAll
-    static void tearDown() { allocator.close(); }
+    static void tearDown() {
+        allocator.close();
+    }
 
     private static MiniDbCatalog catalog() {
         MiniDbCatalog catalog = new MiniDbCatalog();
         catalog.createSchema("other");
-        catalog.createTable(new TableSchema("public", "t", List.of(
-                new ColumnMeta("id", ColumnType.INTEGER),
-                new ColumnMeta("price", ColumnType.DECIMAL, 10, 2))));
-        catalog.createTable(new TableSchema("other", "u", List.of(
-                new ColumnMeta("name", ColumnType.VARCHAR))));
+        catalog.createTable(
+                new TableSchema(
+                        "public",
+                        "t",
+                        List.of(
+                                new ColumnMeta("id", ColumnType.INTEGER),
+                                new ColumnMeta("price", ColumnType.DECIMAL, 10, 2))));
+        catalog.createTable(
+                new TableSchema("other", "u", List.of(new ColumnMeta("name", ColumnType.VARCHAR))));
         return catalog;
     }
 

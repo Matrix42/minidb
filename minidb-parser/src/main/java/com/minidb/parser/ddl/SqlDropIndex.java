@@ -1,6 +1,5 @@
 package com.minidb.parser.ddl;
 
-import java.util.List;
 import org.apache.calcite.sql.SqlDrop;
 import org.apache.calcite.sql.SqlIdentifier;
 import org.apache.calcite.sql.SqlKind;
@@ -11,25 +10,26 @@ import org.apache.calcite.sql.SqlWriter;
 import org.apache.calcite.sql.parser.SqlParserPos;
 import org.apache.calcite.util.ImmutableNullableList;
 
+import java.util.List;
+
 /**
  * Parse tree for {@code DROP INDEX [IF EXISTS]}.
  *
- * <p>Extends {@link SqlDrop} so the FMPP template's
- * {@code dropStatementParserMethods} (which returns {@code SqlDrop}) can
- * dispatch to this node.  {@link SqlDrop} extends {@link org.apache.calcite.sql.SqlDdl},
- * so {@code QueryExecutor.handleDdl} picks it up via {@code instanceof SqlDdl}.
+ * <p>Extends {@link SqlDrop} so the FMPP template's {@code dropStatementParserMethods} (which
+ * returns {@code SqlDrop}) can dispatch to this node. {@link SqlDrop} extends {@link
+ * org.apache.calcite.sql.SqlDdl}, so {@code QueryExecutor.handleDdl} picks it up via {@code
+ * instanceof SqlDdl}.
  */
 public class SqlDropIndex extends SqlDrop {
 
-    private static final SqlOperator OPERATOR =
-            new SqlSpecialOperator("DROP INDEX", SqlKind.OTHER);
+    private static final SqlOperator OPERATOR = new SqlSpecialOperator("DROP INDEX", SqlKind.OTHER);
 
     private final boolean ifExists;
     private final SqlIdentifier indexName;
     private final SqlIdentifier table;
 
-    public SqlDropIndex(SqlParserPos pos, boolean ifExists, SqlIdentifier indexName,
-                        SqlIdentifier table) {
+    public SqlDropIndex(
+            SqlParserPos pos, boolean ifExists, SqlIdentifier indexName, SqlIdentifier table) {
         super(OPERATOR, pos, ifExists);
         this.ifExists = ifExists;
         this.indexName = indexName;

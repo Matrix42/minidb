@@ -1,18 +1,12 @@
 package com.minidb.server.plan.physical;
 
+import com.minidb.server.exec.ExecContext;
+import com.minidb.server.exec.RowCopier;
 import com.minidb.storage.common.ArrowTypes;
 import com.minidb.storage.common.BatchIterator;
 import com.minidb.storage.common.TableHandle;
-import com.minidb.server.exec.ExecContext;
-import com.minidb.server.exec.RowCopier;
 import com.minidb.storage.lsm.LSMTable;
-import java.math.BigDecimal;
-import java.math.MathContext;
-import java.math.RoundingMode;
-import java.util.ArrayList;
-import java.util.LinkedHashMap;
-import java.util.List;
-import java.util.Map;
+
 import org.apache.arrow.vector.BigIntVector;
 import org.apache.arrow.vector.BitVector;
 import org.apache.arrow.vector.DecimalVector;
@@ -35,27 +29,42 @@ import org.apache.calcite.sql.SqlKind;
 import org.apache.calcite.sql.type.SqlTypeName;
 import org.apache.calcite.util.ImmutableBitSet;
 
+import java.math.BigDecimal;
+import java.math.MathContext;
+import java.math.RoundingMode;
+import java.util.ArrayList;
+import java.util.LinkedHashMap;
+import java.util.List;
+import java.util.Map;
+
 public class MiniDbAggregate extends Aggregate implements MiniDbRel {
 
-    public MiniDbAggregate(RelOptCluster cluster, RelTraitSet traitSet, RelNode input,
-                           ImmutableBitSet groupSet, List<ImmutableBitSet> groupSets,
-                           List<AggregateCall> aggCalls) {
+    public MiniDbAggregate(
+            RelOptCluster cluster,
+            RelTraitSet traitSet,
+            RelNode input,
+            ImmutableBitSet groupSet,
+            List<ImmutableBitSet> groupSets,
+            List<AggregateCall> aggCalls) {
         super(cluster, traitSet, input, groupSet, groupSets, aggCalls);
     }
 
     @Override
-    public Aggregate copy(RelTraitSet traitSet, RelNode newInput,
-                          ImmutableBitSet groupSet, List<ImmutableBitSet> groupSets,
-                          List<AggregateCall> aggCalls) {
-        return new MiniDbAggregate(getCluster(), traitSet, newInput,
-                groupSet, groupSets, aggCalls);
+    public Aggregate copy(
+            RelTraitSet traitSet,
+            RelNode newInput,
+            ImmutableBitSet groupSet,
+            List<ImmutableBitSet> groupSets,
+            List<AggregateCall> aggCalls) {
+        return new MiniDbAggregate(getCluster(), traitSet, newInput, groupSet, groupSets, aggCalls);
     }
 
     @Override
     public BatchIterator execute(ExecContext ctx) {
         // COUNT(*) 无 GROUP BY 直接读表行数(元数据),不扫描数据。
         // 但若 Scan 有下推谓词(Filter/Project 已折叠进 Scan),不能走捷径——必须扫描+过滤。
-        if (getGroupSet().isEmpty() && getAggCallList().size() == 1
+        if (getGroupSet().isEmpty()
+                && getAggCallList().size() == 1
                 && isCountStar(getAggCallList().get(0))
                 && getInput() instanceof MiniDbScan scan
                 && !scan.hasPushdown()) {
@@ -137,23 +146,24 @@ public class MiniDbAggregate extends Aggregate implements MiniDbRel {
             }
             VectorSchemaRoot out = buildOutput(groupMaps, groupSets, ctx);
             boolean[] done = {false};
-            return BatchIterator.interruptible(new BatchIterator() {
-                @Override
-                public boolean hasNext() {
-                    return !done[0];
-                }
+            return BatchIterator.interruptible(
+                    new BatchIterator() {
+                        @Override
+                        public boolean hasNext() {
+                            return !done[0];
+                        }
 
-                @Override
-                public VectorSchemaRoot next() {
-                    done[0] = true;
-                    return out;
-                }
+                        @Override
+                        public VectorSchemaRoot next() {
+                            done[0] = true;
+                            return out;
+                        }
 
-                @Override
-                public void close() {
-                    out.close();
-                }
-            });
+                        @Override
+                        public void close() {
+                            out.close();
+                        }
+                    });
         } finally {
             input.close();
         }
@@ -183,23 +193,24 @@ public class MiniDbAggregate extends Aggregate implements MiniDbRel {
         }
         VectorSchemaRoot out = VectorSchemaRoot.of(vectors.toArray(new FieldVector[0]));
         boolean[] done = {false};
-        return BatchIterator.interruptible(new BatchIterator() {
-            @Override
-            public boolean hasNext() {
-                return !done[0];
-            }
+        return BatchIterator.interruptible(
+                new BatchIterator() {
+                    @Override
+                    public boolean hasNext() {
+                        return !done[0];
+                    }
 
-            @Override
-            public VectorSchemaRoot next() {
-                done[0] = true;
-                return out;
-            }
+                    @Override
+                    public VectorSchemaRoot next() {
+                        done[0] = true;
+                        return out;
+                    }
 
-            @Override
-            public void close() {
-                out.close();
-            }
-        });
+                    @Override
+                    public void close() {
+                        out.close();
+                    }
+                });
     }
 
     private ValueVector argVector(AggregateCall call, VectorSchemaRoot batch, ExecContext ctx) {
@@ -214,16 +225,17 @@ public class MiniDbAggregate extends Aggregate implements MiniDbRel {
         if (!call.getArgList().isEmpty()) {
             if (call.getArgList().size() == 1) {
                 return RowCopier.copyVector(
-                        batch.getFieldVectors().get(call.getArgList().get(0)),
-                        ctx.allocator());
+                        batch.getFieldVectors().get(call.getArgList().get(0)), ctx.allocator());
             }
             throw new UnsupportedOperationException("multi-arg aggregate: " + call);
         }
         return null; // COUNT(*)
     }
 
-    private VectorSchemaRoot buildOutput(List<Map<ColumnKey, GroupState>> groupMaps,
-                                         List<ImmutableBitSet> groupSets, ExecContext ctx) {
+    private VectorSchemaRoot buildOutput(
+            List<Map<ColumnKey, GroupState>> groupMaps,
+            List<ImmutableBitSet> groupSets,
+            ExecContext ctx) {
         int groupCount = getGroupCount();
         int total = 0;
         for (Map<ColumnKey, GroupState> m : groupMaps) {
@@ -247,13 +259,20 @@ public class MiniDbAggregate extends Aggregate implements MiniDbRel {
             vectors.get(idx).close();
             FieldVector alt;
             if (f.getType().getSqlTypeName() == SqlTypeName.DECIMAL) {
-                alt = new DecimalVector(f.getName(), ctx.allocator(),
-                        f.getType().getPrecision() + 4,
-                        Math.min(f.getType().getScale() + 4, 12));
+                alt =
+                        new DecimalVector(
+                                f.getName(),
+                                ctx.allocator(),
+                                f.getType().getPrecision() + 4,
+                                Math.min(f.getType().getScale() + 4, 12));
             } else {
-                alt = ArrowTypes.field(
-                        getCluster().getTypeFactory().createSqlType(SqlTypeName.DOUBLE),
-                        f.getName()).createVector(ctx.allocator());
+                alt =
+                        ArrowTypes.field(
+                                        getCluster()
+                                                .getTypeFactory()
+                                                .createSqlType(SqlTypeName.DOUBLE),
+                                        f.getName())
+                                .createVector(ctx.allocator());
             }
             alt.setInitialCapacity(total);
             alt.allocateNew();
@@ -277,8 +296,8 @@ public class MiniDbAggregate extends Aggregate implements MiniDbRel {
                     int outCol = 0;
                     for (Integer i : getGroupSet()) {
                         if (gs.get(i)) {
-                            RowCopier.copyRow(ck.root().getVector(i), ck.row(),
-                                    vectors.get(outCol), row);
+                            RowCopier.copyRow(
+                                    ck.root().getVector(i), ck.row(), vectors.get(outCol), row);
                         } else {
                             vectors.get(outCol).setNull(row);
                         }
@@ -303,8 +322,8 @@ public class MiniDbAggregate extends Aggregate implements MiniDbRel {
         }
     }
 
-    private static AccumulatorFactory factoryFor(AggregateCall call, RelDataType inputRowType,
-                                                 ImmutableBitSet groupSet) {
+    private static AccumulatorFactory factoryFor(
+            AggregateCall call, RelDataType inputRowType, ImmutableBitSet groupSet) {
         SqlKind kind = call.getAggregation().kind;
         boolean distinct = call.isDistinct();
         switch (kind) {
@@ -331,8 +350,7 @@ public class MiniDbAggregate extends Aggregate implements MiniDbRel {
             case LITERAL_AGG:
                 // 去相关后的 NOT IN 用它给「命中的分组」打标记:LITERAL_AGG[literal]()
                 // 对每个非空分组输出该字面量(字面量在 rexList 里,与输入行无关)。
-                return () -> new LiteralAcc(
-                        ((RexLiteral) call.rexList.get(0)).getValue());
+                return () -> new LiteralAcc(((RexLiteral) call.rexList.get(0)).getValue());
             case SINGLE_VALUE:
                 // 去相关后的标量子查询:每分组应恰好一个值,这里取 MIN 近似(基准测耗时)。
                 return () -> new MinMaxAcc(true);
@@ -350,9 +368,9 @@ public class MiniDbAggregate extends Aggregate implements MiniDbRel {
     }
 
     /**
-     * The numeric domain an aggregate runs over. It selects which running value the
-     * accumulator keeps (long vs BigDecimal vs double) so DECIMAL stays exact and
-     * integral/approximate types keep their natural arithmetic.
+     * The numeric domain an aggregate runs over. It selects which running value the accumulator
+     * keeps (long vs BigDecimal vs double) so DECIMAL stays exact and integral/approximate types
+     * keep their natural arithmetic.
      */
     private enum NumericDomain {
         /** SMALLINT/INTEGER/BIGINT accumulate a long. */
@@ -369,8 +387,7 @@ public class MiniDbAggregate extends Aggregate implements MiniDbRel {
         }
         if (!call.getArgList().isEmpty()) {
             int idx = call.getArgList().get(0);
-            return domainOf(inputRowType.getFieldList().get(idx)
-                    .getType().getSqlTypeName());
+            return domainOf(inputRowType.getFieldList().get(idx).getType().getSqlTypeName());
         }
         throw new UnsupportedOperationException("aggregate has no argument: " + call);
     }
@@ -380,17 +397,20 @@ public class MiniDbAggregate extends Aggregate implements MiniDbRel {
             case SMALLINT, INTEGER, BIGINT -> NumericDomain.INTEGRAL;
             case DECIMAL -> NumericDomain.DECIMAL;
             case REAL, FLOAT, DOUBLE -> NumericDomain.FLOATING;
-            default -> throw new UnsupportedOperationException(
-                    "unsupported aggregate argument type: " + t);
+            default ->
+                    throw new UnsupportedOperationException(
+                            "unsupported aggregate argument type: " + t);
         };
     }
 
-    /** 判断聚合调用是否需要精度提升(由 AggregateAvgPrecisionRule 在逻辑层处理)。
-     *  保留为 public 供测试/诊断引用。 */
+    /** 判断聚合调用是否需要精度提升(由 AggregateAvgPrecisionRule 在逻辑层处理)。 保留为 public 供测试/诊断引用。 */
     public static boolean needsDoubleOutput(AggregateCall call) {
         SqlKind kind = call.getAggregation().kind;
-        if (kind != SqlKind.AVG && kind != SqlKind.VAR_SAMP && kind != SqlKind.VAR_POP
-                && kind != SqlKind.STDDEV_SAMP && kind != SqlKind.STDDEV_POP) {
+        if (kind != SqlKind.AVG
+                && kind != SqlKind.VAR_SAMP
+                && kind != SqlKind.VAR_POP
+                && kind != SqlKind.STDDEV_SAMP
+                && kind != SqlKind.STDDEV_POP) {
             return false;
         }
         SqlTypeName t = call.type.getSqlTypeName();
@@ -413,8 +433,7 @@ public class MiniDbAggregate extends Aggregate implements MiniDbRel {
         }
 
         @Override
-        public void add(ValueVector v, int row) {
-        }
+        public void add(ValueVector v, int row) {}
 
         @Override
         public void write(FieldVector out, int row) {
@@ -462,108 +481,118 @@ public class MiniDbAggregate extends Aggregate implements MiniDbRel {
                 case COUNT:
                     writeLong(out, row, set.size());
                     return;
-                case SUM: {
-                    if (set.isEmpty()) {
-                        out.setNull(row);
-                        return;
-                    }
-                    // The running set holds boxed values from a single column, so its
-                    // element type tells us which numeric domain to sum in (BigDecimal
-                    // for DECIMAL, double for REAL/FLOAT/DOUBLE, long otherwise).
-                    Object first = set.iterator().next();
-                    if (first instanceof BigDecimal) {
-                        BigDecimal s = BigDecimal.ZERO;
-                        for (Object o : set) {
-                            s = s.add((BigDecimal) o);
+                case SUM:
+                    {
+                        if (set.isEmpty()) {
+                            out.setNull(row);
+                            return;
                         }
-                        writeDecimal(out, row, s);
-                    } else if (first instanceof Float || first instanceof Double) {
-                        double s = 0;
-                        for (Object o : set) {
-                            s += ((Number) o).doubleValue();
-                        }
-                        writeDouble(out, row, s);
-                    } else {
-                        long s = 0;
-                        for (Object o : set) {
-                            s += ((Number) o).longValue();
-                        }
-                        writeLong(out, row, s);
-                    }
-                    return;
-                }
-                case AVG: {
-                    if (set.isEmpty()) {
-                        out.setNull(row);
-                        return;
-                    }
-                    Object first = set.iterator().next();
-                    if (out instanceof Float8Vector fv) {
-                        // AVG 输出提升为 DOUBLE
-                        double result;
+                        // The running set holds boxed values from a single column, so its
+                        // element type tells us which numeric domain to sum in (BigDecimal
+                        // for DECIMAL, double for REAL/FLOAT/DOUBLE, long otherwise).
+                        Object first = set.iterator().next();
                         if (first instanceof BigDecimal) {
                             BigDecimal s = BigDecimal.ZERO;
                             for (Object o : set) {
                                 s = s.add((BigDecimal) o);
                             }
-                            result = s.divide(BigDecimal.valueOf(set.size()),
-                                    MathContext.DECIMAL128).doubleValue();
+                            writeDecimal(out, row, s);
                         } else if (first instanceof Float || first instanceof Double) {
                             double s = 0;
                             for (Object o : set) {
                                 s += ((Number) o).doubleValue();
                             }
-                            result = s / set.size();
+                            writeDouble(out, row, s);
                         } else {
                             long s = 0;
                             for (Object o : set) {
                                 s += ((Number) o).longValue();
                             }
-                            result = (double) s / set.size();
+                            writeLong(out, row, s);
                         }
-                        fv.setSafe(row, result);
-                    } else if (first instanceof BigDecimal) {
-                        BigDecimal s = BigDecimal.ZERO;
-                        for (Object o : set) {
-                            s = s.add((BigDecimal) o);
-                        }
-                        writeDecimal(out, row,
-                                s.divide(BigDecimal.valueOf(set.size()), MathContext.DECIMAL128));
-                    } else if (first instanceof Float || first instanceof Double) {
-                        double s = 0;
-                        for (Object o : set) {
-                            s += ((Number) o).doubleValue();
-                        }
-                        writeDouble(out, row, s / set.size());
-                    } else {
-                        long s = 0;
-                        for (Object o : set) {
-                            s += ((Number) o).longValue();
-                        }
-                        writeLong(out, row, s / set.size());
-                    }
-                    return;
-                }
-                case MIN:
-                case MAX: {
-                    if (set.isEmpty()) {
-                        out.setNull(row);
                         return;
                     }
-                    Object best = null;
-                    for (Object o : set) {
-                        if (best == null) {
-                            best = o;
-                            continue;
+                case AVG:
+                    {
+                        if (set.isEmpty()) {
+                            out.setNull(row);
+                            return;
                         }
-                        int cmp = compareObjects(best, o);
-                        if (min ? cmp > 0 : cmp < 0) {
-                            best = o;
+                        Object first = set.iterator().next();
+                        if (out instanceof Float8Vector fv) {
+                            // AVG 输出提升为 DOUBLE
+                            double result;
+                            if (first instanceof BigDecimal) {
+                                BigDecimal s = BigDecimal.ZERO;
+                                for (Object o : set) {
+                                    s = s.add((BigDecimal) o);
+                                }
+                                result =
+                                        s.divide(
+                                                        BigDecimal.valueOf(set.size()),
+                                                        MathContext.DECIMAL128)
+                                                .doubleValue();
+                            } else if (first instanceof Float || first instanceof Double) {
+                                double s = 0;
+                                for (Object o : set) {
+                                    s += ((Number) o).doubleValue();
+                                }
+                                result = s / set.size();
+                            } else {
+                                long s = 0;
+                                for (Object o : set) {
+                                    s += ((Number) o).longValue();
+                                }
+                                result = (double) s / set.size();
+                            }
+                            fv.setSafe(row, result);
+                        } else if (first instanceof BigDecimal) {
+                            BigDecimal s = BigDecimal.ZERO;
+                            for (Object o : set) {
+                                s = s.add((BigDecimal) o);
+                            }
+                            writeDecimal(
+                                    out,
+                                    row,
+                                    s.divide(
+                                            BigDecimal.valueOf(set.size()),
+                                            MathContext.DECIMAL128));
+                        } else if (first instanceof Float || first instanceof Double) {
+                            double s = 0;
+                            for (Object o : set) {
+                                s += ((Number) o).doubleValue();
+                            }
+                            writeDouble(out, row, s / set.size());
+                        } else {
+                            long s = 0;
+                            for (Object o : set) {
+                                s += ((Number) o).longValue();
+                            }
+                            writeLong(out, row, s / set.size());
                         }
+                        return;
                     }
-                    RowVectors.writeObject(out, row, best);
-                    return;
-                }
+                case MIN:
+                case MAX:
+                    {
+                        if (set.isEmpty()) {
+                            out.setNull(row);
+                            return;
+                        }
+                        Object best = null;
+                        for (Object o : set) {
+                            if (best == null) {
+                                best = o;
+                                continue;
+                            }
+                            int cmp = compareObjects(best, o);
+                            if (min ? cmp > 0 : cmp < 0) {
+                                best = o;
+                            }
+                        }
+                        RowVectors.writeObject(out, row, best);
+                        return;
+                    }
                 default:
                     throw new UnsupportedOperationException(
                             "distinct aggregate not supported: " + kind);
@@ -675,12 +704,15 @@ public class MiniDbAggregate extends Aggregate implements MiniDbRel {
             }
             if (out instanceof Float8Vector fv) {
                 // AVG(INTEGER/BIGINT) 输出提升为 DOUBLE(由 AggregateAvgPrecisionRule)
-                double result = switch (domain) {
-                    case INTEGRAL -> (double) lsum / cnt;
-                    case DECIMAL -> decimalSum.divide(
-                            BigDecimal.valueOf(cnt), MathContext.DECIMAL128).doubleValue();
-                    case FLOATING -> fsum / cnt;
-                };
+                double result =
+                        switch (domain) {
+                            case INTEGRAL -> (double) lsum / cnt;
+                            case DECIMAL ->
+                                    decimalSum
+                                            .divide(BigDecimal.valueOf(cnt), MathContext.DECIMAL128)
+                                            .doubleValue();
+                            case FLOATING -> fsum / cnt;
+                        };
                 fv.setSafe(row, result);
                 return;
             }
@@ -689,7 +721,9 @@ public class MiniDbAggregate extends Aggregate implements MiniDbRel {
                     writeLong(out, row, lsum / cnt);
                     break;
                 case DECIMAL:
-                    writeDecimal(out, row,
+                    writeDecimal(
+                            out,
+                            row,
                             decimalSum.divide(BigDecimal.valueOf(cnt), MathContext.DECIMAL128));
                     break;
                 case FLOATING:
@@ -699,13 +733,14 @@ public class MiniDbAggregate extends Aggregate implements MiniDbRel {
         }
     }
 
-    /** VAR_SAMP/VAR_POP/STDDEV_SAMP/STDDEV_POP:方差 = 均值平方差,在线累计 sum 与 sum²。
-     *  STDDEV 再取 sqrt;VAR 直接输出方差。输出类型由 AggregateAvgPrecisionRule 提升
-     *  (INTEGER/BIGINT→DOUBLE,DECIMAL→DECIMAL scale+4)。 */
+    /**
+     * VAR_SAMP/VAR_POP/STDDEV_SAMP/STDDEV_POP:方差 = 均值平方差,在线累计 sum 与 sum²。 STDDEV 再取 sqrt;VAR
+     * 直接输出方差。输出类型由 AggregateAvgPrecisionRule 提升 (INTEGER/BIGINT→DOUBLE,DECIMAL→DECIMAL scale+4)。
+     */
     private static final class VarianceAcc implements Accumulator {
         private final NumericDomain domain;
         private final boolean sample; // true = 除以 n-1(VAR_SAMP/STDDEV_SAMP)
-        private final boolean sqrt;   // true = STDDEV,false = VAR
+        private final boolean sqrt; // true = STDDEV,false = VAR
         private long n;
         private double sum;
         private double sumSq;
@@ -804,8 +839,7 @@ public class MiniDbAggregate extends Aggregate implements MiniDbRel {
         }
 
         @Override
-        public void add(ValueVector v, int row) {
-        }
+        public void add(ValueVector v, int row) {}
 
         @Override
         public void write(FieldVector out, int row) {
@@ -829,13 +863,14 @@ public class MiniDbAggregate extends Aggregate implements MiniDbRel {
         if (v instanceof BigIntVector bv) {
             return bv.get(row);
         }
-        throw new UnsupportedOperationException(
-                "not an integral vector: " + v.getMinorType());
+        throw new UnsupportedOperationException("not an integral vector: " + v.getMinorType());
     }
 
-    /** Reads a FLOATING-domain value. Only REAL/FLOAT/DOUBLE reach this method
-     *  (INTEGRAL and DECIMAL aggregates use readLong/readDecimal instead), so
-     *  Float4/Float8 are the only possible vector types. */
+    /**
+     * Reads a FLOATING-domain value. Only REAL/FLOAT/DOUBLE reach this method (INTEGRAL and DECIMAL
+     * aggregates use readLong/readDecimal instead), so Float4/Float8 are the only possible vector
+     * types.
+     */
     private static double readDouble(ValueVector v, int row) {
         if (v instanceof Float8Vector fv) {
             return fv.get(row);
@@ -843,16 +878,14 @@ public class MiniDbAggregate extends Aggregate implements MiniDbRel {
         if (v instanceof Float4Vector fv) {
             return fv.get(row);
         }
-        throw new UnsupportedOperationException(
-                "not a floating-point vector: " + v.getMinorType());
+        throw new UnsupportedOperationException("not a floating-point vector: " + v.getMinorType());
     }
 
     private static BigDecimal readDecimal(ValueVector v, int row) {
         if (v instanceof DecimalVector dv) {
             return dv.getObject(row);
         }
-        throw new UnsupportedOperationException(
-                "not a decimal vector: " + v.getMinorType());
+        throw new UnsupportedOperationException("not a decimal vector: " + v.getMinorType());
     }
 
     /** Reads a numeric value as double for variance/stddev, regardless of domain. */
@@ -878,8 +911,7 @@ public class MiniDbAggregate extends Aggregate implements MiniDbRel {
         } else if (out instanceof SmallIntVector sv) {
             sv.setSafe(row, (short) v);
         } else {
-            throw new UnsupportedOperationException(
-                    "no long writer for " + out.getMinorType());
+            throw new UnsupportedOperationException("no long writer for " + out.getMinorType());
         }
     }
 
@@ -889,8 +921,7 @@ public class MiniDbAggregate extends Aggregate implements MiniDbRel {
         } else if (out instanceof Float4Vector fv) {
             fv.setSafe(row, (float) v);
         } else {
-            throw new UnsupportedOperationException(
-                    "no double writer for " + out.getMinorType());
+            throw new UnsupportedOperationException("no double writer for " + out.getMinorType());
         }
     }
 
@@ -902,9 +933,7 @@ public class MiniDbAggregate extends Aggregate implements MiniDbRel {
             // Arrow 不变量又把非终止小数确定地落到输出 scale。
             dv.setSafe(row, v.setScale(dv.getScale(), RoundingMode.HALF_UP));
         } else {
-            throw new UnsupportedOperationException(
-                    "no decimal writer for " + out.getMinorType());
+            throw new UnsupportedOperationException("no decimal writer for " + out.getMinorType());
         }
     }
-
 }

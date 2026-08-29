@@ -1,34 +1,28 @@
 package com.minidb.server.exec;
 
-import static org.junit.jupiter.api.Assertions.assertDoesNotThrow;
-import static org.junit.jupiter.api.Assertions.assertEquals;
-import static org.junit.jupiter.api.Assertions.assertNotNull;
-import static org.junit.jupiter.api.Assertions.assertTrue;
-
 import com.minidb.server.catalog.MiniDbCatalog;
 import com.minidb.server.stats.StatsManager;
 import com.minidb.server.storage.StorageManager;
-import com.minidb.storage.common.BatchIterator;
-import com.minidb.storage.common.TableHandle;
-import java.nio.file.Path;
-import java.util.ArrayList;
-import java.util.HashSet;
-import java.util.List;
-import java.util.Set;
+
 import org.apache.arrow.memory.BufferAllocator;
 import org.apache.arrow.memory.RootAllocator;
 import org.apache.arrow.vector.IntVector;
-import org.apache.arrow.vector.VarCharVector;
-import org.apache.arrow.vector.VectorSchemaRoot;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
 
+import java.nio.file.Path;
+import java.util.ArrayList;
+import java.util.List;
+
+import static org.junit.jupiter.api.Assertions.assertDoesNotThrow;
+import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertTrue;
+
 class IndexQueryTest {
 
-    @TempDir
-    Path dataDir;
+    @TempDir Path dataDir;
 
     BufferAllocator allocator;
     MiniDbCatalog catalog;
@@ -97,8 +91,7 @@ class IndexQueryTest {
         List<Integer> expected = fullScanIds("t");
         List<Integer> actual = queryIds("SELECT id FROM t WHERE a = 20");
         assertEquals(List.of(2), actual, "a=20 应返回 id=2");
-        assertTrue(explainHasIndex("SELECT id FROM t WHERE a = 20"),
-                "EXPLAIN 应显示 index=");
+        assertTrue(explainHasIndex("SELECT id FROM t WHERE a = 20"), "EXPLAIN 应显示 index=");
         assertEquals(expected, fullScanIds("t"), "全表扫描不应受影响");
     }
 
@@ -110,8 +103,7 @@ class IndexQueryTest {
 
         List<Integer> actual = queryIds("SELECT id FROM t WHERE a IN (10, 30) ORDER BY id");
         assertEquals(List.of(1, 3), actual);
-        assertTrue(explainHasIndex("SELECT id FROM t WHERE a IN (10, 30)"),
-                "EXPLAIN 应显示 index=");
+        assertTrue(explainHasIndex("SELECT id FROM t WHERE a IN (10, 30)"), "EXPLAIN 应显示 index=");
     }
 
     @Test
@@ -133,8 +125,8 @@ class IndexQueryTest {
         // a=10 命中索引,但 b>150 是 residual 条件
         List<Integer> actual = queryIds("SELECT id FROM t WHERE a = 10 AND b > 150 ORDER BY id");
         assertEquals(List.of(3), actual, "residual 过滤应正确");
-        assertTrue(explainHasIndex("SELECT id FROM t WHERE a = 10 AND b > 150"),
-                "EXPLAIN 应显示 index=");
+        assertTrue(
+                explainHasIndex("SELECT id FROM t WHERE a = 10 AND b > 150"), "EXPLAIN 应显示 index=");
     }
 
     @Test
@@ -172,14 +164,14 @@ class IndexQueryTest {
         executor.execute("CREATE INDEX idx_a ON idx_t (a)");
 
         // 各种查询:两表结果一致
-        for (String sql : List.of(
-                "SELECT id FROM idx_t WHERE a = 10 ORDER BY id",
-                "SELECT id FROM idx_t WHERE a IN (10, 30) ORDER BY id",
-                "SELECT id FROM idx_t WHERE a > 20 ORDER BY id",
-                "SELECT id FROM idx_t WHERE a = 10 AND b = 'x' ORDER BY id")) {
+        for (String sql :
+                List.of(
+                        "SELECT id FROM idx_t WHERE a = 10 ORDER BY id",
+                        "SELECT id FROM idx_t WHERE a IN (10, 30) ORDER BY id",
+                        "SELECT id FROM idx_t WHERE a > 20 ORDER BY id",
+                        "SELECT id FROM idx_t WHERE a = 10 AND b = 'x' ORDER BY id")) {
             String baseSql = sql.replace("idx_t", "base");
-            assertEquals(queryIds(baseSql), queryIds(sql),
-                    "索引查询应与全扫一致: " + sql);
+            assertEquals(queryIds(baseSql), queryIds(sql), "索引查询应与全扫一致: " + sql);
         }
     }
 
@@ -190,9 +182,13 @@ class IndexQueryTest {
         executor.execute("CREATE INDEX idx_a ON t (a)");
 
         // EXPLAIN ANALYZE 应正常工作(不抛异常)
-        assertDoesNotThrow(() -> {
-            var rows = (QueryResult.Rows) executor.execute("EXPLAIN ANALYZE SELECT id FROM t WHERE a = 10");
-            rows.data().close();
-        });
+        assertDoesNotThrow(
+                () -> {
+                    var rows =
+                            (QueryResult.Rows)
+                                    executor.execute(
+                                            "EXPLAIN ANALYZE SELECT id FROM t WHERE a = 10");
+                    rows.data().close();
+                });
     }
 }

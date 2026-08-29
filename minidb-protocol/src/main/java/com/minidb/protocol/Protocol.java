@@ -5,6 +5,5 @@ public final class Protocol {
     public static final byte VERSION = 2;
     public static final int DEFAULT_PORT = 8899;
 
-    private Protocol() {
-    }
+    private Protocol() {}
 }

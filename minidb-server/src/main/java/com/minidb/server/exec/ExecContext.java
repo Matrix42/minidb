@@ -1,15 +1,16 @@
 package com.minidb.server.exec;
 
 import com.minidb.server.catalog.MiniDbCatalog;
-import com.minidb.server.exec.MVManager;
+import com.minidb.server.storage.StorageManager;
 import com.minidb.server.transaction.TxHandle;
 import com.minidb.storage.common.TableHandle;
-import com.minidb.server.storage.StorageManager;
+
+import org.apache.arrow.memory.BufferAllocator;
+import org.apache.arrow.vector.VectorSchemaRoot;
+
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
-import org.apache.arrow.memory.BufferAllocator;
-import org.apache.arrow.vector.VectorSchemaRoot;
 
 public class ExecContext {
 
@@ -39,14 +40,18 @@ public class ExecContext {
     }
 
     /** Construct an execution context with a transaction handle. */
-    public ExecContext(StorageManager storage, BufferAllocator allocator,
-                       String currentSchema, TxHandle tx) {
+    public ExecContext(
+            StorageManager storage, BufferAllocator allocator, String currentSchema, TxHandle tx) {
         this(storage, allocator, currentSchema, tx, null);
     }
 
     /** Full constructor with optional MV manager. */
-    public ExecContext(StorageManager storage, BufferAllocator allocator,
-                       String currentSchema, TxHandle tx, MVManager mvManager) {
+    public ExecContext(
+            StorageManager storage,
+            BufferAllocator allocator,
+            String currentSchema,
+            TxHandle tx,
+            MVManager mvManager) {
         this.storage = storage;
         this.allocator = allocator;
         this.currentSchema = currentSchema;
@@ -87,19 +92,19 @@ public class ExecContext {
     }
 
     /**
-     * Resolve a (schemaName, tableName) pair against storage. Operators extract
-     * these from {@code RelOptTable.getQualifiedName()} — the schema is the
-     * second-to-last segment, the table the last. Operators stay generic about
-     * where the name came from; this is the storage-facing boundary.
+     * Resolve a (schemaName, tableName) pair against storage. Operators extract these from {@code
+     * RelOptTable.getQualifiedName()} — the schema is the second-to-last segment, the table the
+     * last. Operators stay generic about where the name came from; this is the storage-facing
+     * boundary.
      */
     public TableHandle getTable(String schemaName, String tableName) {
         return storage.getTable(schemaName, tableName);
     }
 
     /**
-     * Resolve a bare table name against the current schema. Used by EXPLAIN
-     * paths that only have a bare name from {@code TableScan.getQualifiedName()}
-     * last segment, without a live operator tree carrying the schema.
+     * Resolve a bare table name against the current schema. Used by EXPLAIN paths that only have a
+     * bare name from {@code TableScan.getQualifiedName()} last segment, without a live operator
+     * tree carrying the schema.
      */
     public TableHandle getTable(String tableName) {
         return storage.getTable(currentSchema, tableName);

@@ -1,5 +1,4 @@
 package com.minidb.server.exec;
-import com.minidb.storage.common.BatchIterator;
 
 import com.minidb.parser.ddl.SqlAlterTable;
 import com.minidb.parser.ddl.SqlCreateIndex;
@@ -7,31 +6,27 @@ import com.minidb.parser.ddl.SqlDropIndex;
 import com.minidb.parser.ddl.SqlForeignKeyConstraint;
 import com.minidb.parser.ddl.SqlTableOptions;
 import com.minidb.server.calcite.CalciteContext;
+import com.minidb.server.catalog.InformationSchemaCatalog;
+import com.minidb.server.catalog.MiniDbCatalog;
+import com.minidb.server.catalog.ViewDefinition;
+import com.minidb.server.plan.Planner;
+import com.minidb.server.plan.physical.MiniDbModify;
+import com.minidb.server.plan.physical.MiniDbRel;
+import com.minidb.server.stats.StatsManager;
+import com.minidb.server.storage.StorageManager;
+import com.minidb.server.transaction.TxHandle;
 import com.minidb.storage.common.ArrowTypes;
+import com.minidb.storage.common.BatchIterator;
 import com.minidb.storage.common.ColumnMeta;
 import com.minidb.storage.common.ColumnType;
 import com.minidb.storage.common.ForeignKey;
 import com.minidb.storage.common.IndexDef;
+import com.minidb.storage.common.MVDefinition;
 import com.minidb.storage.common.StorageFormat;
 import com.minidb.storage.common.TableHandle;
-import com.minidb.server.catalog.InformationSchemaCatalog;
-import com.minidb.storage.common.TableType;
-import com.minidb.storage.common.MVDefinition;
-import com.minidb.server.catalog.MiniDbCatalog;
 import com.minidb.storage.common.TableSchema;
-import com.minidb.server.catalog.ViewDefinition;
-import com.minidb.server.exec.RowCopier;
-import com.minidb.server.plan.physical.MiniDbModify;
-import com.minidb.server.plan.physical.MiniDbRel;
-import com.minidb.server.plan.Planner;
-import com.minidb.server.storage.StorageManager;
-import com.minidb.server.stats.StatsManager;
-import com.minidb.server.transaction.TxHandle;
-import java.util.ArrayList;
-import java.util.List;
-import java.util.Set;
-import java.util.Locale;
-import java.util.Map;
+import com.minidb.storage.common.TableType;
+
 import org.apache.arrow.memory.BufferAllocator;
 import org.apache.arrow.vector.VectorSchemaRoot;
 import org.apache.arrow.vector.types.pojo.Field;
@@ -47,19 +42,25 @@ import org.apache.calcite.sql.SqlLiteral;
 import org.apache.calcite.sql.SqlNode;
 import org.apache.calcite.sql.SqlNodeList;
 import org.apache.calcite.sql.ddl.SqlColumnDeclaration;
+import org.apache.calcite.sql.ddl.SqlCreateMaterializedView;
 import org.apache.calcite.sql.ddl.SqlCreateSchema;
 import org.apache.calcite.sql.ddl.SqlCreateTable;
 import org.apache.calcite.sql.ddl.SqlCreateTableLike;
-import org.apache.calcite.sql.ddl.SqlCreateMaterializedView;
 import org.apache.calcite.sql.ddl.SqlCreateView;
+import org.apache.calcite.sql.ddl.SqlDropMaterializedView;
 import org.apache.calcite.sql.ddl.SqlDropSchema;
 import org.apache.calcite.sql.ddl.SqlDropTable;
-import org.apache.calcite.sql.ddl.SqlDropMaterializedView;
 import org.apache.calcite.sql.ddl.SqlDropView;
 import org.apache.calcite.sql.ddl.SqlKeyConstraint;
 import org.apache.calcite.sql.ddl.SqlTruncateTable;
 import org.apache.calcite.sql.dialect.CalciteSqlDialect;
 import org.apache.calcite.sql.type.SqlTypeName;
+
+import java.util.ArrayList;
+import java.util.List;
+import java.util.Locale;
+import java.util.Map;
+import java.util.Set;
 
 public class QueryExecutor {
 
@@ -72,8 +73,11 @@ public class QueryExecutor {
 
     private final MVManager mvManager;
 
-    public QueryExecutor(MiniDbCatalog catalog, StorageManager storage,
-                         BufferAllocator allocator, StatsManager stats) {
+    public QueryExecutor(
+            MiniDbCatalog catalog,
+            StorageManager storage,
+            BufferAllocator allocator,
+            StatsManager stats) {
         this.catalog = catalog;
         this.storage = storage;
         this.allocator = allocator;
@@ -83,7 +87,9 @@ public class QueryExecutor {
         this.mvManager = new MVManager(catalog, storage, allocator, planner);
     }
 
-    public MVManager mvManager() { return mvManager; }
+    public MVManager mvManager() {
+        return mvManager;
+    }
 
     public StorageManager storage() {
         return storage;
@@ -277,7 +283,8 @@ public class QueryExecutor {
             }
         }
         BatchIterator it = ((MiniDbRel) plan).execute(ctx);
-        return new QueryResult.Cursor(new CursorHandle(it, ctx, schemaFromRowType(plan.getRowType())));
+        return new QueryResult.Cursor(
+                new CursorHandle(it, ctx, schemaFromRowType(plan.getRowType())));
     }
 
     private QueryResult handleCreateSchema(SqlCreateSchema create) {
@@ -285,8 +292,7 @@ public class QueryExecutor {
         if (InformationSchemaCatalog.SCHEMA_NAME.equalsIgnoreCase(name)) {
             throw new IllegalArgumentException("reserved schema name: " + name);
         }
-        if (create.ifNotExists
-                && catalog.schemaNames().contains(name.toLowerCase(Locale.ROOT))) {
+        if (create.ifNotExists && catalog.schemaNames().contains(name.toLowerCase(Locale.ROOT))) {
             return new QueryResult.Update(0);
         }
         catalog.createSchema(name);
@@ -298,8 +304,7 @@ public class QueryExecutor {
         if (InformationSchemaCatalog.SCHEMA_NAME.equalsIgnoreCase(name)) {
             throw new IllegalArgumentException("reserved schema name: " + name);
         }
-        if (drop.ifExists
-                && !catalog.schemaNames().contains(name.toLowerCase(Locale.ROOT))) {
+        if (drop.ifExists && !catalog.schemaNames().contains(name.toLowerCase(Locale.ROOT))) {
             return new QueryResult.Update(0);
         }
         storage.dropSchema(name);
@@ -380,8 +385,18 @@ public class QueryExecutor {
             boolean nullable = !Boolean.FALSE.equals(column.dataType.getNullable());
             columns.add(new ColumnMeta(column.name.getSimple(), type, precision, scale, nullable));
         }
-        TableSchema schema = new TableSchema(schemaName, tableName, columns,
-                primaryKey, uniqueKeys, foreignKeys, storageFormat, tableType, null, null);
+        TableSchema schema =
+                new TableSchema(
+                        schemaName,
+                        tableName,
+                        columns,
+                        primaryKey,
+                        uniqueKeys,
+                        foreignKeys,
+                        storageFormat,
+                        tableType,
+                        null,
+                        null);
         storage.createTable(schema);
         return new QueryResult.Update(0);
     }
@@ -408,17 +423,23 @@ public class QueryExecutor {
                 tableType = opts.tableType();
             }
         }
-        TableSchema target = new TableSchema(targetSchema, targetName,
-                source.columns(), source.primaryKey(), source.uniqueKeys(),
-                source.foreignKeys(), storageFormat, tableType, null, null);
+        TableSchema target =
+                new TableSchema(
+                        targetSchema,
+                        targetName,
+                        source.columns(),
+                        source.primaryKey(),
+                        source.uniqueKeys(),
+                        source.foreignKeys(),
+                        storageFormat,
+                        tableType,
+                        null,
+                        null);
         storage.createTable(target);
         return new QueryResult.Update(0);
     }
 
-    /**
-     * 从 WITH 子句取存储格式和表类型。支持 {@code format} 和 {@code type} 键,
-     * 其余键明确拒绝。
-     */
+    /** 从 WITH 子句取存储格式和表类型。支持 {@code format} 和 {@code type} 键, 其余键明确拒绝。 */
     private TableOptions tableOptionsFromWith(SqlTableOptions options) {
         StorageFormat format = StorageFormat.DEFAULT;
         TableType tableType = null;
@@ -436,12 +457,14 @@ public class QueryExecutor {
                     throw new IllegalArgumentException("type 值必须是字符串字面量");
                 }
                 String typeStr = literal.getValueAs(String.class);
-                tableType = switch (typeStr.toLowerCase(java.util.Locale.ROOT)) {
-                    case "lsm" -> TableType.LSM;
-                    case "simple" -> TableType.SIMPLE;
-                    default -> throw new IllegalArgumentException(
-                            "unknown table type: " + typeStr + " (支持 lsm/simple)");
-                };
+                tableType =
+                        switch (typeStr.toLowerCase(java.util.Locale.ROOT)) {
+                            case "lsm" -> TableType.LSM;
+                            case "simple" -> TableType.SIMPLE;
+                            default ->
+                                    throw new IllegalArgumentException(
+                                            "unknown table type: " + typeStr + " (支持 lsm/simple)");
+                        };
             } else {
                 throw new IllegalArgumentException(
                         "unknown table option: " + key + " (支持 format/type)");
@@ -464,8 +487,7 @@ public class QueryExecutor {
         if (create.columnList != null && !create.columnList.isEmpty()) {
             columns = applyColumnList(columns, create.columnList);
         }
-        ViewDefinition view = new ViewDefinition(
-                schemaName, viewName, querySql, columns);
+        ViewDefinition view = new ViewDefinition(schemaName, viewName, querySql, columns);
         if (create.getReplace()) {
             catalog.replaceView(view);
         } else {
@@ -488,7 +510,8 @@ public class QueryExecutor {
         return new QueryResult.Update(0);
     }
 
-    private QueryResult handleCreateMaterializedView(SqlCreateMaterializedView create, String currentSchema) {
+    private QueryResult handleCreateMaterializedView(
+            SqlCreateMaterializedView create, String currentSchema) {
         List<String> parts = create.name.names;
         String schemaName = parts.size() > 1 ? parts.get(0) : currentSchema;
         String mvName = parts.get(parts.size() - 1);
@@ -497,7 +520,8 @@ public class QueryExecutor {
         return new QueryResult.Update(0);
     }
 
-    private QueryResult handleDropMaterializedView(SqlDropMaterializedView drop, String currentSchema) {
+    private QueryResult handleDropMaterializedView(
+            SqlDropMaterializedView drop, String currentSchema) {
         List<String> parts = drop.name.names;
         String schemaName = parts.size() > 1 ? parts.get(0) : currentSchema;
         String mvName = parts.get(parts.size() - 1);
@@ -515,14 +539,17 @@ public class QueryExecutor {
     private static List<ColumnMeta> columnsFromRowType(RelDataType rowType) {
         List<ColumnMeta> columns = new ArrayList<>();
         for (RelDataTypeField field : rowType.getFieldList()) {
-            ColumnType type = ArrowTypes.fromSqlTypeName(
-                    field.getType().getSqlTypeName().getName());
+            ColumnType type =
+                    ArrowTypes.fromSqlTypeName(field.getType().getSqlTypeName().getName());
             if (type == ColumnType.DECIMAL || type == ColumnType.NUMERIC) {
                 int precision = field.getType().getPrecision();
                 int scale = field.getType().getScale();
-                columns.add(new ColumnMeta(field.getName(), type,
-                        precision >= 0 ? precision : ColumnMeta.PRECISION_UNSET,
-                        scale >= 0 ? scale : ColumnMeta.SCALE_UNSET));
+                columns.add(
+                        new ColumnMeta(
+                                field.getName(),
+                                type,
+                                precision >= 0 ? precision : ColumnMeta.PRECISION_UNSET,
+                                scale >= 0 ? scale : ColumnMeta.SCALE_UNSET));
             } else {
                 columns.add(new ColumnMeta(field.getName(), type));
             }
@@ -531,21 +558,25 @@ public class QueryExecutor {
     }
 
     /** CREATE VIEW v(a,b) 的显式列名列表:数量必须匹配查询输出列,按列表重命名(类型不变)。 */
-    private static List<ColumnMeta> applyColumnList(List<ColumnMeta> columns,
-                                                    List<SqlNode> columnList) {
+    private static List<ColumnMeta> applyColumnList(
+            List<ColumnMeta> columns, List<SqlNode> columnList) {
         List<String> names = new ArrayList<>();
         for (SqlNode node : columnList) {
             names.add(((SqlIdentifier) node).getSimple());
         }
         if (names.size() != columns.size()) {
-            throw new IllegalArgumentException("view column list has " + names.size()
-                    + " columns but query produces " + columns.size());
+            throw new IllegalArgumentException(
+                    "view column list has "
+                            + names.size()
+                            + " columns but query produces "
+                            + columns.size());
         }
         List<ColumnMeta> renamed = new ArrayList<>(names.size());
         for (int i = 0; i < names.size(); i++) {
             ColumnMeta original = columns.get(i);
-            renamed.add(new ColumnMeta(
-                    names.get(i), original.type(), original.precision(), original.scale()));
+            renamed.add(
+                    new ColumnMeta(
+                            names.get(i), original.type(), original.precision(), original.scale()));
         }
         return renamed;
     }
@@ -564,7 +595,9 @@ public class QueryExecutor {
         Set<String> dependents = catalog.getDependentMVs(schemaName, tableName);
         if (!dependents.isEmpty()) {
             throw new IllegalArgumentException(
-                    "cannot drop table " + tableName + ": materialized views depend on it: "
+                    "cannot drop table "
+                            + tableName
+                            + ": materialized views depend on it: "
                             + dependents);
         }
         storage.dropTable(schemaName, tableName);
@@ -604,8 +637,7 @@ public class QueryExecutor {
         }
         // 2. 表类型不能是 SIMPLE(SimpleTable 无点查能力,索引无意义)
         if (data.tableType() == TableType.SIMPLE) {
-            throw new IllegalArgumentException(
-                    "table type SIMPLE cannot have index: " + tableName);
+            throw new IllegalArgumentException("table type SIMPLE cannot have index: " + tableName);
         }
         // 3. 规范化列名(大小写不敏感)并校验列存在、类型、重复
         List<String> colNames = new ArrayList<>();
@@ -617,16 +649,17 @@ public class QueryExecutor {
         // 4. 列类型白名单
         for (String col : colNames) {
             ColumnType type = data.column(col).type();
-            if (type != ColumnType.SMALLINT && type != ColumnType.INTEGER
-                    && type != ColumnType.BIGINT && type != ColumnType.VARCHAR) {
+            if (type != ColumnType.SMALLINT
+                    && type != ColumnType.INTEGER
+                    && type != ColumnType.BIGINT
+                    && type != ColumnType.VARCHAR) {
                 throw new IllegalArgumentException(
                         "column type " + type + " not supported for index: " + col);
             }
         }
         // 5. 列不能重复
         if (colNames.stream().distinct().count() != colNames.size()) {
-            throw new IllegalArgumentException(
-                    "duplicate columns in index definition");
+            throw new IllegalArgumentException("duplicate columns in index definition");
         }
         // 6. 索引名表内唯一(大小写不敏感)
         for (IndexDef existing : data.indexes()) {
@@ -638,11 +671,10 @@ public class QueryExecutor {
         // 7. 创建句柄 → 灌数据 → 落元数据;失败时清理半成品
         IndexDef def = new IndexDef(indexName, ddl.unique(), colNames);
         TableHandle dataTable = storage.getTable(schemaName, tableName);
-        TableHandle indexTable = storage.indexManager().createIndex(
-                schemaName, tableName, def, data);
+        TableHandle indexTable =
+                storage.indexManager().createIndex(schemaName, tableName, def, data);
         try {
-            storage.indexManager().populateFromTable(
-                    def, dataTable, indexTable);
+            storage.indexManager().populateFromTable(def, dataTable, indexTable);
         } catch (RuntimeException e) {
             // populate 失败(如存量数据违反 UNIQUE 约束),清理半成品再 rethrow
             storage.indexManager().dropIndex(schemaName, tableName, indexName);
@@ -695,5 +727,4 @@ public class QueryExecutor {
         }
         return new Schema(fields);
     }
-
 }

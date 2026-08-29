@@ -1,11 +1,12 @@
 package com.minidb.server.transaction;
 
-import static org.junit.jupiter.api.Assertions.*;
+import org.junit.jupiter.api.Test;
+import org.junit.jupiter.api.io.TempDir;
 
 import java.nio.file.Path;
 import java.util.Set;
-import org.junit.jupiter.api.Test;
-import org.junit.jupiter.api.io.TempDir;
+
+import static org.junit.jupiter.api.Assertions.*;
 
 class TransactionManagerTest {
 
@@ -26,7 +27,8 @@ class TransactionManagerTest {
     @Test
     void snapshotForReadUncommittedIsNegativeOne(@TempDir Path tmpDir) {
         TxLog txLog = new TxLog(tmpDir.resolve("txlog.log"));
-        TransactionManager tm = new TransactionManager(TransactionIsolation.READ_UNCOMMITTED, txLog);
+        TransactionManager tm =
+                new TransactionManager(TransactionIsolation.READ_UNCOMMITTED, txLog);
 
         TxHandle tx = tm.begin();
         assertEquals(-1L, tx.snapshotTxId());
@@ -146,8 +148,8 @@ class TransactionManagerTest {
         tm.commit(t2.txId());
 
         // T1 提交时检测到冲突：T1 的 snapshot 在 T2 之前，但 T2 已写入 A
-        IllegalStateException ex = assertThrows(IllegalStateException.class,
-                () -> tm.commit(t1.txId()));
+        IllegalStateException ex =
+                assertThrows(IllegalStateException.class, () -> tm.commit(t1.txId()));
         assertTrue(ex.getMessage().contains("serialization conflict"));
     }
 

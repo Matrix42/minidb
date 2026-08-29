@@ -1,7 +1,9 @@
 package com.minidb.server.storage;
 
-import com.fasterxml.jackson.databind.ObjectMapper;
 import com.minidb.server.catalog.CatalogSnapshot;
+
+import com.fasterxml.jackson.databind.ObjectMapper;
+
 import java.io.IOException;
 import java.nio.charset.StandardCharsets;
 import java.nio.file.AtomicMoveNotSupportedException;
@@ -26,17 +28,21 @@ public class JsonCatalogStore implements CatalogStore {
         if (!Files.exists(file)) {
             return new CatalogSnapshot(List.of(), List.of());
         }
-        return MAPPER.readValue(Files.readString(file, StandardCharsets.UTF_8), CatalogSnapshot.class);
+        return MAPPER.readValue(
+                Files.readString(file, StandardCharsets.UTF_8), CatalogSnapshot.class);
     }
 
     @Override
     public synchronized void save(CatalogSnapshot snapshot) throws IOException {
         Files.createDirectories(file.getParent());
         Path tmp = file.resolveSibling(file.getFileName() + ".tmp");
-        Files.writeString(tmp, MAPPER.writerWithDefaultPrettyPrinter().writeValueAsString(snapshot),
+        Files.writeString(
+                tmp,
+                MAPPER.writerWithDefaultPrettyPrinter().writeValueAsString(snapshot),
                 StandardCharsets.UTF_8);
         try {
-            Files.move(tmp, file, StandardCopyOption.REPLACE_EXISTING, StandardCopyOption.ATOMIC_MOVE);
+            Files.move(
+                    tmp, file, StandardCopyOption.REPLACE_EXISTING, StandardCopyOption.ATOMIC_MOVE);
         } catch (AtomicMoveNotSupportedException e) {
             Files.move(tmp, file, StandardCopyOption.REPLACE_EXISTING);
         }

@@ -3,8 +3,7 @@ package com.minidb.server.exec;
 import com.minidb.server.catalog.MiniDbCatalog;
 import com.minidb.server.stats.StatsManager;
 import com.minidb.server.storage.StorageManager;
-import java.nio.charset.StandardCharsets;
-import java.nio.file.Path;
+
 import org.apache.arrow.memory.BufferAllocator;
 import org.apache.arrow.memory.RootAllocator;
 import org.apache.arrow.vector.IntVector;
@@ -15,13 +14,15 @@ import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
 
+import java.nio.charset.StandardCharsets;
+import java.nio.file.Path;
+
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertNull;
 
 class StringFunctionsTest {
 
-    @TempDir
-    Path dataDir;
+    @TempDir Path dataDir;
     BufferAllocator allocator;
     MiniDbCatalog catalog;
     StorageManager storage;
@@ -36,8 +37,9 @@ class StringFunctionsTest {
         stats = new StatsManager(storage);
         executor = new QueryExecutor(catalog, storage, allocator, stats);
         executor.execute("CREATE TABLE t (id INTEGER, s VARCHAR)");
-        executor.execute("INSERT INTO t VALUES "
-                + "(1, 'hello'), (2, 'abracadabra'), (3, 'a,b,c'), (4, NULL)");
+        executor.execute(
+                "INSERT INTO t VALUES "
+                        + "(1, 'hello'), (2, 'abracadabra'), (3, 'a,b,c'), (4, NULL)");
     }
 
     @AfterEach
@@ -48,8 +50,11 @@ class StringFunctionsTest {
 
     /** 对第 id 行求值一个表达式,取 VARCHAR 结果(可为 null)。 */
     private String str(String expr, int id) {
-        VectorSchemaRoot root = ((QueryResult.Rows) executor.execute(
-                "SELECT " + expr + " AS v FROM t WHERE id = " + id)).data();
+        VectorSchemaRoot root =
+                ((QueryResult.Rows)
+                                executor.execute(
+                                        "SELECT " + expr + " AS v FROM t WHERE id = " + id))
+                        .data();
         VarCharVector v = (VarCharVector) root.getVector("v");
         String result = v.isNull(0) ? null : new String(v.get(0), StandardCharsets.UTF_8);
         root.close();
@@ -58,8 +63,11 @@ class StringFunctionsTest {
 
     /** 对第 id 行求值一个表达式,取 INTEGER 结果(可为 null)。 */
     private Integer integer(String expr, int id) {
-        VectorSchemaRoot root = ((QueryResult.Rows) executor.execute(
-                "SELECT " + expr + " AS v FROM t WHERE id = " + id)).data();
+        VectorSchemaRoot root =
+                ((QueryResult.Rows)
+                                executor.execute(
+                                        "SELECT " + expr + " AS v FROM t WHERE id = " + id))
+                        .data();
         IntVector v = (IntVector) root.getVector("v");
         Integer result = v.isNull(0) ? null : v.get(0);
         root.close();

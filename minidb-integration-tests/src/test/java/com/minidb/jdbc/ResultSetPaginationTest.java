@@ -1,18 +1,20 @@
 package com.minidb.jdbc;
 
-import static org.junit.jupiter.api.Assertions.assertEquals;
-import static org.junit.jupiter.api.Assertions.assertFalse;
-import static org.junit.jupiter.api.Assertions.assertTrue;
-
 import com.minidb.server.MiniDbServer;
+
+import org.junit.jupiter.api.AfterAll;
+import org.junit.jupiter.api.BeforeAll;
+import org.junit.jupiter.api.Test;
+
 import java.nio.file.Files;
 import java.sql.Connection;
 import java.sql.DriverManager;
 import java.sql.ResultSet;
 import java.sql.Statement;
-import org.junit.jupiter.api.AfterAll;
-import org.junit.jupiter.api.BeforeAll;
-import org.junit.jupiter.api.Test;
+
+import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertFalse;
+import static org.junit.jupiter.api.Assertions.assertTrue;
 
 class ResultSetPaginationTest {
 
@@ -34,7 +36,7 @@ class ResultSetPaginationTest {
     @Test
     void setFetchSizePaginatesAcrossPages() throws Exception {
         try (Connection c = DriverManager.getConnection(url);
-             Statement s = c.createStatement()) {
+                Statement s = c.createStatement()) {
             s.execute("CREATE TABLE p (id INTEGER)");
             s.executeUpdate("INSERT INTO p VALUES (1), (2), (3), (4), (5)");
             s.setFetchSize(2);
@@ -55,7 +57,7 @@ class ResultSetPaginationTest {
     @Test
     void defaultFetchSizeReturnsAllRows() throws Exception {
         try (Connection c = DriverManager.getConnection(url);
-             Statement s = c.createStatement()) {
+                Statement s = c.createStatement()) {
             s.execute("CREATE TABLE d (id INTEGER)");
             s.executeUpdate("INSERT INTO d VALUES (1), (2), (3)");
             try (ResultSet rs = s.executeQuery("SELECT id FROM d ORDER BY id")) {
@@ -71,7 +73,7 @@ class ResultSetPaginationTest {
     @Test
     void metadataStableAcrossPages() throws Exception {
         try (Connection c = DriverManager.getConnection(url);
-             Statement s = c.createStatement()) {
+                Statement s = c.createStatement()) {
             s.execute("CREATE TABLE m (id INTEGER)");
             s.executeUpdate("INSERT INTO m VALUES (1), (2), (3)");
             s.setFetchSize(2);
@@ -92,7 +94,7 @@ class ResultSetPaginationTest {
     @Test
     void earlyCloseDoesNotThrow() throws Exception {
         try (Connection c = DriverManager.getConnection(url);
-             Statement s = c.createStatement()) {
+                Statement s = c.createStatement()) {
             s.execute("CREATE TABLE c (id INTEGER)");
             s.executeUpdate("INSERT INTO c VALUES (1), (2), (3), (4)");
             s.setFetchSize(2);
@@ -108,7 +110,7 @@ class ResultSetPaginationTest {
     @Test
     void largeResultStreamsInPages() throws Exception {
         try (Connection c = DriverManager.getConnection(url);
-             Statement s = c.createStatement()) {
+                Statement s = c.createStatement()) {
             s.execute("CREATE TABLE big (id INTEGER)");
             StringBuilder insert = new StringBuilder("INSERT INTO big VALUES ");
             for (int i = 1; i <= 4100; i++) {

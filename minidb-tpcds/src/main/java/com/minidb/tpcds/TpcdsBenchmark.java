@@ -11,6 +11,7 @@ import java.util.Map;
 
 /**
  * TPC-DS 基准 CLI 入口,三个子命令:
+ *
  * <pre>
  *   generate --scale 0.1 --data-dir ./data
  *   run      --data-dir ./data --scale 0.1 --output ./results/run.json  [--direct] [--query-dir <dir>] [--name <name>]
@@ -30,7 +31,8 @@ public class TpcdsBenchmark {
                 Map<String, String> opts = parseOptions(args, 1);
                 double scale = Double.parseDouble(opts.getOrDefault("scale", "0.1"));
                 Path dataDir = Path.of(opts.getOrDefault("data-dir", "./data"));
-                new TpcdsDataGenerator().generate(scale, dataDir, StorageFormat.PARQUET, TableType.LSM);
+                new TpcdsDataGenerator()
+                        .generate(scale, dataDir, StorageFormat.PARQUET, TableType.LSM);
             }
             case "run" -> {
                 Map<String, String> opts = parseOptions(args, 1);
@@ -39,20 +41,19 @@ public class TpcdsBenchmark {
                 Path output = Path.of(opts.getOrDefault("output", "./results/run.json"));
                 String name = opts.getOrDefault("name", null);
                 long timeoutMs = Long.parseLong(opts.getOrDefault("timeout", "120000"));
-                Path flamegraphOutput = opts.containsKey("flamegraph")
-                        ? Path.of(opts.get("flamegraph"))
-                        : null;
+                Path flamegraphOutput =
+                        opts.containsKey("flamegraph") ? Path.of(opts.get("flamegraph")) : null;
                 TpcdsTemplateParser parser = new TpcdsTemplateParser();
-                Map<String, String> queries = opts.containsKey("query-dir")
-                        ? parser.parseAll(Path.of(opts.get("query-dir")))
-                        : parser.parseBundled();
+                Map<String, String> queries =
+                        opts.containsKey("query-dir")
+                                ? parser.parseAll(Path.of(opts.get("query-dir")))
+                                : parser.parseBundled();
                 TpcdsBenchmarkRunner runner = new TpcdsBenchmarkRunner();
                 if (opts.containsKey("direct")) {
-                    runner.runDirect(queries, dataDir, output, scale, name, timeoutMs,
-                            flamegraphOutput);
+                    runner.runDirect(
+                            queries, dataDir, output, scale, name, timeoutMs, flamegraphOutput);
                 } else {
-                    runner.run(queries, dataDir, output, scale, name, timeoutMs,
-                            flamegraphOutput);
+                    runner.run(queries, dataDir, output, scale, name, timeoutMs, flamegraphOutput);
                 }
             }
             case "compare" -> {
@@ -109,7 +110,8 @@ public class TpcdsBenchmark {
     }
 
     private static void usage() {
-        System.out.println("""
+        System.out.println(
+                """
                 用法:
                   generate --scale 0.1 --data-dir ./data
                   run      --data-dir ./data [--direct] [--query-dir <dir>] [--name <name>] [--timeout <ms>] [--flamegraph <output.html>] --scale 0.1 --output ./results/run.json

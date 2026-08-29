@@ -5,10 +5,6 @@ import com.minidb.storage.arrow.ArrowPartFormat;
 import com.minidb.storage.common.*;
 import com.minidb.storage.lsm.LSMTable;
 
-import java.nio.file.Files;
-import java.nio.file.Path;
-import java.util.*;
-
 import org.apache.arrow.memory.RootAllocator;
 import org.apache.arrow.vector.IntVector;
 import org.apache.arrow.vector.VarCharVector;
@@ -18,18 +14,28 @@ import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
 
+import java.nio.file.Files;
+import java.nio.file.Path;
+import java.util.*;
+
 import static org.junit.jupiter.api.Assertions.*;
 
 /**
- * LSM 集成测试：通过 StorageManager(而非 SQL/QueryExecutor)验证 LSMTable 的
- * CRUD、flush 持久化、compaction 合并、WAL 恢复等完整链路。
+ * LSM 集成测试：通过 StorageManager(而非 SQL/QueryExecutor)验证 LSMTable 的 CRUD、flush 持久化、compaction 合并、WAL
+ * 恢复等完整链路。
  */
 class LSMIntegrationTest {
 
-    private final TableSchema schema = new TableSchema("public", "t",
-            List.of(new ColumnMeta("id", ColumnType.INTEGER),
-                    new ColumnMeta("name", ColumnType.VARCHAR)),
-            List.of("id"), List.of(), List.of());
+    private final TableSchema schema =
+            new TableSchema(
+                    "public",
+                    "t",
+                    List.of(
+                            new ColumnMeta("id", ColumnType.INTEGER),
+                            new ColumnMeta("name", ColumnType.VARCHAR)),
+                    List.of("id"),
+                    List.of(),
+                    List.of());
 
     private RootAllocator allocator;
 
@@ -92,7 +98,8 @@ class LSMIntegrationTest {
                 for (int c = 0; c < row.length; c++) {
                     Object val = b.getVector(c).getObject(i);
                     // VarCharVector.getObject() returns Text, not String
-                    row[c] = val instanceof org.apache.arrow.vector.util.Text t ? t.toString() : val;
+                    row[c] =
+                            val instanceof org.apache.arrow.vector.util.Text t ? t.toString() : val;
                 }
                 rows.add(row);
             }
@@ -109,8 +116,8 @@ class LSMIntegrationTest {
     // ---- tests ----
 
     /**
-     * 完整 CRUD 流程：建表 → INSERT → SELECT → UPDATE → SELECT → DELETE → SELECT。
-     * 通过 StorageManager 操作，验证 LSMTable 与 StorageManager 的集成。
+     * 完整 CRUD 流程：建表 → INSERT → SELECT → UPDATE → SELECT → DELETE → SELECT。 通过 StorageManager 操作，验证
+     * LSMTable 与 StorageManager 的集成。
      */
     @Test
     void crudViaStorageManager(@TempDir Path dir) throws Exception {
@@ -122,7 +129,7 @@ class LSMIntegrationTest {
         assertTrue(table instanceof LSMTable, "表有主键时应为 LSMTable");
 
         // INSERT
-        writeRows(table, new int[]{1, 2, 3}, new String[]{"alice", "bob", "carol"});
+        writeRows(table, new int[] {1, 2, 3}, new String[] {"alice", "bob", "carol"});
         List<Object[]> rows = collectRows(table);
         assertEquals(3, rows.size());
         assertEquals("alice", findRow(rows, 1)[1]);
@@ -144,23 +151,20 @@ class LSMIntegrationTest {
         storage.close();
     }
 
-    /**
-     * INSERT 后数据仅存 MemTable+WAL 中，关闭 LSMTable 时自动 flush 到 SSTable，
-     * 重新打开后数据应完整恢复。
-     */
+    /** INSERT 后数据仅存 MemTable+WAL 中，关闭 LSMTable 时自动 flush 到 SSTable， 重新打开后数据应完整恢复。 */
     @Test
     void flushPersistence(@TempDir Path dir) throws Exception {
         // 使用较小的 MemTable 阈值，写入多行后触发 flush
         LSMTable table = new LSMTable(schema, new ArrowPartFormat(), allocator, dir, 200);
         // 每行约 120 字节，写 3 行触发 flush
-        writeRows(table, new int[]{1, 2, 3}, new String[]{"a", "b", "c"});
+        writeRows(table, new int[] {1, 2, 3}, new String[] {"a", "b", "c"});
         // 此时应有 SSTable 文件（flush 已触发）
         assertTrue(table.partCount() >= 1, "flush 后应产生 SSTable");
         table.close();
 
         // 重新打开
-        LSMTable table2 = new LSMTable(schema, new ArrowPartFormat(), allocator, dir,
-                64 * 1024 * 1024);
+        LSMTable table2 =
+                new LSMTable(schema, new ArrowPartFormat(), allocator, dir, 64 * 1024 * 1024);
         List<Object[]> rows = collectRows(table2);
         assertEquals(3, rows.size());
         assertEquals("a", findRow(rows, 1)[1]);
@@ -170,8 +174,7 @@ class LSMIntegrationTest {
     }
 
     /**
-     * 多次 flush 产生多个 L0 SSTable，compaction 将它们合并为 L1 SSTable，
-     * 合并后数据应完整且去重（同 key 保留最新版本）。
+     * 多次 flush 产生多个 L0 SSTable，compaction 将它们合并为 L1 SSTable， 合并后数据应完整且去重（同 key 保留最新版本）。
      * UPDATE/DELETE 留在 MemTable 中（不 flush），由 MergeIterator 在扫描时合并。
      */
     @Test
@@ -180,9 +183,9 @@ class LSMIntegrationTest {
         LSMTable table = new LSMTable(schema, new ArrowPartFormat(), allocator, dir, 200);
 
         // 分批写入产生多个 SSTable
-        writeRows(table, new int[]{1, 2}, new String[]{"v1", "v2"});  // flush
-        writeRows(table, new int[]{3, 4}, new String[]{"v3", "v4"});  // flush
-        writeRows(table, new int[]{5}, new String[]{"v5"});            // stays in MemTable
+        writeRows(table, new int[] {1, 2}, new String[] {"v1", "v2"}); // flush
+        writeRows(table, new int[] {3, 4}, new String[] {"v3", "v4"}); // flush
+        writeRows(table, new int[] {5}, new String[] {"v5"}); // stays in MemTable
 
         int partCountBefore = table.partCount();
         assertTrue(partCountBefore >= 2, "多次 flush 应产生多个 SSTable, 实际: " + partCountBefore);
@@ -218,16 +221,13 @@ class LSMIntegrationTest {
         table.close();
     }
 
-    /**
-     * INSERT 数据后关闭(flush→SSTable→truncate WAL)，重新打开数据应恢复。
-     * 同时验证 WAL 文件在正确截断后不会残留旧数据。
-     */
+    /** INSERT 数据后关闭(flush→SSTable→truncate WAL)，重新打开数据应恢复。 同时验证 WAL 文件在正确截断后不会残留旧数据。 */
     @Test
     void walRecovery(@TempDir Path dir) throws Exception {
         // 大阈值，防止自动 flush——数据只在 MemTable+WAL 中
-        LSMTable table = new LSMTable(schema, new ArrowPartFormat(), allocator, dir,
-                64 * 1024 * 1024);
-        writeRows(table, new int[]{10, 20, 30}, new String[]{"x", "y", "z"});
+        LSMTable table =
+                new LSMTable(schema, new ArrowPartFormat(), allocator, dir, 64 * 1024 * 1024);
+        writeRows(table, new int[] {10, 20, 30}, new String[] {"x", "y", "z"});
         // 此时无 SSTable，数据在 MemTable+WAL
         assertEquals(0, table.partCount(), "大阈值下不应自动 flush");
 
@@ -239,8 +239,8 @@ class LSMIntegrationTest {
         assertTrue(Files.exists(walFile));
 
         // 重新打开：此时 SSTable 有数据，WAL 为空
-        LSMTable table2 = new LSMTable(schema, new ArrowPartFormat(), allocator, dir,
-                64 * 1024 * 1024);
+        LSMTable table2 =
+                new LSMTable(schema, new ArrowPartFormat(), allocator, dir, 64 * 1024 * 1024);
         List<Object[]> rows = collectRows(table2);
         assertEquals(3, rows.size());
         assertEquals("x", findRow(rows, 10)[1]);
@@ -249,10 +249,7 @@ class LSMIntegrationTest {
         table2.close();
     }
 
-    /**
-     * 通过 StorageManager 的完整持久化：建表→写入→关闭→重新打开→验证数据。
-     * 验证 catalog.json 和 SSTable 文件能正确恢复。
-     */
+    /** 通过 StorageManager 的完整持久化：建表→写入→关闭→重新打开→验证数据。 验证 catalog.json 和 SSTable 文件能正确恢复。 */
     @Test
     void storageManagerPersistence(@TempDir Path dir) throws Exception {
         // 建表 + 写入
@@ -261,7 +258,7 @@ class LSMIntegrationTest {
         TableHandle table = storage.createTable(schema);
         assertTrue(table instanceof LSMTable);
 
-        writeRows(table, new int[]{100, 200}, new String[]{"foo", "bar"});
+        writeRows(table, new int[] {100, 200}, new String[] {"foo", "bar"});
         storage.close();
 
         // 验证磁盘文件存在
@@ -286,9 +283,7 @@ class LSMIntegrationTest {
         }
     }
 
-    /**
-     * 通过 StorageManager 触发 compaction 并验证数据完整性。
-     */
+    /** 通过 StorageManager 触发 compaction 并验证数据完整性。 */
     @Test
     void storageManagerCompaction(@TempDir Path dir) throws Exception {
         MiniDbCatalog catalog = new MiniDbCatalog();
@@ -327,18 +322,17 @@ class LSMIntegrationTest {
     }
 
     /**
-     * 验证 LSMTable.rowCount() 能正确统计 INSERT/UPDATE/DELETE 后的有效行数，
-     * 包括 flush 和 compaction 之后。
+     * 验证 LSMTable.rowCount() 能正确统计 INSERT/UPDATE/DELETE 后的有效行数， 包括 flush 和 compaction 之后。
      * 使用大阈值避免中途自动 flush，保证 rowCount() 精确。
      */
     @Test
     void rowCountAfterOperations(@TempDir Path dir) throws Exception {
         // 大阈值，数据全在 MemTable 中，rowCount() 精确
-        LSMTable table = new LSMTable(schema, new ArrowPartFormat(), allocator, dir,
-                64 * 1024 * 1024);
+        LSMTable table =
+                new LSMTable(schema, new ArrowPartFormat(), allocator, dir, 64 * 1024 * 1024);
 
         // INSERT 3 行
-        writeRows(table, new int[]{1, 2, 3}, new String[]{"a", "b", "c"});
+        writeRows(table, new int[] {1, 2, 3}, new String[] {"a", "b", "c"});
         assertEquals(3, table.rowCount());
 
         // UPDATE 不改变行数（MemTable 中同 key 替换）

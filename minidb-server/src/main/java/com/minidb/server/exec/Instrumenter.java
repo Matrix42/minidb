@@ -1,5 +1,4 @@
 package com.minidb.server.exec;
-import com.minidb.storage.common.BatchIterator;
 
 import com.minidb.server.plan.physical.MiniDbAggregate;
 import com.minidb.server.plan.physical.MiniDbCalc;
@@ -13,19 +12,21 @@ import com.minidb.server.plan.physical.MiniDbSetOp;
 import com.minidb.server.plan.physical.MiniDbSort;
 import com.minidb.server.plan.physical.MiniDbUnion;
 import com.minidb.server.plan.physical.MiniDbValues;
-import java.util.ArrayList;
-import java.util.List;
-import java.util.Map;
+import com.minidb.storage.common.BatchIterator;
+
 import org.apache.arrow.vector.VectorSchemaRoot;
 import org.apache.calcite.plan.RelTraitSet;
 import org.apache.calcite.rel.AbstractRelNode;
 import org.apache.calcite.rel.RelNode;
 import org.apache.calcite.rel.RelWriter;
 
+import java.util.ArrayList;
+import java.util.List;
+import java.util.Map;
+
 public final class Instrumenter {
 
-    private Instrumenter() {
-    }
+    private Instrumenter() {}
 
     public static RelNode instrument(RelNode plan, Map<RelNode, NodeStats> sink) {
         return wrap(plan, sink);
@@ -63,8 +64,12 @@ public final class Instrumenter {
             return values.copy(traits, values.getInputs());
         }
         if (node instanceof MiniDbAggregate agg) {
-            return agg.copy(traits, inputs.get(0),
-                    agg.getGroupSet(), agg.getGroupSets(), agg.getAggCallList());
+            return agg.copy(
+                    traits,
+                    inputs.get(0),
+                    agg.getGroupSet(),
+                    agg.getGroupSets(),
+                    agg.getAggCallList());
         }
         if (node instanceof MiniDbCalc calc) {
             return calc.copy(traits, inputs.get(0), calc.getProgram());
@@ -73,8 +78,13 @@ public final class Instrumenter {
             return union.copy(traits, inputs, union.all);
         }
         if (node instanceof MiniDbJoin join) {
-            return join.copy(traits, join.getCondition(), inputs.get(0),
-                    inputs.get(1), join.getJoinType(), false);
+            return join.copy(
+                    traits,
+                    join.getCondition(),
+                    inputs.get(0),
+                    inputs.get(1),
+                    join.getJoinType(),
+                    false);
         }
         if (node instanceof MiniDbSetOp setOp) {
             return setOp.copy(traits, inputs, setOp.all);
@@ -86,14 +96,14 @@ public final class Instrumenter {
     }
 
     /**
-     * Wraps a copied operator node. Its execute() runs the wrapped operator and
-     * measures rows/batches/elapsed for THIS node only. Child measurements are
-     * captured independently because each child is itself an InstrumentedRel
-     * that the wrapped operator invokes via getInput().execute().
+     * Wraps a copied operator node. Its execute() runs the wrapped operator and measures
+     * rows/batches/elapsed for THIS node only. Child measurements are captured independently
+     * because each child is itself an InstrumentedRel that the wrapped operator invokes via
+     * getInput().execute().
      *
-     * Extends AbstractRelNode so it satisfies the RelNode type required by
-     * parent operators' copy() methods, and implements MiniDbRel so the parent
-     * can cast and call execute(). getRowType() delegates to the original node.
+     * <p>Extends AbstractRelNode so it satisfies the RelNode type required by parent operators'
+     * copy() methods, and implements MiniDbRel so the parent can cast and call execute().
+     * getRowType() delegates to the original node.
      */
     static final class InstrumentedRel extends AbstractRelNode implements MiniDbRel {
         private final RelNode wrapped;
@@ -112,26 +122,27 @@ public final class Instrumenter {
         public BatchIterator execute(ExecContext ctx) {
             long start = System.nanoTime();
             BatchIterator inner = ((MiniDbRel) wrapped).execute(ctx);
-            BatchIterator measured = new BatchIterator() {
-                @Override
-                public boolean hasNext() {
-                    return inner.hasNext();
-                }
+            BatchIterator measured =
+                    new BatchIterator() {
+                        @Override
+                        public boolean hasNext() {
+                            return inner.hasNext();
+                        }
 
-                @Override
-                public VectorSchemaRoot next() {
-                    VectorSchemaRoot batch = inner.next();
-                    stats.rows += batch.getRowCount();
-                    stats.batches += 1;
-                    return batch;
-                }
+                        @Override
+                        public VectorSchemaRoot next() {
+                            VectorSchemaRoot batch = inner.next();
+                            stats.rows += batch.getRowCount();
+                            stats.batches += 1;
+                            return batch;
+                        }
 
-                @Override
-                public void close() {
-                    inner.close();
-                    stats.elapsedMs = (System.nanoTime() - start) / 1_000_000.0;
-                }
-            };
+                        @Override
+                        public void close() {
+                            inner.close();
+                            stats.elapsedMs = (System.nanoTime() - start) / 1_000_000.0;
+                        }
+                    };
             return measured;
         }
 

@@ -10,10 +10,7 @@ import org.junit.jupiter.api.Test;
 
 import static org.junit.jupiter.api.Assertions.assertFalse;
 
-/**
- * ColumnKey.equals 必须先校验 cols 数组长度:长度不同必不相等,否则按本对象长度迭代
- * 会越界或漏比较(哈希值碰撞时触发)。
- */
+/** ColumnKey.equals 必须先校验 cols 数组长度:长度不同必不相等,否则按本对象长度迭代 会越界或漏比较(哈希值碰撞时触发)。 */
 class ColumnKeyTest {
 
     static BufferAllocator allocator;
@@ -58,8 +55,8 @@ class ColumnKeyTest {
             try {
                 // 单列键 [1] 与双列键 [1,2] 的 src/other 互换各测一次,
                 // 避免只测单方向时「以短迭代长」侥幸通过。
-                ColumnKey oneCol = new ColumnKey(single, 0, new int[]{0});
-                ColumnKey twoCols = new ColumnKey(multi, 0, new int[]{0, 1});
+                ColumnKey oneCol = new ColumnKey(single, 0, new int[] {0});
+                ColumnKey twoCols = new ColumnKey(multi, 0, new int[] {0, 1});
                 assertFalse(oneCol.equals(twoCols));
                 assertFalse(twoCols.equals(oneCol));
             } finally {

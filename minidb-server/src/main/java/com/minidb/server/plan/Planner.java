@@ -4,7 +4,6 @@ import com.minidb.server.calcite.CalciteContext;
 import com.minidb.server.calcite.Utf8SqlTypeFactory;
 import com.minidb.server.catalog.InformationSchemaCatalog;
 import com.minidb.server.catalog.MiniDbCatalog;
-import com.minidb.storage.common.MVDefinition;
 import com.minidb.server.plan.logical.LogicalOptimizer;
 import com.minidb.server.plan.physical.MiniDbAggregate;
 import com.minidb.server.plan.physical.MiniDbConvention;
@@ -17,6 +16,8 @@ import com.minidb.server.plan.physical.MiniDbScan;
 import com.minidb.server.plan.physical.MiniDbSort;
 import com.minidb.server.rule.logical.MiniDbLogicalRules;
 import com.minidb.server.rule.physical.MiniDbPhysicalRules;
+import com.minidb.storage.common.MVDefinition;
+
 import org.apache.calcite.DataContexts;
 import org.apache.calcite.plan.ConventionTraitDef;
 import org.apache.calcite.plan.RelOptCluster;
@@ -78,9 +79,8 @@ public class Planner {
     }
 
     /**
-     * 规划查询但不做物化视图重写。重算 MV 定义查询(REFRESH / DML 自动刷新 / 初始填充)时必须
-     * 用它:若带重写,定义查询会被重写为扫描 MV 自身——而此刻 MV 表刚被清空/尚未填充,结果恒空,
-     * 且构成自引用。用户查询走 {@link #plan(String, String)} 保持重写开启。
+     * 规划查询但不做物化视图重写。重算 MV 定义查询(REFRESH / DML 自动刷新 / 初始填充)时必须 用它:若带重写,定义查询会被重写为扫描 MV 自身——而此刻 MV
+     * 表刚被清空/尚未填充,结果恒空, 且构成自引用。用户查询走 {@link #plan(String, String)} 保持重写开启。
      */
     public RelNode planWithoutMvRewrite(String sql, String currentSchema) {
         return plan(sql, currentSchema, false);
@@ -109,8 +109,7 @@ public class Planner {
         // (query10/18 等 OOM),故禁用 commute/associate,保持去相关后的 join 顺序。
         // volcanoPlanner.addRule(JoinCommuteRule.Config.DEFAULT.toRule());
         // volcanoPlanner.addRule(JoinAssociateRule.Config.DEFAULT.toRule());
-        SqlTypeFactoryImpl typeFactory =
-                new Utf8SqlTypeFactory(RelDataTypeSystem.DEFAULT);
+        SqlTypeFactoryImpl typeFactory = new Utf8SqlTypeFactory(RelDataTypeSystem.DEFAULT);
         RelOptCluster cluster = RelOptCluster.create(volcanoPlanner, new RexBuilder(typeFactory));
 
         // 视图展开器:共享本次规划的 VolcanoPlanner 与 typeFactory,保证视图内展开的 RelNode
@@ -128,17 +127,16 @@ public class Planner {
         RelNode optimized = LogicalOptimizer.optimize(logical);
         // Phase 1.5: 物化视图查询重写——与 MV 定义结构一致的查询子树替换为对 MV 表的扫描。
         // 仅用户查询开启;重算 MV 自身定义时关闭(见 planWithoutMvRewrite)。
-        RelNode rewritten = mvRewrite
-                ? rewriteWithMaterializedViews(optimized, currentSchema)
-                : optimized;
+        RelNode rewritten =
+                mvRewrite ? rewriteWithMaterializedViews(optimized, currentSchema) : optimized;
         // Phase 2: physical conversion (VolcanoPlanner)
-        RelNode converted = volcanoPlanner.changeTraits(rewritten,
-                rewritten.getTraitSet().replace(MiniDbConvention.INSTANCE));
+        RelNode converted =
+                volcanoPlanner.changeTraits(
+                        rewritten, rewritten.getTraitSet().replace(MiniDbConvention.INSTANCE));
         volcanoPlanner.setRoot(converted);
         RelNode best = volcanoPlanner.findBestExp();
         if (!(best instanceof MiniDbRel)) {
-            throw new IllegalStateException(
-                    "planner produced non-physical root: " + best);
+            throw new IllegalStateException("planner produced non-physical root: " + best);
         }
         // Phase 3: 谓词下推 + 列裁剪到 Scan
         RelNode pushed = pushDownToScan(best);
@@ -151,11 +149,11 @@ public class Planner {
     }
 
     /**
-     * CSE:自底向上遍历,对重复的 Join/Aggregate 子树(如 query65 的 ss⨝date_dim 出现两次)
-     * 包装为共享 {@link MiniDbCse} 节点。首次执行物化到缓存,后续命中回放。
-     * 只对 Join/Aggregate 做——它们是昂贵操作,Scan/Filter/Project 已下推无需 CSE。
+     * CSE:自底向上遍历,对重复的 Join/Aggregate 子树(如 query65 的 ss⨝date_dim 出现两次) 包装为共享 {@link MiniDbCse}
+     * 节点。首次执行物化到缓存,后续命中回放。 只对 Join/Aggregate 做——它们是昂贵操作,Scan/Filter/Project 已下推无需 CSE。
      */
-    private static RelNode deduplicateSubtrees(RelNode node) {        Map<String, Integer> counts = new HashMap<>();
+    private static RelNode deduplicateSubtrees(RelNode node) {
+        Map<String, Integer> counts = new HashMap<>();
         Map<String, MiniDbCse> cseMap = new HashMap<>();
         countJoinsAndAggregates(node, counts);
         return deduplicateSubtrees(node, counts, cseMap);
@@ -171,10 +169,7 @@ public class Planner {
         }
     }
 
-    /**
-     * 计算子树的结构哈希(不含 RelNode 实例 ID)。Join/Aggregate 递归包含子节点哈希,
-     * 其他节点用 explainTerms 去掉实例 ID 的部分。
-     */
+    /** 计算子树的结构哈希(不含 RelNode 实例 ID)。Join/Aggregate 递归包含子节点哈希, 其他节点用 explainTerms 去掉实例 ID 的部分。 */
     private static String structuralDigest(RelNode node) {
         StringBuilder sb = new StringBuilder();
         sb.append(node.getClass().getSimpleName());
@@ -197,12 +192,9 @@ public class Planner {
         return full.replaceAll("#\\d+", "");
     }
 
-    /**
-     * 第二轮:对出现次数 >1 的 Join/Aggregate 子树,首次出现包装 MiniDbCse,
-     * 后续出现替换为共享的 MiniDbCse。
-     */
-    private static RelNode deduplicateSubtrees(RelNode node, Map<String, Integer> counts,
-                                                Map<String, MiniDbCse> cseMap) {
+    /** 第二轮:对出现次数 >1 的 Join/Aggregate 子树,首次出现包装 MiniDbCse, 后续出现替换为共享的 MiniDbCse。 */
+    private static RelNode deduplicateSubtrees(
+            RelNode node, Map<String, Integer> counts, Map<String, MiniDbCse> cseMap) {
         // 先递归处理子节点
         List<RelNode> inputs = node.getInputs();
         List<RelNode> newInputs = null;
@@ -236,11 +228,9 @@ public class Planner {
     }
 
     /**
-     * 遍历物理树,把 {@code MiniDbFilter(MiniDbScan)} 和
-     * {@code MiniDbProject(MiniDbScan)} 折叠进 Scan 自身。
-     * 多层下推递归处理,但 {@code Filter(Project(Scan))} 时只推 Filter 进 Scan,
-     * 保留 Project 做列裁剪——若 Project 也折叠,Filter 需要的列可能被裁掉(如视图
-     * {@code SELECT name WHERE id=2} 的 Project 裁掉 id,但 Filter 需要 id)。
+     * 遍历物理树,把 {@code MiniDbFilter(MiniDbScan)} 和 {@code MiniDbProject(MiniDbScan)} 折叠进 Scan 自身。
+     * 多层下推递归处理,但 {@code Filter(Project(Scan))} 时只推 Filter 进 Scan, 保留 Project 做列裁剪——若 Project
+     * 也折叠,Filter 需要的列可能被裁掉(如视图 {@code SELECT name WHERE id=2} 的 Project 裁掉 id,但 Filter 需要 id)。
      */
     private static RelNode pushDownToScan(RelNode node) {
         if (node instanceof MiniDbFilter filter) {
@@ -255,14 +245,26 @@ public class Planner {
                         cond = remapToOriginal(cond, cols);
                     }
                     // 只推 Filter,不推 Project(列裁剪保留在 Project 中)
-                    MiniDbScan newScan = new MiniDbScan(scan.getCluster(),
-                            scan.getTraitSet(), scan.getTable(), null, cond);
-                    return project.copy(project.getTraitSet(), newScan,
-                            project.getProjects(), project.getRowType());
+                    MiniDbScan newScan =
+                            new MiniDbScan(
+                                    scan.getCluster(),
+                                    scan.getTraitSet(),
+                                    scan.getTable(),
+                                    null,
+                                    cond);
+                    return project.copy(
+                            project.getTraitSet(),
+                            newScan,
+                            project.getProjects(),
+                            project.getRowType());
                 }
                 if (projChild != project.getInput()) {
-                    RelNode newProj = project.copy(project.getTraitSet(), projChild,
-                            project.getProjects(), project.getRowType());
+                    RelNode newProj =
+                            project.copy(
+                                    project.getTraitSet(),
+                                    projChild,
+                                    project.getProjects(),
+                                    project.getRowType());
                     return filter.copy(filter.getTraitSet(), newProj, filter.getCondition());
                 }
             }
@@ -273,8 +275,12 @@ public class Planner {
                 if (scan.projectedColumns() != null) {
                     cond = remapToOriginal(cond, scan.projectedColumns());
                 }
-                return new MiniDbScan(scan.getCluster(), scan.getTraitSet(),
-                        scan.getTable(), scan.projectedColumns(), cond);
+                return new MiniDbScan(
+                        scan.getCluster(),
+                        scan.getTraitSet(),
+                        scan.getTable(),
+                        scan.projectedColumns(),
+                        cond);
             }
             if (child != filter.getInput()) {
                 return filter.copy(filter.getTraitSet(), child, filter.getCondition());
@@ -287,13 +293,13 @@ public class Planner {
                 // 纯列裁剪:Project 表达式全为 RexInputRef 时折叠进 Scan
                 int[] cols = extractProjectColumns(project.getProjects());
                 if (cols != null) {
-                    return new MiniDbScan(scan.getCluster(), scan.getTraitSet(),
-                            scan.getTable(), cols, null);
+                    return new MiniDbScan(
+                            scan.getCluster(), scan.getTraitSet(), scan.getTable(), cols, null);
                 }
             }
             if (child != project.getInput()) {
-                return project.copy(project.getTraitSet(), child,
-                        project.getProjects(), project.getRowType());
+                return project.copy(
+                        project.getTraitSet(), child, project.getProjects(), project.getRowType());
             }
             return project;
         }
@@ -319,29 +325,26 @@ public class Planner {
     }
 
     /**
-     * 若 project 表达式全是 RexInputRef(纯列索引),返回索引数组;否则返回 null。
-     * 索引连续恒等(0,1,2,...)时也返回 null——不需要裁剪,调用方不建新 Scan。
-     * 将 RexNode 中的 RexInputRef 索引从「投影后位置」映射回「原始列索引」。
-     * 当 Scan 先被 Project 裁剪列(如 [2,0]),后续 Filter 条件引用的是新索引(0→原列2),
-     * 推入 Scan 时需还原为原索引。
+     * 若 project 表达式全是 RexInputRef(纯列索引),返回索引数组;否则返回 null。 索引连续恒等(0,1,2,...)时也返回 null——不需要裁剪,调用方不建新
+     * Scan。 将 RexNode 中的 RexInputRef 索引从「投影后位置」映射回「原始列索引」。 当 Scan 先被 Project 裁剪列(如 [2,0]),后续 Filter
+     * 条件引用的是新索引(0→原列2), 推入 Scan 时需还原为原索引。
      */
     private static RexNode remapToOriginal(RexNode node, int[] projectedColumns) {
-        return node.accept(new RexShuttle() {
-            @Override
-            public RexNode visitInputRef(RexInputRef inputRef) {
-                int origIdx = projectedColumns[inputRef.getIndex()];
-                return new RexInputRef(origIdx, inputRef.getType());
-            }
-        });
+        return node.accept(
+                new RexShuttle() {
+                    @Override
+                    public RexNode visitInputRef(RexInputRef inputRef) {
+                        int origIdx = projectedColumns[inputRef.getIndex()];
+                        return new RexInputRef(origIdx, inputRef.getType());
+                    }
+                });
     }
 
     // ---- 中间结果列裁剪(Phase 4) ----
 
     /**
-     * 中间结果列裁剪:自顶向下传「上层需要的输出列」,自底向上重建——每层
-     * Project/Join/Scan/Sort/Filter/Aggregate 输出只保留被引用的列。query64 等大
-     * join 链每层物化全列(20+ 列 × 120 万行),裁剪后中间结果列数大减,物化/拷贝/
-     * 哈希成本随之下降。
+     * 中间结果列裁剪:自顶向下传「上层需要的输出列」,自底向上重建——每层 Project/Join/Scan/Sort/Filter/Aggregate 输出只保留被引用的列。query64
+     * 等大 join 链每层物化全列(20+ 列 × 120 万行),裁剪后中间结果列数大减,物化/拷贝/ 哈希成本随之下降。
      */
     private static RelNode pruneJoinColumns(RelNode root) {
         return pruneColumns(root, identityList(root.getRowType().getFieldCount()));
@@ -368,8 +371,10 @@ public class Planner {
             // 其他节点不支持裁剪;递归输入传全列,自身原样(列序 = 原序)
             RelNode result = node;
             if (node.getInputs().size() == 1) {
-                RelNode child = pruneColumns(node.getInput(0),
-                        identityList(node.getInput(0).getRowType().getFieldCount()));
+                RelNode child =
+                        pruneColumns(
+                                node.getInput(0),
+                                identityList(node.getInput(0).getRowType().getFieldCount()));
                 if (child != node.getInput(0)) {
                     result = node.copy(node.getTraitSet(), List.of(child));
                 }
@@ -381,12 +386,14 @@ public class Planner {
     }
 
     /**
-     * 输出序归一化:outputOrder 是裁剪后节点输出列序(第 i 列对应原输出列 outputOrder[i])。
-     * 若输出序 != neededCols 序(如 join 的条件列、Filter/Sort 的条件引用列混在输出中),
-     * 插 MiniDbProject 把输出裁剪为 neededCols 序;序一致则原样返回。
+     * 输出序归一化:outputOrder 是裁剪后节点输出列序(第 i 列对应原输出列 outputOrder[i])。 若输出序 != neededCols 序(如 join
+     * 的条件列、Filter/Sort 的条件引用列混在输出中), 插 MiniDbProject 把输出裁剪为 neededCols 序;序一致则原样返回。
      */
-    private static RelNode ensureProject(RelNode node, List<Integer> outputOrder,
-                                         RelDataType originalRowType, List<Integer> neededCols) {
+    private static RelNode ensureProject(
+            RelNode node,
+            List<Integer> outputOrder,
+            RelDataType originalRowType,
+            List<Integer> neededCols) {
         if (outputOrder.equals(neededCols)) {
             return node;
         }
@@ -408,7 +415,8 @@ public class Planner {
             RelDataTypeField field = originalRowType.getFieldList().get(k);
             builder.add(field.getName(), field.getType());
         }
-        return new MiniDbProject(node.getCluster(), node.getTraitSet(), node, exprs, builder.build());
+        return new MiniDbProject(
+                node.getCluster(), node.getTraitSet(), node, exprs, builder.build());
     }
 
     private static Pruned pruneScan(MiniDbScan scan, List<Integer> neededCols) {
@@ -435,8 +443,13 @@ public class Planner {
         if (existing != null && Arrays.equals(newProj, existing)) {
             return new Pruned(scan, toList(existing));
         }
-        RelNode newScan = new MiniDbScan(scan.getCluster(), scan.getTraitSet(), scan.getTable(),
-                newProj, scan.pushedFilter());
+        RelNode newScan =
+                new MiniDbScan(
+                        scan.getCluster(),
+                        scan.getTraitSet(),
+                        scan.getTable(),
+                        newProj,
+                        scan.pushedFilter());
         // outputOrder:新输出第 i 列 = 原输出索引(无投影:表列;有投影:existing 中的位置)
         List<Integer> outputOrder = new ArrayList<>(newProj.length);
         for (int col : newProj) {
@@ -489,8 +502,14 @@ public class Planner {
             RelDataTypeField field = project.getRowType().getFieldList().get(k);
             builder.add(field.getName(), field.getType());
         }
-        return new Pruned(new MiniDbProject(project.getCluster(), project.getTraitSet(),
-                newInput, newExprs, builder.build()), neededCols);
+        return new Pruned(
+                new MiniDbProject(
+                        project.getCluster(),
+                        project.getTraitSet(),
+                        newInput,
+                        newExprs,
+                        builder.build()),
+                neededCols);
     }
 
     private static Pruned pruneJoin(MiniDbJoin join, List<Integer> neededCols) {
@@ -506,18 +525,20 @@ public class Planner {
             }
         }
         // join 条件引用的列必须保留(join 内部匹配用)
-        join.getCondition().accept(new RexVisitorImpl<Void>(true) {
-            @Override
-            public Void visitInputRef(RexInputRef ref) {
-                int i = ref.getIndex();
-                if (i < leftCols) {
-                    leftNeeded.add(i);
-                } else {
-                    rightNeeded.add(i - leftCols);
-                }
-                return null;
-            }
-        });
+        join.getCondition()
+                .accept(
+                        new RexVisitorImpl<Void>(true) {
+                            @Override
+                            public Void visitInputRef(RexInputRef ref) {
+                                int i = ref.getIndex();
+                                if (i < leftCols) {
+                                    leftNeeded.add(i);
+                                } else {
+                                    rightNeeded.add(i - leftCols);
+                                }
+                                return null;
+                            }
+                        });
         // join 输入也裁剪(传需要的列):子节点输出列序变为 needed 序,join 重建后输出 =
         // 左右拼接(含条件列),再由输出投影归一化为 neededCols 序。copy 保留投影(见
         // MiniDbJoin.copyProjectionTo),重建/CSE 不会丢投影导致上层引用错位。
@@ -525,7 +546,8 @@ public class Planner {
         List<Integer> rightNeededList = new ArrayList<>(rightNeeded);
         RelNode newLeft = pruneColumns(join.getLeft(), leftNeededList);
         RelNode newRight = pruneColumns(join.getRight(), rightNeededList);
-        if (isIdentity(neededCols, total) && newLeft == join.getLeft()
+        if (isIdentity(neededCols, total)
+                && newLeft == join.getLeft()
                 && newRight == join.getRight()) {
             return new Pruned(join, identityList(total));
         }
@@ -538,8 +560,9 @@ public class Planner {
             condMap[leftCols + rightNeededList.get(k)] = leftNeededList.size() + k;
         }
         RexNode newCond = remapRefs(join.getCondition(), condMap);
-        RelNode newJoin = join.copy(join.getTraitSet(), newCond, newLeft, newRight,
-                join.getJoinType(), false);
+        RelNode newJoin =
+                join.copy(
+                        join.getTraitSet(), newCond, newLeft, newRight, join.getJoinType(), false);
         List<Integer> joinOrder = new ArrayList<>(leftNeededList.size() + rightNeededList.size());
         joinOrder.addAll(leftNeededList);
         for (int k : rightNeededList) {
@@ -557,8 +580,8 @@ public class Planner {
                     throw new IllegalStateException("join 输出列不在裁剪结果中: " + neededCols.get(k));
                 }
             }
-            j.setOutputProjection(proj, neededCols, join.getCluster().getTypeFactory(),
-                    join.getRowType());
+            j.setOutputProjection(
+                    proj, neededCols, join.getCluster().getTypeFactory(), join.getRowType());
             // join 输出列序 = neededCols 序(投影序)
             return new Pruned(newJoin, neededCols);
         }
@@ -606,8 +629,12 @@ public class Planner {
         for (int k = 0; k < neededList.size(); k++) {
             map[neededList.get(k)] = k;
         }
-        RelNode newFilter = new MiniDbFilter(filter.getCluster(), filter.getTraitSet(), newInput,
-                remapRefs(filter.getCondition(), map));
+        RelNode newFilter =
+                new MiniDbFilter(
+                        filter.getCluster(),
+                        filter.getTraitSet(),
+                        newInput,
+                        remapRefs(filter.getCondition(), map));
         return new Pruned(newFilter, neededList);
     }
 
@@ -663,35 +690,38 @@ public class Planner {
             int newFilterArg = call.filterArg >= 0 ? map[call.filterArg] : call.filterArg;
             newCalls.add(call.copy(newArgs, newFilterArg, call.collation));
         }
-        RelNode newAgg = aggregate.copy(aggregate.getTraitSet(), newInput, newGroupSet,
-                newGroupSets, newCalls);
+        RelNode newAgg =
+                aggregate.copy(
+                        aggregate.getTraitSet(), newInput, newGroupSet, newGroupSets, newCalls);
         // 聚合输出 = group + aggCalls(不裁剪),输出序 = 原序
         return new Pruned(newAgg, identityList(aggregate.getRowType().getFieldCount()));
     }
 
     /** 收集表达式引用的输入列索引。 */
     private static void collectRefs(RexNode expr, Set<Integer> out) {
-        expr.accept(new RexVisitorImpl<Void>(true) {
-            @Override
-            public Void visitInputRef(RexInputRef ref) {
-                out.add(ref.getIndex());
-                return null;
-            }
-        });
+        expr.accept(
+                new RexVisitorImpl<Void>(true) {
+                    @Override
+                    public Void visitInputRef(RexInputRef ref) {
+                        out.add(ref.getIndex());
+                        return null;
+                    }
+                });
     }
 
     /** 按映射重写表达式里的 RexInputRef 索引(map[old]=new,值为 -1 表示被裁剪但被引用)。 */
     private static RexNode remapRefs(RexNode expr, int[] map) {
-        return expr.accept(new RexShuttle() {
-            @Override
-            public RexNode visitInputRef(RexInputRef ref) {
-                int ni = map[ref.getIndex()];
-                if (ni < 0) {
-                    throw new IllegalStateException("列裁剪后仍被引用: " + ref.getIndex());
-                }
-                return new RexInputRef(ni, ref.getType());
-            }
-        });
+        return expr.accept(
+                new RexShuttle() {
+                    @Override
+                    public RexNode visitInputRef(RexInputRef ref) {
+                        int ni = map[ref.getIndex()];
+                        if (ni < 0) {
+                            throw new IllegalStateException("列裁剪后仍被引用: " + ref.getIndex());
+                        }
+                        return new RexInputRef(ni, ref.getType());
+                    }
+                });
     }
 
     private static List<Integer> identityList(int n) {
@@ -715,17 +745,14 @@ public class Planner {
         return true;
     }
 
-
     // ---- 物化视图查询重写(Phase 1.5) ----
 
     /**
      * 物化视图查询重写:把「与某个 MV 定义结构完全一致」的查询子树替换为对该 MV 表的扫描。
      *
-     * <p>重写只做保守的精确匹配(见 {@link #substituteMv}):用户查询子树与 MV 定义查询的
-     * 规范化逻辑计划 digest 完全相等才替换。这是正确的关键——MV 只存了定义查询的结果,只有
-     * 查询恰好等于(或在其上叠加投影/排序)MV 内容时,扫描 MV 才与原查询等价。聚合 MV 的
-     * 重写同样只覆盖「查询聚合 == MV 聚合」的精确匹配;更灵活的补偿式重写(查询过滤更宽/
-     * 分组更细等)留待后续。</p>
+     * <p>重写只做保守的精确匹配(见 {@link #substituteMv}):用户查询子树与 MV 定义查询的 规范化逻辑计划 digest 完全相等才替换。这是正确的关键——MV
+     * 只存了定义查询的结果,只有 查询恰好等于(或在其上叠加投影/排序)MV 内容时,扫描 MV 才与原查询等价。聚合 MV 的 重写同样只覆盖「查询聚合 == MV
+     * 聚合」的精确匹配;更灵活的补偿式重写(查询过滤更宽/ 分组更细等)留待后续。
      */
     private RelNode rewriteWithMaterializedViews(RelNode logical, String currentSchema) {
         List<MVDefinition> mvs = new ArrayList<>();
@@ -769,17 +796,16 @@ public class Planner {
     }
 
     /**
-     * 自底向上替换:先递归处理输入(深层子树优先),再尝试替换当前节点。
-     * 匹配规则(保守):
+     * 自底向上替换:先递归处理输入(深层子树优先),再尝试替换当前节点。 匹配规则(保守):
+     *
      * <ol>
-     *   <li>当前节点与某 MV 计划结构完全相等(见 {@link #structurallyEqual}) →
-     *       整体替换为 MV 扫描;</li>
-     *   <li>当前节点是 Project 且其输入与某 MV 计划结构相等 → 保留 Project、把输入
-     *       替换为 MV 扫描(MV 输出列 == 被替换子树的输出列,Project 的列引用保持有效)。</li>
+     *   <li>当前节点与某 MV 计划结构完全相等(见 {@link #structurallyEqual}) → 整体替换为 MV 扫描;
+     *   <li>当前节点是 Project 且其输入与某 MV 计划结构相等 → 保留 Project、把输入 替换为 MV 扫描(MV 输出列 == 被替换子树的输出列,Project
+     *       的列引用保持有效)。
      * </ol>
      */
-    private RelNode substituteMv(RelNode node, List<MVDefinition> mvs,
-                                 Map<String, RelNode> mvPlans) {
+    private RelNode substituteMv(
+            RelNode node, List<MVDefinition> mvs, Map<String, RelNode> mvPlans) {
         List<RelNode> inputs = node.getInputs();
         List<RelNode> newInputs = null;
         for (int i = 0; i < inputs.size(); i++) {
@@ -813,11 +839,9 @@ public class Planner {
     }
 
     /**
-     * 结构相等:两棵逻辑计划树逐节点比较——类名、rowType 字段名、各自的 RexNode 表达式
-     * (RexCall/RexInputRef/RexLiteral 的 equals 是结构化的)与 Scan 的 qualified name。
-     * 不用 {@code getDigest()} 字符串比较:digest 会带上 hints/variablesSet 等与重写
-     * 无关的表示差异(如 {@code LogicalProject.NONE.[]} vs {@code LogicalProject.}),
-     * 导致相同的查询形状误判不等。
+     * 结构相等:两棵逻辑计划树逐节点比较——类名、rowType 字段名、各自的 RexNode 表达式 (RexCall/RexInputRef/RexLiteral 的 equals
+     * 是结构化的)与 Scan 的 qualified name。 不用 {@code getDigest()} 字符串比较:digest 会带上 hints/variablesSet
+     * 等与重写 无关的表示差异(如 {@code LogicalProject.NONE.[]} vs {@code LogicalProject.}), 导致相同的查询形状误判不等。
      */
     private static boolean structurallyEqual(RelNode a, RelNode b) {
         if (a.getClass() != b.getClass()) {
@@ -870,8 +894,7 @@ public class Planner {
 
     /** 构造对 MV 存储表的逻辑扫描(物理阶段由 MiniDbScanRule 转成 MiniDbScan)。 */
     private RelNode scanMv(MVDefinition mv, RelNode anchor) {
-        SqlTypeFactoryImpl typeFactory =
-                (SqlTypeFactoryImpl) anchor.getCluster().getTypeFactory();
+        SqlTypeFactoryImpl typeFactory = (SqlTypeFactoryImpl) anchor.getCluster().getTypeFactory();
         RelOptTable table = calcite.resolveTable(mv.schemaName(), mv.name(), typeFactory);
         if (table == null) {
             throw new IllegalStateException("MV table not resolvable: " + mvKey(mv));
@@ -901,8 +924,11 @@ public class Planner {
         private final CalciteContext calcite;
         private final String fallbackSchema;
 
-        ViewExpander(VolcanoPlanner planner, SqlTypeFactoryImpl typeFactory,
-                     CalciteContext calcite, String fallbackSchema) {
+        ViewExpander(
+                VolcanoPlanner planner,
+                SqlTypeFactoryImpl typeFactory,
+                CalciteContext calcite,
+                String fallbackSchema) {
             this.planner = planner;
             this.typeFactory = typeFactory;
             this.calcite = calcite;
@@ -910,11 +936,13 @@ public class Planner {
         }
 
         @Override
-        public RelRoot expandView(RelDataType rowType, String queryString,
-                                  List<String> schemaPath, List<String> viewPath) {
-            String schema = schemaPath.isEmpty()
-                    ? fallbackSchema
-                    : schemaPath.get(schemaPath.size() - 1);
+        public RelRoot expandView(
+                RelDataType rowType,
+                String queryString,
+                List<String> schemaPath,
+                List<String> viewPath) {
+            String schema =
+                    schemaPath.isEmpty() ? fallbackSchema : schemaPath.get(schemaPath.size() - 1);
             RelOptCluster cluster = RelOptCluster.create(planner, new RexBuilder(typeFactory));
             return calcite.planInCluster(queryString, cluster, schema, this);
         }

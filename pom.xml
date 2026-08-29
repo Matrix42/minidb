@@ -29,6 +29,7 @@
     <junit.version>5.14.4</junit.version>
     <log4j.version>2.24.3</log4j.version>
     <sqlline.version>1.12.0</sqlline.version>
+    <spotless.version>2.43.0</spotless.version>
   </properties>
 
   <dependencyManagement>
@@ -154,5 +155,37 @@
         </plugin>
       </plugins>
     </pluginManagement>
+
+    <plugins>
+      <plugin>
+        <groupId>com.diffplug.spotless</groupId>
+        <artifactId>spotless-maven-plugin</artifactId>
+        <version>${spotless.version}</version>
+        <configuration>
+          <java>
+            <googleJavaFormat>
+              <version>1.24.0</version>
+              <style>AOSP</style>
+            </googleJavaFormat>
+
+            <!-- import 分组:本工程 → 其余第三方 → javax → java → 静态导入 -->
+            <importOrder>
+              <order>com.minidb,,javax,java,\#</order>
+            </importOrder>
+
+            <removeUnusedImports />
+          </java>
+        </configuration>
+        <executions>
+          <execution>
+            <id>spotless-check</id>
+            <phase>validate</phase>
+            <goals>
+              <goal>check</goal>
+            </goals>
+          </execution>
+        </executions>
+      </plugin>
+    </plugins>
   </build>
 </project>

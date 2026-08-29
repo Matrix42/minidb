@@ -1,10 +1,7 @@
 package com.minidb.server.plan.physical;
 
 import com.minidb.server.exec.ExecContext;
-import java.util.ArrayList;
-import java.util.HashMap;
-import java.util.List;
-import java.util.Map;
+
 import org.apache.arrow.vector.BitVector;
 import org.apache.arrow.vector.ValueVector;
 import org.apache.arrow.vector.VectorSchemaRoot;
@@ -24,23 +21,31 @@ import org.apache.calcite.rex.RexShuttle;
 import org.apache.calcite.rex.RexVisitorImpl;
 import org.apache.calcite.sql.SqlKind;
 
+import java.util.ArrayList;
+import java.util.HashMap;
+import java.util.List;
+import java.util.Map;
+
 /**
- * Nested-loop join: for every (left, right) candidate pair it builds a
- * one-row joined vector and evaluates the full RexNode condition on it.
- * Correctness over speed — works for any condition, not just equi-joins.
+ * Nested-loop join: for every (left, right) candidate pair it builds a one-row joined vector and
+ * evaluates the full RexNode condition on it. Correctness over speed — works for any condition, not
+ * just equi-joins.
  *
- * <p>Hash acceleration: when the join condition is {@code f(left_cols) = g(right_cols)}
- * (a single equality whose operands reference disjoint sides), we build a hash
- * map from the smaller side and probe from the larger side, reducing the nested
- * loop from O(n×m) to O(n+m). This handles TPC-DS query8's {@code substr(s_zip)
- * = substr(ca_zip)} and similar expression-equalities that Calcite's
+ * <p>Hash acceleration: when the join condition is {@code f(left_cols) = g(right_cols)} (a single
+ * equality whose operands reference disjoint sides), we build a hash map from the smaller side and
+ * probe from the larger side, reducing the nested loop from O(n×m) to O(n+m). This handles TPC-DS
+ * query8's {@code substr(s_zip) = substr(ca_zip)} and similar expression-equalities that Calcite's
  * HashJoin/SortMergeJoin rules can't match (they require bare RexInputRef keys).
  */
 public class MiniDbNestedLoopJoin extends MiniDbJoin {
 
-    public MiniDbNestedLoopJoin(RelOptCluster cluster, RelTraitSet traitSet,
-                                RelNode left, RelNode right, RexNode condition,
-                                JoinRelType joinType) {
+    public MiniDbNestedLoopJoin(
+            RelOptCluster cluster,
+            RelTraitSet traitSet,
+            RelNode left,
+            RelNode right,
+            RexNode condition,
+            JoinRelType joinType) {
         super(cluster, traitSet, left, right, condition, joinType);
     }
 
@@ -58,18 +63,27 @@ public class MiniDbNestedLoopJoin extends MiniDbJoin {
     }
 
     @Override
-    public Join copy(RelTraitSet traitSet, RexNode conditionExpr,
-                     RelNode left, RelNode right, JoinRelType joinType,
-                     boolean semiJoinDone) {
-        MiniDbNestedLoopJoin newJoin = new MiniDbNestedLoopJoin(getCluster(), traitSet, left, right,
-                conditionExpr, joinType);
+    public Join copy(
+            RelTraitSet traitSet,
+            RexNode conditionExpr,
+            RelNode left,
+            RelNode right,
+            JoinRelType joinType,
+            boolean semiJoinDone) {
+        MiniDbNestedLoopJoin newJoin =
+                new MiniDbNestedLoopJoin(
+                        getCluster(), traitSet, left, right, conditionExpr, joinType);
         copyProjectionTo(newJoin);
         return newJoin;
     }
 
     @Override
-    protected PairSource joinPairs(VectorSchemaRoot left, VectorSchemaRoot right,
-                                   JoinInfo info, JoinRelType type, ExecContext ctx) {
+    protected PairSource joinPairs(
+            VectorSchemaRoot left,
+            VectorSchemaRoot right,
+            JoinInfo info,
+            JoinRelType type,
+            ExecContext ctx) {
         // 尝试 hash 加速:f(left_cols) = g(right_cols) 可用 hash map 代替逐对求值。
         PairSource accelerated = tryHashAccelerated(left, right, type, ctx);
         if (accelerated != null) {
@@ -79,14 +93,14 @@ public class MiniDbNestedLoopJoin extends MiniDbJoin {
     }
 
     /**
-     * 若条件为 {@code f(left_cols) = g(right_cols)}(各操作数只引用单侧列),则对右侧建
-     * hash map、左侧 probe,避免 O(n×m) 逐对求值。无法加速时返回 null,调用方回退到
-     * {@link NestedLoopPairSource}。
+     * 若条件为 {@code f(left_cols) = g(right_cols)}(各操作数只引用单侧列),则对右侧建 hash map、左侧 probe,避免 O(n×m)
+     * 逐对求值。无法加速时返回 null,调用方回退到 {@link NestedLoopPairSource}。
      */
-    private PairSource tryHashAccelerated(VectorSchemaRoot left, VectorSchemaRoot right,
-                                          JoinRelType type, ExecContext ctx) {
+    private PairSource tryHashAccelerated(
+            VectorSchemaRoot left, VectorSchemaRoot right, JoinRelType type, ExecContext ctx) {
         RexNode condition = getCondition();
-        if (!(condition instanceof RexCall call) || call.getKind() != SqlKind.EQUALS
+        if (!(condition instanceof RexCall call)
+                || call.getKind() != SqlKind.EQUALS
                 || call.getOperands().size() != 2) {
             return null;
         }
@@ -110,25 +124,31 @@ public class MiniDbNestedLoopJoin extends MiniDbJoin {
     /** 检查 expr 里所有 RexInputRef 索引是否都在 [minIndex, maxIndex) 范围内。 */
     private static boolean onlyReferences(RexNode expr, int minIndex, int maxIndex) {
         boolean[] ok = {true};
-        expr.accept(new RexVisitorImpl<Void>(true) {
-            @Override
-            public Void visitInputRef(RexInputRef inputRef) {
-                if (inputRef.getIndex() < minIndex || inputRef.getIndex() >= maxIndex) {
-                    ok[0] = false;
-                }
-                return null;
-            }
-        });
+        expr.accept(
+                new RexVisitorImpl<Void>(true) {
+                    @Override
+                    public Void visitInputRef(RexInputRef inputRef) {
+                        if (inputRef.getIndex() < minIndex || inputRef.getIndex() >= maxIndex) {
+                            ok[0] = false;
+                        }
+                        return null;
+                    }
+                });
         return ok[0];
     }
 
     /**
-     * 对右侧表达式建 hash map,左侧逐行 probe(流式产出)。rightExpr 的 RexInputRef
-     * 索引需从 [leftCols..] 偏移到 [0..rightCols),由 {@link #shiftIndices} 完成。
+     * 对右侧表达式建 hash map,左侧逐行 probe(流式产出)。rightExpr 的 RexInputRef 索引需从 [leftCols..] 偏移到
+     * [0..rightCols),由 {@link #shiftIndices} 完成。
      */
-    private PairSource hashAcceleratedJoin(VectorSchemaRoot left, VectorSchemaRoot right,
-                                           RexNode leftExpr, RexNode rightExpr, int leftCols,
-                                           JoinRelType type, ExecContext ctx) {
+    private PairSource hashAcceleratedJoin(
+            VectorSchemaRoot left,
+            VectorSchemaRoot right,
+            RexNode leftExpr,
+            RexNode rightExpr,
+            int leftCols,
+            JoinRelType type,
+            ExecContext ctx) {
         // 右侧建 hash map:shift 索引后一次求值全量右行,逐行读 key 入 hash。
         RexNode rightExprShifted = shiftIndices(rightExpr, -leftCols);
         Map<Object, List<Integer>> hashMap = new HashMap<>();
@@ -165,9 +185,12 @@ public class MiniDbNestedLoopJoin extends MiniDbJoin {
         private int phase = 0; // 0=probe, 1=unmatched left, 2=unmatched right
         private int scanIdx = 0;
 
-        HashAccelPairSource(VectorSchemaRoot left, VectorSchemaRoot right, JoinRelType type,
-                            Map<Object, List<Integer>> hashMap,
-                            ValueVector leftResults) {
+        HashAccelPairSource(
+                VectorSchemaRoot left,
+                VectorSchemaRoot right,
+                JoinRelType type,
+                Map<Object, List<Integer>> hashMap,
+                ValueVector leftResults) {
             this.left = left;
             this.right = right;
             this.hashMap = hashMap;
@@ -257,8 +280,8 @@ public class MiniDbNestedLoopJoin extends MiniDbJoin {
     }
 
     /**
-     * 纯嵌套循环:O(n×m) 逐对求值,当 hash 加速不可用时回退到此处。
-     * 双游标推进 + probeRoot 复用,天然流式。非静态内部类以访问 buildProbeRoot/getCondition。
+     * 纯嵌套循环:O(n×m) 逐对求值,当 hash 加速不可用时回退到此处。 双游标推进 + probeRoot 复用,天然流式。非静态内部类以访问
+     * buildProbeRoot/getCondition。
      */
     private final class NestedLoopPairSource implements PairSource {
         private final VectorSchemaRoot left;
@@ -275,8 +298,8 @@ public class MiniDbNestedLoopJoin extends MiniDbJoin {
         private int phase = 0; // 0=loop, 1=unmatched left, 2=unmatched right
         private int scanIdx = 0;
 
-        NestedLoopPairSource(VectorSchemaRoot left, VectorSchemaRoot right, JoinRelType type,
-                             ExecContext ctx) {
+        NestedLoopPairSource(
+                VectorSchemaRoot left, VectorSchemaRoot right, JoinRelType type, ExecContext ctx) {
             this.left = left;
             this.right = right;
             this.ctx = ctx;
@@ -307,9 +330,11 @@ public class MiniDbNestedLoopJoin extends MiniDbJoin {
                         continue;
                     }
                     writeProbeRow(probeRoot, left, leftIdx, right, rightIdx);
-                    try (ValueVector conditionResult = ctx.interpreter().eval(getCondition(), probeRoot)) {
-                        boolean matches = !conditionResult.isNull(0)
-                                && ((BitVector) conditionResult).get(0) == 1;
+                    try (ValueVector conditionResult =
+                            ctx.interpreter().eval(getCondition(), probeRoot)) {
+                        boolean matches =
+                                !conditionResult.isNull(0)
+                                        && ((BitVector) conditionResult).get(0) == 1;
                         if (matches) {
                             leftRows[out] = leftIdx;
                             rightRows[out] = rightIdx;
@@ -366,11 +391,12 @@ public class MiniDbNestedLoopJoin extends MiniDbJoin {
 
     /** 把 RexNode 里所有 RexInputRef 索引偏移 {@code delta}(可为负)。 */
     private static RexNode shiftIndices(RexNode expr, int delta) {
-        return expr.accept(new RexShuttle() {
-            @Override
-            public RexNode visitInputRef(RexInputRef inputRef) {
-                return new RexInputRef(inputRef.getIndex() + delta, inputRef.getType());
-            }
-        });
+        return expr.accept(
+                new RexShuttle() {
+                    @Override
+                    public RexNode visitInputRef(RexInputRef inputRef) {
+                        return new RexInputRef(inputRef.getIndex() + delta, inputRef.getType());
+                    }
+                });
     }
 }

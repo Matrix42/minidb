@@ -5,8 +5,7 @@ import com.minidb.server.exec.QueryExecutor;
 import com.minidb.server.exec.QueryResult;
 import com.minidb.server.stats.StatsManager;
 import com.minidb.server.storage.StorageManager;
-import java.math.BigDecimal;
-import java.nio.file.Path;
+
 import org.apache.arrow.memory.BufferAllocator;
 import org.apache.arrow.memory.RootAllocator;
 import org.apache.arrow.vector.BigIntVector;
@@ -21,18 +20,19 @@ import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
 
+import java.math.BigDecimal;
+import java.nio.file.Path;
+
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 /**
- * 端到端验证聚合累加器对新增标量类型按 Calcite 推导的输出类型落向量:
- * SUM/AVG(DECIMAL) -> DecimalVector、SUM/AVG(REAL) -> Float4Vector、
- * SUM/AVG/MIN/MAX(SMALLINT) -> SmallIntVector。
+ * 端到端验证聚合累加器对新增标量类型按 Calcite 推导的输出类型落向量: SUM/AVG(DECIMAL) -> DecimalVector、SUM/AVG(REAL) ->
+ * Float4Vector、 SUM/AVG/MIN/MAX(SMALLINT) -> SmallIntVector。
  */
 class MiniDbAggregateTest {
 
-    @TempDir
-    Path dataDir;
+    @TempDir Path dataDir;
     BufferAllocator allocator;
     MiniDbCatalog catalog;
     StorageManager storage;
@@ -67,9 +67,11 @@ class MiniDbAggregateTest {
         ValueVector s = root.getVector("s");
         ValueVector a = root.getVector("a");
         // SUM(DECIMAL(10,2)) -> DECIMAL(19,2)、AVG(DECIMAL(10,2)) -> 提升 scale 避免截断(scale=6)。
-        assertTrue(s instanceof DecimalVector,
+        assertTrue(
+                s instanceof DecimalVector,
                 "expected DecimalVector for SUM, got " + s.getClass().getSimpleName());
-        assertTrue(a instanceof DecimalVector,
+        assertTrue(
+                a instanceof DecimalVector,
                 "expected DecimalVector for AVG, got " + a.getClass().getSimpleName());
         assertEquals(0, new BigDecimal("61.00").compareTo((BigDecimal) s.getObject(0)));
         // 61.00 / 3 = 20.333333...,scale=2 时舍入为 20.33,scale=6 时保留 20.333333。
@@ -86,9 +88,11 @@ class MiniDbAggregateTest {
         ValueVector s = root.getVector("s");
         ValueVector a = root.getVector("a");
         // SUM/AVG(REAL) -> REAL,落 Float4Vector(非 Float8Vector)。
-        assertTrue(s instanceof Float4Vector,
+        assertTrue(
+                s instanceof Float4Vector,
                 "expected Float4Vector for SUM, got " + s.getClass().getSimpleName());
-        assertTrue(a instanceof Float4Vector,
+        assertTrue(
+                a instanceof Float4Vector,
                 "expected Float4Vector for AVG, got " + a.getClass().getSimpleName());
         assertEquals(4.0f, ((Float4Vector) s).get(0), 1e-6f);
         assertEquals(2.0f, ((Float4Vector) a).get(0), 1e-6f);
@@ -99,18 +103,20 @@ class MiniDbAggregateTest {
     void sumAvgMinMaxSmallIntWritesSmallIntVector() {
         executor.execute("CREATE TABLE t (x SMALLINT)");
         executor.execute("INSERT INTO t VALUES (1), (2), (3)");
-        QueryResult r = executor.execute(
-                "SELECT SUM(x) AS s, AVG(x) AS a, MIN(x) AS mn, MAX(x) AS mx FROM t");
+        QueryResult r =
+                executor.execute(
+                        "SELECT SUM(x) AS s, AVG(x) AS a, MIN(x) AS mn, MAX(x) AS mx FROM t");
         VectorSchemaRoot root = rows(r);
         // SUM/MIN/MAX(SMALLINT) -> SMALLINT,落 SmallIntVector;AVG(SMALLINT) -> Float8Vector(精度提升)。
-        assertTrue(root.getVector("s") instanceof SmallIntVector,
-                "expected SmallIntVector for s");
-        assertTrue(root.getVector("a") instanceof Float8Vector,
-                "expected Float8Vector for a, got " + root.getVector("a").getClass().getSimpleName());
-        assertTrue(root.getVector("mn") instanceof SmallIntVector,
-                "expected SmallIntVector for mn");
-        assertTrue(root.getVector("mx") instanceof SmallIntVector,
-                "expected SmallIntVector for mx");
+        assertTrue(root.getVector("s") instanceof SmallIntVector, "expected SmallIntVector for s");
+        assertTrue(
+                root.getVector("a") instanceof Float8Vector,
+                "expected Float8Vector for a, got "
+                        + root.getVector("a").getClass().getSimpleName());
+        assertTrue(
+                root.getVector("mn") instanceof SmallIntVector, "expected SmallIntVector for mn");
+        assertTrue(
+                root.getVector("mx") instanceof SmallIntVector, "expected SmallIntVector for mx");
         assertEquals(6, ((SmallIntVector) root.getVector("s")).get(0));
         assertEquals(2.0, ((Float8Vector) root.getVector("a")).get(0), 0.001);
         assertEquals(1, ((SmallIntVector) root.getVector("mn")).get(0));
@@ -125,7 +131,8 @@ class MiniDbAggregateTest {
         QueryResult r = executor.execute("SELECT SUM(DISTINCT price) AS s FROM t");
         VectorSchemaRoot root = rows(r);
         ValueVector s = root.getVector("s");
-        assertTrue(s instanceof DecimalVector,
+        assertTrue(
+                s instanceof DecimalVector,
                 "expected DecimalVector for SUM(DISTINCT), got " + s.getClass().getSimpleName());
         assertEquals(0, new BigDecimal("31.00").compareTo((BigDecimal) s.getObject(0)));
         root.close();
@@ -135,16 +142,16 @@ class MiniDbAggregateTest {
     void stddevAndVarDouble() {
         executor.execute("CREATE TABLE t (x DOUBLE)");
         executor.execute("INSERT INTO t VALUES (1.0), (2.0), (3.0)");
-        QueryResult r = executor.execute(
-                "SELECT STDDEV_SAMP(x) AS ss, STDDEV_POP(x) AS sp,"
-                        + " VAR_SAMP(x) AS vs, VAR_POP(x) AS vp FROM t");
+        QueryResult r =
+                executor.execute(
+                        "SELECT STDDEV_SAMP(x) AS ss, STDDEV_POP(x) AS sp,"
+                                + " VAR_SAMP(x) AS vs, VAR_POP(x) AS vp FROM t");
         VectorSchemaRoot root = rows(r);
         try {
             // 样本标准差 = sqrt(((1-2)^2+(2-2)^2+(3-2)^2)/2) = sqrt(1) = 1。
             assertEquals(1.0, ((Float8Vector) root.getVector("ss")).get(0), 1e-9);
             // 总体标准差 = sqrt(2/3)。
-            assertEquals(Math.sqrt(2.0 / 3.0),
-                    ((Float8Vector) root.getVector("sp")).get(0), 1e-9);
+            assertEquals(Math.sqrt(2.0 / 3.0), ((Float8Vector) root.getVector("sp")).get(0), 1e-9);
             assertEquals(1.0, ((Float8Vector) root.getVector("vs")).get(0), 1e-9);
             assertEquals(2.0 / 3.0, ((Float8Vector) root.getVector("vp")).get(0), 1e-9);
         } finally {

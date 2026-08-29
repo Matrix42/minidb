@@ -1,6 +1,7 @@
 package com.minidb.server.exec;
 
 import com.minidb.server.catalog.MiniDbCatalog;
+
 import org.apache.arrow.memory.RootAllocator;
 import org.apache.arrow.vector.VarCharVector;
 import org.apache.arrow.vector.VectorSchemaRoot;
@@ -52,11 +53,21 @@ class MetadataExecutorTest {
     void tablesReturnsAllTablesAcrossSchemas() throws Exception {
         try (RootAllocator alloc = new RootAllocator()) {
             MiniDbCatalog cat = new MiniDbCatalog();
-            cat.createTable(new com.minidb.storage.common.TableSchema("public", "users",
-                    java.util.List.of(new com.minidb.storage.common.ColumnMeta("id", com.minidb.storage.common.ColumnType.INTEGER))));
+            cat.createTable(
+                    new com.minidb.storage.common.TableSchema(
+                            "public",
+                            "users",
+                            java.util.List.of(
+                                    new com.minidb.storage.common.ColumnMeta(
+                                            "id", com.minidb.storage.common.ColumnType.INTEGER))));
             cat.createSchema("other");
-            cat.createTable(new com.minidb.storage.common.TableSchema("other", "t",
-                    java.util.List.of(new com.minidb.storage.common.ColumnMeta("a", com.minidb.storage.common.ColumnType.BIGINT))));
+            cat.createTable(
+                    new com.minidb.storage.common.TableSchema(
+                            "other",
+                            "t",
+                            java.util.List.of(
+                                    new com.minidb.storage.common.ColumnMeta(
+                                            "a", com.minidb.storage.common.ColumnType.BIGINT))));
             MetadataExecutor exec = new MetadataExecutor(cat, alloc);
             try (VectorSchemaRoot root = exec.tables(null, null, null)) {
                 // information_schema(4 张系统表) + other/t + public/users
@@ -81,13 +92,18 @@ class MetadataExecutorTest {
     void tablesFilterBySchemaAndType() throws Exception {
         try (RootAllocator alloc = new RootAllocator()) {
             MiniDbCatalog cat = new MiniDbCatalog();
-            cat.createTable(new com.minidb.storage.common.TableSchema("public", "u",
-                    java.util.List.of(new com.minidb.storage.common.ColumnMeta("id", com.minidb.storage.common.ColumnType.INTEGER))));
+            cat.createTable(
+                    new com.minidb.storage.common.TableSchema(
+                            "public",
+                            "u",
+                            java.util.List.of(
+                                    new com.minidb.storage.common.ColumnMeta(
+                                            "id", com.minidb.storage.common.ColumnType.INTEGER))));
             MetadataExecutor exec = new MetadataExecutor(cat, alloc);
-            try (VectorSchemaRoot root = exec.tables("public", null, new String[]{"VIEW"})) {
+            try (VectorSchemaRoot root = exec.tables("public", null, new String[] {"VIEW"})) {
                 assertEquals(0, root.getRowCount()); // VIEW matches nothing
             }
-            try (VectorSchemaRoot root = exec.tables("public", null, new String[]{"TABLE"})) {
+            try (VectorSchemaRoot root = exec.tables("public", null, new String[] {"TABLE"})) {
                 assertEquals(1, root.getRowCount());
             }
         }
@@ -97,10 +113,16 @@ class MetadataExecutorTest {
     void columnsReturnsAllColumnsWithOrdinalAndType() throws Exception {
         try (RootAllocator alloc = new RootAllocator()) {
             MiniDbCatalog cat = new MiniDbCatalog();
-            cat.createTable(new com.minidb.storage.common.TableSchema("public", "users",
-                    java.util.List.of(
-                            new com.minidb.storage.common.ColumnMeta("id", com.minidb.storage.common.ColumnType.INTEGER),
-                            new com.minidb.storage.common.ColumnMeta("name", com.minidb.storage.common.ColumnType.VARCHAR))));
+            cat.createTable(
+                    new com.minidb.storage.common.TableSchema(
+                            "public",
+                            "users",
+                            java.util.List.of(
+                                    new com.minidb.storage.common.ColumnMeta(
+                                            "id", com.minidb.storage.common.ColumnType.INTEGER),
+                                    new com.minidb.storage.common.ColumnMeta(
+                                            "name",
+                                            com.minidb.storage.common.ColumnType.VARCHAR))));
             MetadataExecutor exec = new MetadataExecutor(cat, alloc);
             try (VectorSchemaRoot root = exec.columns("public", null, null)) {
                 assertEquals(2, root.getRowCount());
@@ -124,10 +146,16 @@ class MetadataExecutorTest {
     void columnsFilterByLikeColumnName() throws Exception {
         try (RootAllocator alloc = new RootAllocator()) {
             MiniDbCatalog cat = new MiniDbCatalog();
-            cat.createTable(new com.minidb.storage.common.TableSchema("public", "users",
-                    java.util.List.of(
-                            new com.minidb.storage.common.ColumnMeta("id", com.minidb.storage.common.ColumnType.INTEGER),
-                            new com.minidb.storage.common.ColumnMeta("username", com.minidb.storage.common.ColumnType.VARCHAR))));
+            cat.createTable(
+                    new com.minidb.storage.common.TableSchema(
+                            "public",
+                            "users",
+                            java.util.List.of(
+                                    new com.minidb.storage.common.ColumnMeta(
+                                            "id", com.minidb.storage.common.ColumnType.INTEGER),
+                                    new com.minidb.storage.common.ColumnMeta(
+                                            "username",
+                                            com.minidb.storage.common.ColumnType.VARCHAR))));
             MetadataExecutor exec = new MetadataExecutor(cat, alloc);
             try (VectorSchemaRoot root = exec.columns("public", null, "%name%")) {
                 assertEquals(1, root.getRowCount());
@@ -141,12 +169,22 @@ class MetadataExecutorTest {
     void columnsReportsNewTypesWithDecimalPrecisionAndScale() throws Exception {
         try (RootAllocator alloc = new RootAllocator()) {
             MiniDbCatalog cat = new MiniDbCatalog();
-            cat.createTable(new com.minidb.storage.common.TableSchema("public", "t",
-                    java.util.List.of(
-                            new com.minidb.storage.common.ColumnMeta("s", com.minidb.storage.common.ColumnType.SMALLINT),
-                            new com.minidb.storage.common.ColumnMeta("p", com.minidb.storage.common.ColumnType.DECIMAL, 10, 2),
-                            new com.minidb.storage.common.ColumnMeta("t", com.minidb.storage.common.ColumnType.TIME),
-                            new com.minidb.storage.common.ColumnMeta("b", com.minidb.storage.common.ColumnType.VARBINARY))));
+            cat.createTable(
+                    new com.minidb.storage.common.TableSchema(
+                            "public",
+                            "t",
+                            java.util.List.of(
+                                    new com.minidb.storage.common.ColumnMeta(
+                                            "s", com.minidb.storage.common.ColumnType.SMALLINT),
+                                    new com.minidb.storage.common.ColumnMeta(
+                                            "p",
+                                            com.minidb.storage.common.ColumnType.DECIMAL,
+                                            10,
+                                            2),
+                                    new com.minidb.storage.common.ColumnMeta(
+                                            "t", com.minidb.storage.common.ColumnType.TIME),
+                                    new com.minidb.storage.common.ColumnMeta(
+                                            "b", com.minidb.storage.common.ColumnType.VARBINARY))));
             MetadataExecutor exec = new MetadataExecutor(cat, alloc);
             try (VectorSchemaRoot root = exec.columns("public", null, null)) {
                 assertEquals(4, root.getRowCount());
@@ -182,18 +220,27 @@ class MetadataExecutorTest {
 
     @Test
     void compileLikeMatchesSingleCharWildcard() {
-        assertTrue(MetadataExecutor.compileLike("t_%").matcher("t1").matches(), "t1 should match t_%");
-        assertTrue(MetadataExecutor.compileLike("t_%").matcher("t12").matches(), "t12 should match t_%");
-        assertFalse(MetadataExecutor.compileLike("t_%").matcher("t").matches(), "t should not match t_%");
+        assertTrue(
+                MetadataExecutor.compileLike("t_%").matcher("t1").matches(), "t1 should match t_%");
+        assertTrue(
+                MetadataExecutor.compileLike("t_%").matcher("t12").matches(),
+                "t12 should match t_%");
+        assertFalse(
+                MetadataExecutor.compileLike("t_%").matcher("t").matches(),
+                "t should not match t_%");
     }
 
     @Test
     void compileLikeHonorsEscapeCharacter() {
         // getSearchStringEscape() = "\";DataGrip 会把 _ 转义为 \_ 以匹配字面下划线
-        assertTrue(MetadataExecutor.compileLike("information\\_schema")
-                .matcher("information_schema").matches());
-        assertFalse(MetadataExecutor.compileLike("information\\_schema")
-                .matcher("informationXschema").matches());
+        assertTrue(
+                MetadataExecutor.compileLike("information\\_schema")
+                        .matcher("information_schema")
+                        .matches());
+        assertFalse(
+                MetadataExecutor.compileLike("information\\_schema")
+                        .matcher("informationXschema")
+                        .matches());
         // \% 匹配字面 %, \\ 匹配字面 \
         assertTrue(MetadataExecutor.compileLike("a\\%b").matcher("a%b").matches());
         assertTrue(MetadataExecutor.compileLike("a\\\\b").matcher("a\\b").matches());

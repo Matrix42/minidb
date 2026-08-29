@@ -13,9 +13,7 @@ import java.util.Set;
 import java.util.zip.CRC32;
 
 /**
- * 全局事务日志，记录 COMMIT/ABORT 决定。
- * 格式：[checksum:4][length:4][txId:8][status:1]
- * status: 0=COMMIT, 1=ABORT
+ * 全局事务日志，记录 COMMIT/ABORT 决定。 格式：[checksum:4][length:4][txId:8][status:1] status: 0=COMMIT, 1=ABORT
  * 只追加，每条记录 fsync。
  */
 public class TxLog implements AutoCloseable {
@@ -24,15 +22,19 @@ public class TxLog implements AutoCloseable {
     public static final byte STATUS_ABORT = 1;
 
     private static final int PAYLOAD_SIZE = 9; // txId(8) + status(1)
-    private static final int HEADER_SIZE = 8;  // checksum(4) + length(4)
+    private static final int HEADER_SIZE = 8; // checksum(4) + length(4)
 
     private final FileChannel channel;
 
     public TxLog(Path path) {
         try {
             Files.createDirectories(path.getParent());
-            this.channel = FileChannel.open(path,
-                    StandardOpenOption.CREATE, StandardOpenOption.READ, StandardOpenOption.WRITE);
+            this.channel =
+                    FileChannel.open(
+                            path,
+                            StandardOpenOption.CREATE,
+                            StandardOpenOption.READ,
+                            StandardOpenOption.WRITE);
             this.channel.position(this.channel.size());
         } catch (IOException e) {
             throw new UncheckedIOException(e);
@@ -41,6 +43,7 @@ public class TxLog implements AutoCloseable {
 
     /**
      * 追加一条事务决定记录并 fsync。
+     *
      * @param txId 事务 ID
      * @param status STATUS_COMMIT 或 STATUS_ABORT
      */
@@ -70,6 +73,7 @@ public class TxLog implements AutoCloseable {
 
     /**
      * 恢复：读取所有 COMMITTED 的事务 ID。
+     *
      * @return 已提交事务的 txId 集合
      */
     public Set<Long> recoverCommitted() {

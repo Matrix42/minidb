@@ -1,11 +1,12 @@
 package com.minidb.server.config;
 
-import static org.junit.jupiter.api.Assertions.assertEquals;
+import org.junit.jupiter.api.Test;
+import org.junit.jupiter.api.io.TempDir;
 
 import java.nio.file.Files;
 import java.nio.file.Path;
-import org.junit.jupiter.api.Test;
-import org.junit.jupiter.api.io.TempDir;
+
+import static org.junit.jupiter.api.Assertions.assertEquals;
 
 class MiniDbConfigTest {
 
@@ -18,7 +19,8 @@ class MiniDbConfigTest {
 
     @Test
     void loadsYaml(@TempDir Path dir) throws Exception {
-        Files.writeString(dir.resolve("config.yaml"),
+        Files.writeString(
+                dir.resolve("config.yaml"),
                 "compaction:\n  target-size-mb: 64\n  auto-part-threshold: 5\n");
         MiniDbConfig config = MiniDbConfig.load(dir);
         assertEquals(64L * 1024 * 1024, config.compactionTargetSizeBytes());
@@ -27,8 +29,7 @@ class MiniDbConfigTest {
 
     @Test
     void partialYamlFallsBackToDefault(@TempDir Path dir) throws Exception {
-        Files.writeString(dir.resolve("config.yaml"),
-                "compaction:\n  target-size-mb: 32\n");
+        Files.writeString(dir.resolve("config.yaml"), "compaction:\n  target-size-mb: 32\n");
         MiniDbConfig config = MiniDbConfig.load(dir);
         assertEquals(32L * 1024 * 1024, config.compactionTargetSizeBytes());
         assertEquals(16, config.compactionAutoPartThreshold());
@@ -41,8 +42,7 @@ class MiniDbConfigTest {
 
     @Test
     void loadsServerQueryThreads(@TempDir Path dir) throws Exception {
-        Files.writeString(dir.resolve("config.yaml"),
-                "server:\n  query-threads: 4\n");
+        Files.writeString(dir.resolve("config.yaml"), "server:\n  query-threads: 4\n");
         assertEquals(4, MiniDbConfig.load(dir).serverQueryThreads());
     }
 
@@ -53,8 +53,7 @@ class MiniDbConfigTest {
 
     @Test
     void loadsServerPort(@TempDir Path dir) throws Exception {
-        Files.writeString(dir.resolve("config.yaml"),
-                "server:\n  port: 9100\n");
+        Files.writeString(dir.resolve("config.yaml"), "server:\n  port: 9100\n");
         assertEquals(9100, MiniDbConfig.load(dir).serverPort());
     }
 }

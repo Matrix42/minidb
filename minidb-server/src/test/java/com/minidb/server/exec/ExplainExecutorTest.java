@@ -5,7 +5,7 @@ import com.minidb.server.plan.Planner;
 import com.minidb.server.stats.StatsManager;
 import com.minidb.server.storage.StorageManager;
 import com.minidb.storage.common.SimpleTable;
-import java.nio.file.Path;
+
 import org.apache.arrow.memory.BufferAllocator;
 import org.apache.arrow.memory.RootAllocator;
 import org.apache.arrow.vector.BigIntVector;
@@ -18,6 +18,8 @@ import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
 
+import java.nio.file.Path;
+
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertThrows;
@@ -25,8 +27,7 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
 
 class ExplainExecutorTest {
 
-    @TempDir
-    Path dataDir;
+    @TempDir Path dataDir;
     BufferAllocator allocator;
     MiniDbCatalog catalog;
     StorageManager storage;
@@ -43,11 +44,15 @@ class ExplainExecutorTest {
         planner = new Planner(catalog);
         explain = new ExplainExecutor(planner, stats, storage, allocator);
 
-        storage.createTable(new com.minidb.storage.common.TableSchema("t",
-                java.util.List.of(
-                        new com.minidb.storage.common.ColumnMeta("id", com.minidb.storage.common.ColumnType.INTEGER),
-                        new com.minidb.storage.common.ColumnMeta("name", com.minidb.storage.common.ColumnType.VARCHAR))));
-        insertRows("t", new int[]{1, 2, 3}, new String[]{"a", "b", "c"});
+        storage.createTable(
+                new com.minidb.storage.common.TableSchema(
+                        "t",
+                        java.util.List.of(
+                                new com.minidb.storage.common.ColumnMeta(
+                                        "id", com.minidb.storage.common.ColumnType.INTEGER),
+                                new com.minidb.storage.common.ColumnMeta(
+                                        "name", com.minidb.storage.common.ColumnType.VARCHAR))));
+        insertRows("t", new int[] {1, 2, 3}, new String[] {"a", "b", "c"});
     }
 
     private void insertRows(String table, int[] ids, String[] names) {
@@ -158,13 +163,17 @@ class ExplainExecutorTest {
             }
         }
         assertTrue(filterRemarks != null);
-        assertTrue(filterRemarks.contains("default") || filterRemarks.contains("stale") || filterRemarks.contains("no stats"));
+        assertTrue(
+                filterRemarks.contains("default")
+                        || filterRemarks.contains("stale")
+                        || filterRemarks.contains("no stats"));
         root.close();
     }
 
     @Test
     void explainRejectsDml() {
-        assertThrows(IllegalArgumentException.class,
+        assertThrows(
+                IllegalArgumentException.class,
                 () -> explain.explain("INSERT INTO t VALUES (1, 'a')"));
     }
 
@@ -194,7 +203,8 @@ class ExplainExecutorTest {
 
     @Test
     void explainAnalyzeRejectsDml() {
-        assertThrows(IllegalArgumentException.class,
+        assertThrows(
+                IllegalArgumentException.class,
                 () -> explain.analyze("DELETE FROM t WHERE id = 1"));
     }
 

@@ -1,18 +1,28 @@
 package com.minidb.storage.lsm;
 
-import static org.junit.jupiter.api.Assertions.*;
 import com.minidb.storage.common.*;
-import java.nio.file.Path;
-import java.util.List;
+
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
+
+import java.nio.file.Path;
+import java.util.List;
+
+import static org.junit.jupiter.api.Assertions.*;
 
 class SSTableManagerTest {
     @Test
     void addAndRetrieveByLevel(@TempDir Path dir) {
         SSTableManager mgr = new SSTableManager();
-        SSTable sst = new SSTable(dir.resolve("sst-L0-000001.sst"), 0, 1,
-                List.of(1), List.of(10), 5, new BloomFilter(10, 100));
+        SSTable sst =
+                new SSTable(
+                        dir.resolve("sst-L0-000001.sst"),
+                        0,
+                        1,
+                        List.of(1),
+                        List.of(10),
+                        5,
+                        new BloomFilter(10, 100));
         mgr.addLevel0(sst);
 
         assertEquals(1, mgr.levelFiles(0).size());
@@ -23,10 +33,24 @@ class SSTableManagerTest {
     @Test
     void level0SortedBySeqDesc() {
         SSTableManager mgr = new SSTableManager();
-        SSTable sst1 = new SSTable(Path.of("sst-L0-000001.sst"), 0, 1,
-                List.of(1), List.of(10), 5, new BloomFilter(10, 100));
-        SSTable sst2 = new SSTable(Path.of("sst-L0-000002.sst"), 0, 2,
-                List.of(1), List.of(10), 5, new BloomFilter(10, 100));
+        SSTable sst1 =
+                new SSTable(
+                        Path.of("sst-L0-000001.sst"),
+                        0,
+                        1,
+                        List.of(1),
+                        List.of(10),
+                        5,
+                        new BloomFilter(10, 100));
+        SSTable sst2 =
+                new SSTable(
+                        Path.of("sst-L0-000002.sst"),
+                        0,
+                        2,
+                        List.of(1),
+                        List.of(10),
+                        5,
+                        new BloomFilter(10, 100));
         mgr.addLevel0(sst1);
         mgr.addLevel0(sst2);
 
@@ -39,8 +63,15 @@ class SSTableManagerTest {
     @Test
     void removeRemovesFromLevel() {
         SSTableManager mgr = new SSTableManager();
-        SSTable sst = new SSTable(Path.of("sst-L0-000001.sst"), 0, 1,
-                List.of(1), List.of(10), 5, new BloomFilter(10, 100));
+        SSTable sst =
+                new SSTable(
+                        Path.of("sst-L0-000001.sst"),
+                        0,
+                        1,
+                        List.of(1),
+                        List.of(10),
+                        5,
+                        new BloomFilter(10, 100));
         mgr.addLevel0(sst);
         mgr.remove(List.of(sst));
         assertTrue(mgr.levelFiles(0).isEmpty());
@@ -58,12 +89,33 @@ class SSTableManagerTest {
     void addLevelNSortedByMinKey() {
         SSTableManager mgr = new SSTableManager();
         // minKey [5] < [10] < [20], 乱序插入验证排序
-        SSTable sst1 = new SSTable(Path.of("sst-L1-000001.sst"), 1, 1,
-                List.of(20), List.of(30), 5, new BloomFilter(10, 100));
-        SSTable sst2 = new SSTable(Path.of("sst-L1-000002.sst"), 1, 2,
-                List.of(5), List.of(10), 5, new BloomFilter(10, 100));
-        SSTable sst3 = new SSTable(Path.of("sst-L1-000003.sst"), 1, 3,
-                List.of(10), List.of(15), 5, new BloomFilter(10, 100));
+        SSTable sst1 =
+                new SSTable(
+                        Path.of("sst-L1-000001.sst"),
+                        1,
+                        1,
+                        List.of(20),
+                        List.of(30),
+                        5,
+                        new BloomFilter(10, 100));
+        SSTable sst2 =
+                new SSTable(
+                        Path.of("sst-L1-000002.sst"),
+                        1,
+                        2,
+                        List.of(5),
+                        List.of(10),
+                        5,
+                        new BloomFilter(10, 100));
+        SSTable sst3 =
+                new SSTable(
+                        Path.of("sst-L1-000003.sst"),
+                        1,
+                        3,
+                        List.of(10),
+                        List.of(15),
+                        5,
+                        new BloomFilter(10, 100));
         mgr.addLevelN(1, List.of(sst1, sst2, sst3));
 
         List<SSTable> l1 = mgr.levelFiles(1);
@@ -77,12 +129,33 @@ class SSTableManagerTest {
     @Test
     void addLevelNSortedByMinKeyString() {
         SSTableManager mgr = new SSTableManager();
-        SSTable sst1 = new SSTable(Path.of("sst-L1-000001.sst"), 1, 1,
-                List.of("c"), List.of("d"), 5, new BloomFilter(10, 100));
-        SSTable sst2 = new SSTable(Path.of("sst-L1-000002.sst"), 1, 2,
-                List.of("a"), List.of("b"), 5, new BloomFilter(10, 100));
-        SSTable sst3 = new SSTable(Path.of("sst-L1-000003.sst"), 1, 3,
-                List.of("b"), List.of("c"), 5, new BloomFilter(10, 100));
+        SSTable sst1 =
+                new SSTable(
+                        Path.of("sst-L1-000001.sst"),
+                        1,
+                        1,
+                        List.of("c"),
+                        List.of("d"),
+                        5,
+                        new BloomFilter(10, 100));
+        SSTable sst2 =
+                new SSTable(
+                        Path.of("sst-L1-000002.sst"),
+                        1,
+                        2,
+                        List.of("a"),
+                        List.of("b"),
+                        5,
+                        new BloomFilter(10, 100));
+        SSTable sst3 =
+                new SSTable(
+                        Path.of("sst-L1-000003.sst"),
+                        1,
+                        3,
+                        List.of("b"),
+                        List.of("c"),
+                        5,
+                        new BloomFilter(10, 100));
         mgr.addLevelN(1, List.of(sst1, sst2, sst3));
 
         List<SSTable> l1 = mgr.levelFiles(1);
@@ -96,12 +169,33 @@ class SSTableManagerTest {
     void addLevelNCompoundKey() {
         SSTableManager mgr = new SSTableManager();
         // 复合键: 先比第一列，再比第二列
-        SSTable sst1 = new SSTable(Path.of("sst-L1-000001.sst"), 1, 1,
-                List.of(1, 5), List.of(1, 10), 5, new BloomFilter(10, 100));
-        SSTable sst2 = new SSTable(Path.of("sst-L1-000002.sst"), 1, 2,
-                List.of(1, 1), List.of(1, 3), 5, new BloomFilter(10, 100));
-        SSTable sst3 = new SSTable(Path.of("sst-L1-000003.sst"), 1, 3,
-                List.of(2, 0), List.of(2, 10), 5, new BloomFilter(10, 100));
+        SSTable sst1 =
+                new SSTable(
+                        Path.of("sst-L1-000001.sst"),
+                        1,
+                        1,
+                        List.of(1, 5),
+                        List.of(1, 10),
+                        5,
+                        new BloomFilter(10, 100));
+        SSTable sst2 =
+                new SSTable(
+                        Path.of("sst-L1-000002.sst"),
+                        1,
+                        2,
+                        List.of(1, 1),
+                        List.of(1, 3),
+                        5,
+                        new BloomFilter(10, 100));
+        SSTable sst3 =
+                new SSTable(
+                        Path.of("sst-L1-000003.sst"),
+                        1,
+                        3,
+                        List.of(2, 0),
+                        List.of(2, 10),
+                        5,
+                        new BloomFilter(10, 100));
         mgr.addLevelN(1, List.of(sst1, sst3, sst2));
 
         List<SSTable> l1 = mgr.levelFiles(1);
@@ -117,8 +211,15 @@ class SSTableManagerTest {
         // 验证修复: SSTable.KEY_COMPARATOR 支持 Integer 类型 key，
         // 不会像 MemTable.KEY_COMPARATOR 那样 (String) 强转抛 ClassCastException
         SSTableManager mgr = new SSTableManager();
-        SSTable sst = new SSTable(Path.of("sst-L1-000001.sst"), 1, 1,
-                List.of(100), List.of(200), 5, new BloomFilter(10, 100));
+        SSTable sst =
+                new SSTable(
+                        Path.of("sst-L1-000001.sst"),
+                        1,
+                        1,
+                        List.of(100),
+                        List.of(200),
+                        5,
+                        new BloomFilter(10, 100));
         mgr.addLevelN(1, List.of(sst));
 
         List<SSTable> l1 = mgr.levelFiles(1);

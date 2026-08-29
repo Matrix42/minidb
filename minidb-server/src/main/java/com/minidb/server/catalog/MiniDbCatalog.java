@@ -1,8 +1,9 @@
 package com.minidb.server.catalog;
+
+import com.minidb.server.stats.TableStats;
 import com.minidb.storage.common.MVDefinition;
 import com.minidb.storage.common.TableSchema;
 
-import com.minidb.server.stats.TableStats;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Locale;
@@ -17,8 +18,10 @@ public class MiniDbCatalog {
 
     private final Map<String, Map<String, TableSchema>> schemas = new ConcurrentHashMap<>();
     private final Map<String, Map<String, ViewDefinition>> views = new ConcurrentHashMap<>();
-    private final Map<String, Map<String, MVDefinition>> materializedViews = new ConcurrentHashMap<>();
-    private final Map<MVDefinition.TableRef, Set<String>> mvDependencyIndex = new ConcurrentHashMap<>();
+    private final Map<String, Map<String, MVDefinition>> materializedViews =
+            new ConcurrentHashMap<>();
+    private final Map<MVDefinition.TableRef, Set<String>> mvDependencyIndex =
+            new ConcurrentHashMap<>();
     private final Map<String, TableStats> stats = new ConcurrentHashMap<>();
     private final List<Runnable> listeners = new CopyOnWriteArrayList<>();
 
@@ -75,7 +78,8 @@ public class MiniDbCatalog {
             throw new IllegalArgumentException("view already exists: " + schema.name());
         }
         if (hasMaterializedView(schema.schemaName(), schema.name())) {
-            throw new IllegalArgumentException("materialized view already exists: " + schema.name());
+            throw new IllegalArgumentException(
+                    "materialized view already exists: " + schema.name());
         }
         if (tables.putIfAbsent(tk, schema) != null) {
             throw new IllegalArgumentException("table already exists: " + schema.name());
@@ -84,8 +88,8 @@ public class MiniDbCatalog {
     }
 
     public void createView(ViewDefinition view) {
-        Map<String, ViewDefinition> v = views.computeIfAbsent(
-                key(view.schemaName()), k -> new ConcurrentHashMap<>());
+        Map<String, ViewDefinition> v =
+                views.computeIfAbsent(key(view.schemaName()), k -> new ConcurrentHashMap<>());
         if (hasTable(view.schemaName(), view.name())) {
             throw new IllegalArgumentException("table already exists: " + view.name());
         }
@@ -100,8 +104,8 @@ public class MiniDbCatalog {
 
     /** CREATE OR REPLACE VIEW:覆盖同 schema 下同名视图(不检查是否存在)。 */
     public void replaceView(ViewDefinition view) {
-        Map<String, ViewDefinition> v = views.computeIfAbsent(
-                key(view.schemaName()), k -> new ConcurrentHashMap<>());
+        Map<String, ViewDefinition> v =
+                views.computeIfAbsent(key(view.schemaName()), k -> new ConcurrentHashMap<>());
         if (hasTable(view.schemaName(), view.name())) {
             throw new IllegalArgumentException("table already exists: " + view.name());
         }
@@ -176,9 +180,18 @@ public class MiniDbCatalog {
         if (tables.containsKey(newKey)) {
             throw new IllegalArgumentException("table already exists: " + newName);
         }
-        TableSchema renamed = new TableSchema(old.schemaName(), newName, old.columns(),
-                old.primaryKey(), old.uniqueKeys(), old.foreignKeys(), old.storageFormat(),
-                old.tableType(), old.indexes(), null);
+        TableSchema renamed =
+                new TableSchema(
+                        old.schemaName(),
+                        newName,
+                        old.columns(),
+                        old.primaryKey(),
+                        old.uniqueKeys(),
+                        old.foreignKeys(),
+                        old.storageFormat(),
+                        old.tableType(),
+                        old.indexes(),
+                        null);
         tables.remove(oldKey);
         tables.put(newKey, renamed);
         notifyChange();
@@ -277,12 +290,14 @@ public class MiniDbCatalog {
         }
         for (TableSchema table : snapshot.tables()) {
             String sk = key(table.schemaName());
-            Map<String, TableSchema> t = schemas.computeIfAbsent(sk, k -> new ConcurrentHashMap<>());
+            Map<String, TableSchema> t =
+                    schemas.computeIfAbsent(sk, k -> new ConcurrentHashMap<>());
             t.putIfAbsent(key(table.name()), table);
         }
         for (ViewDefinition view : snapshot.views()) {
             String sk = key(view.schemaName());
-            Map<String, ViewDefinition> v = views.computeIfAbsent(sk, k -> new ConcurrentHashMap<>());
+            Map<String, ViewDefinition> v =
+                    views.computeIfAbsent(sk, k -> new ConcurrentHashMap<>());
             v.putIfAbsent(key(view.name()), view);
         }
         for (var e : snapshot.stats().entrySet()) {
@@ -290,15 +305,16 @@ public class MiniDbCatalog {
         }
         for (MVDefinition mv : snapshot.materializedViews()) {
             String sk = key(mv.schemaName());
-            Map<String, MVDefinition> m = materializedViews.computeIfAbsent(
-                    sk, k -> new ConcurrentHashMap<>());
+            Map<String, MVDefinition> m =
+                    materializedViews.computeIfAbsent(sk, k -> new ConcurrentHashMap<>());
             m.putIfAbsent(key(mv.name()), mv);
         }
         for (MVDefinition mv : snapshot.materializedViews()) {
             for (MVDefinition.TableRef dep : mv.dependencies()) {
-                MVDefinition.TableRef norm = new MVDefinition.TableRef(
-                        key(dep.schemaName()), key(dep.tableName()));
-                mvDependencyIndex.computeIfAbsent(norm, k -> ConcurrentHashMap.newKeySet())
+                MVDefinition.TableRef norm =
+                        new MVDefinition.TableRef(key(dep.schemaName()), key(dep.tableName()));
+                mvDependencyIndex
+                        .computeIfAbsent(norm, k -> ConcurrentHashMap.newKeySet())
                         .add(key(mv.schemaName()) + "." + key(mv.name()));
             }
         }
@@ -307,15 +323,15 @@ public class MiniDbCatalog {
     // ---- 物化视图管理 ----
 
     public Set<String> getDependentMVs(String schemaName, String tableName) {
-        MVDefinition.TableRef ref = new MVDefinition.TableRef(
-                key(schemaName), key(tableName));
+        MVDefinition.TableRef ref = new MVDefinition.TableRef(key(schemaName), key(tableName));
         Set<String> result = mvDependencyIndex.get(ref);
         return result == null ? Set.of() : Set.copyOf(result);
     }
 
     public void createMaterializedView(MVDefinition mv) {
-        Map<String, MVDefinition> m = materializedViews.computeIfAbsent(
-                key(mv.schemaName()), k -> new ConcurrentHashMap<>());
+        Map<String, MVDefinition> m =
+                materializedViews.computeIfAbsent(
+                        key(mv.schemaName()), k -> new ConcurrentHashMap<>());
         String tk = key(mv.name());
         if (hasView(mv.schemaName(), mv.name())) {
             throw new IllegalArgumentException("view already exists: " + mv.name());
@@ -324,9 +340,10 @@ public class MiniDbCatalog {
             throw new IllegalArgumentException("materialized view already exists: " + mv.name());
         }
         for (MVDefinition.TableRef dep : mv.dependencies()) {
-            MVDefinition.TableRef norm = new MVDefinition.TableRef(
-                    key(dep.schemaName()), key(dep.tableName()));
-            mvDependencyIndex.computeIfAbsent(norm, k -> ConcurrentHashMap.newKeySet())
+            MVDefinition.TableRef norm =
+                    new MVDefinition.TableRef(key(dep.schemaName()), key(dep.tableName()));
+            mvDependencyIndex
+                    .computeIfAbsent(norm, k -> ConcurrentHashMap.newKeySet())
                     .add(key(mv.schemaName()) + "." + tk);
         }
         notifyChange();

@@ -1,19 +1,21 @@
 package com.minidb.server.calcite;
 
+import com.minidb.server.catalog.MiniDbCatalog;
+import com.minidb.server.catalog.ViewDefinition;
 import com.minidb.storage.common.ArrowTypes;
 import com.minidb.storage.common.ColumnMeta;
-import com.minidb.server.catalog.MiniDbCatalog;
 import com.minidb.storage.common.TableSchema;
-import com.minidb.server.catalog.ViewDefinition;
-import java.util.HashMap;
-import java.util.List;
-import java.util.Locale;
-import java.util.Map;
+
 import org.apache.calcite.rel.type.RelDataTypeFactory;
 import org.apache.calcite.rel.type.RelProtoDataType;
 import org.apache.calcite.schema.Table;
 import org.apache.calcite.schema.impl.AbstractSchema;
 import org.apache.calcite.schema.impl.ViewTable;
+
+import java.util.HashMap;
+import java.util.List;
+import java.util.Locale;
+import java.util.Map;
 
 public class MiniDbCalciteSchema extends AbstractSchema {
 
@@ -38,10 +40,14 @@ public class MiniDbCalciteSchema extends AbstractSchema {
             tables.put(name, new MiniDbCalciteTable(ts, catalog));
         }
         for (ViewDefinition view : catalog.views(schemaName)) {
-            tables.put(view.name(), new ViewTable(Object[].class,
-                    protoRowType(view), view.querySql(),
-                    List.of(CalciteContext.SCHEMA_NAME, schemaName),
-                    List.of(schemaName, view.name())));
+            tables.put(
+                    view.name(),
+                    new ViewTable(
+                            Object[].class,
+                            protoRowType(view),
+                            view.querySql(),
+                            List.of(CalciteContext.SCHEMA_NAME, schemaName),
+                            List.of(schemaName, view.name())));
         }
         return tables;
     }
@@ -51,7 +57,8 @@ public class MiniDbCalciteSchema extends AbstractSchema {
         return typeFactory -> {
             RelDataTypeFactory.Builder builder = typeFactory.builder();
             for (ColumnMeta column : view.columns()) {
-                builder.add(column.name(), ArrowTypes.toCalciteType(column, typeFactory)).nullable(true);
+                builder.add(column.name(), ArrowTypes.toCalciteType(column, typeFactory))
+                        .nullable(true);
             }
             return builder.build();
         };

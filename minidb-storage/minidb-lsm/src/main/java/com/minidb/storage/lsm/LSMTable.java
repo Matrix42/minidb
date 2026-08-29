@@ -1,5 +1,11 @@
 package com.minidb.storage.lsm;
+
 import com.minidb.storage.common.*;
+
+import org.apache.arrow.memory.BufferAllocator;
+import org.apache.arrow.vector.FieldVector;
+import org.apache.arrow.vector.VectorSchemaRoot;
+
 import java.io.IOException;
 import java.io.UncheckedIOException;
 import java.math.BigDecimal;
@@ -10,10 +16,6 @@ import java.util.List;
 import java.util.Map;
 import java.util.Set;
 import java.util.concurrent.ConcurrentHashMap;
-import org.apache.arrow.memory.BufferAllocator;
-import org.apache.arrow.vector.FieldVector;
-import org.apache.arrow.vector.VectorSchemaRoot;
-
 
 public class LSMTable implements TableHandle {
 
@@ -56,19 +58,34 @@ public class LSMTable implements TableHandle {
         }
     }
 
-    public LSMTable(TableSchema schema, PartFormat format, BufferAllocator allocator,
-                    Path tableDir, long flushThresholdBytes) {
+    public LSMTable(
+            TableSchema schema,
+            PartFormat format,
+            BufferAllocator allocator,
+            Path tableDir,
+            long flushThresholdBytes) {
         this(schema, format, allocator, tableDir, flushThresholdBytes, 10, 4, 10);
     }
 
-    public LSMTable(TableSchema schema, PartFormat format, BufferAllocator allocator,
-                    Path tableDir, long flushThresholdBytes, int bloomBitsPerKey) {
+    public LSMTable(
+            TableSchema schema,
+            PartFormat format,
+            BufferAllocator allocator,
+            Path tableDir,
+            long flushThresholdBytes,
+            int bloomBitsPerKey) {
         this(schema, format, allocator, tableDir, flushThresholdBytes, bloomBitsPerKey, 4, 10);
     }
 
-    public LSMTable(TableSchema schema, PartFormat format, BufferAllocator allocator,
-                    Path tableDir, long flushThresholdBytes, int bloomBitsPerKey,
-                    int l0FileLimit, int levelSizeMultiplier) {
+    public LSMTable(
+            TableSchema schema,
+            PartFormat format,
+            BufferAllocator allocator,
+            Path tableDir,
+            long flushThresholdBytes,
+            int bloomBitsPerKey,
+            int l0FileLimit,
+            int levelSizeMultiplier) {
         this.schema = schema;
         this.format = format;
         this.allocator = allocator;
@@ -136,8 +153,15 @@ public class LSMTable implements TableHandle {
 
     @Override
     public BatchIterator scan(List<Object> rangeLo, List<Object> rangeHi) {
-        return new MergeIterator(memTablesSnapshot(), sstManager, schema, format, allocator,
-                rangeLo, rangeHi).scan();
+        return new MergeIterator(
+                        memTablesSnapshot(),
+                        sstManager,
+                        schema,
+                        format,
+                        allocator,
+                        rangeLo,
+                        rangeHi)
+                .scan();
     }
 
     @Override
@@ -147,8 +171,9 @@ public class LSMTable implements TableHandle {
         return projectColumns(scan(), projectedColumns);
     }
 
-    /** 按列投影包装迭代器:每批把所选列的 buffer 零拷贝转移(transfer)到新 root。
-     *  源批被转移的列 buffer 变空,close 由 source 迭代器统一处理。 */
+    /**
+     * 按列投影包装迭代器:每批把所选列的 buffer 零拷贝转移(transfer)到新 root。 源批被转移的列 buffer 变空,close 由 source 迭代器统一处理。
+     */
     private BatchIterator projectColumns(BatchIterator source, int[] cols) {
         if (cols == null) {
             return source;
@@ -200,11 +225,12 @@ public class LSMTable implements TableHandle {
 
     @Override
     public void writePart(VectorSchemaRoot batch, Operation op) {
-        byte kind = switch (op) {
-            case INSERT -> RowValue.INSERT;
-            case UPDATE -> RowValue.UPDATE;
-            case DELETE -> RowValue.DELETE;
-        };
+        byte kind =
+                switch (op) {
+                    case INSERT -> RowValue.INSERT;
+                    case UPDATE -> RowValue.UPDATE;
+                    case DELETE -> RowValue.DELETE;
+                };
         List<Integer> pkIdx = pkIndexes();
 
         for (int r = 0; r < batch.getRowCount(); r++) {
@@ -226,13 +252,14 @@ public class LSMTable implements TableHandle {
             writePart(batch, op); // 非事务路径
             return;
         }
-        MemTable txMem = txMemTables.computeIfAbsent(txId,
-                k -> new MemTable(schema, flushThresholdBytes));
-        byte kind = switch (op) {
-            case INSERT -> RowValue.INSERT;
-            case UPDATE -> RowValue.UPDATE;
-            case DELETE -> RowValue.DELETE;
-        };
+        MemTable txMem =
+                txMemTables.computeIfAbsent(txId, k -> new MemTable(schema, flushThresholdBytes));
+        byte kind =
+                switch (op) {
+                    case INSERT -> RowValue.INSERT;
+                    case UPDATE -> RowValue.UPDATE;
+                    case DELETE -> RowValue.DELETE;
+                };
         List<Integer> pkIdx = pkIndexes();
         for (int r = 0; r < batch.getRowCount(); r++) {
             List<Object> key = extractKey(batch, r, pkIdx);
@@ -272,13 +299,20 @@ public class LSMTable implements TableHandle {
         // 快照读:合并 shared MemTable + 当前事务自己的 tx-private MemTable(优先级最高)。
         // 已提交事务的数据已经由 commitTx() 合并进 shared MemTable;txMemTables 此刻
         // 只含未提交(ACTIVE)事务的私有表——自己的可见(合并),他人的不可见(不合并)。
-        return new MergeIterator(snapshotWithOwnWrites(txId), sstManager,
-                schema, format, allocator, null, null).scan();
+        return new MergeIterator(
+                        snapshotWithOwnWrites(txId),
+                        sstManager,
+                        schema,
+                        format,
+                        allocator,
+                        null,
+                        null)
+                .scan();
     }
 
     /**
-     * 事务快照读的 memTable 列表:[自己事务的私有表(最新,优先)] + [shared + 待落盘]。
-     * 自己的写必须覆盖共享基础数据(读自己的写,ACID-C);txId==0 表非事务路径,无自有写。
+     * 事务快照读的 memTable 列表:[自己事务的私有表(最新,优先)] + [shared + 待落盘]。 自己的写必须覆盖共享基础数据(读自己的写,ACID-C);txId==0
+     * 表非事务路径,无自有写。
      */
     private List<MemTable> snapshotWithOwnWrites(long txId) {
         List<MemTable> shared = memTablesSnapshot();
@@ -293,11 +327,9 @@ public class LSMTable implements TableHandle {
     }
 
     /**
-     * 事务恢复:从 WAL 恢复已提交事务的数据,跳过未提交事务的条目。
-     * 保留旧 {@link #recover()} 向后兼容(无事务时使用)。
-     * 事务感知恢复：构造函数已调用无参 recover() 加载 SSTable 元数据 + 重放全部 WAL，
-     * 这里只补做 WAL 过滤——丢弃未提交事务的条目，仅保留已提交的。
-     * 不重复加载 SSTable 元数据（避免 levels map 出现重复条目）。
+     * 事务恢复:从 WAL 恢复已提交事务的数据,跳过未提交事务的条目。 保留旧 {@link #recover()} 向后兼容(无事务时使用)。 事务感知恢复：构造函数已调用无参
+     * recover() 加载 SSTable 元数据 + 重放全部 WAL， 这里只补做 WAL 过滤——丢弃未提交事务的条目，仅保留已提交的。 不重复加载 SSTable 元数据（避免
+     * levels map 出现重复条目）。
      */
     public void recover(Set<Long> committedTxIds) {
         // 重建 memTable：清空构造函数 recover() 放置的条目（含未提交事务数据），
@@ -351,8 +383,8 @@ public class LSMTable implements TableHandle {
     }
 
     /**
-     * 双缓冲:满表 swap 出交给后台 flush,写路径只做指针交换 + WAL 段切换
-     * (O(1),不落盘)。落盘由 {@link LSMBackgroundExecutor#flushAsync} 后台执行。
+     * 双缓冲:满表 swap 出交给后台 flush,写路径只做指针交换 + WAL 段切换 (O(1),不落盘)。落盘由 {@link
+     * LSMBackgroundExecutor#flushAsync} 后台执行。
      */
     private void swapAndFlushAsync() {
         synchronized (tableLock) {
@@ -404,14 +436,22 @@ public class LSMTable implements TableHandle {
         if (!normalized.isEmpty()) {
             long seq = sstManager.nextSeq();
             Path file = tableDir.resolve("sst-L0-" + String.format("%06d", seq) + ".sst");
-            SSTableWriter writer = new SSTableWriter(file, 0, schema, format, allocator, bloomBitsPerKey);
+            SSTableWriter writer =
+                    new SSTableWriter(file, 0, schema, format, allocator, bloomBitsPerKey);
             writer.writeFromIterator(normalized.iterator(), normalized.size());
             SSTableReader reader = new SSTableReader(file, schema, format, allocator);
             SSTable sst = reader.metadata();
             reader.close();
             if (flushEpoch == epoch) {
-                sstManager.addLevel0(new SSTable(file, 0, seq, sst.minKey(), sst.maxKey(),
-                        sst.rowCount(), sst.bloom()));
+                sstManager.addLevel0(
+                        new SSTable(
+                                file,
+                                0,
+                                seq,
+                                sst.minKey(),
+                                sst.maxKey(),
+                                sst.rowCount(),
+                                sst.bloom()));
             } else {
                 // TRUNCATE 在 flush 期间发生:表已清空,丢弃刚写的文件
                 try {
@@ -453,7 +493,8 @@ public class LSMTable implements TableHandle {
             for (SSTable sst : sstManager.levelFiles(level)) {
                 if (!sst.bloom().mightContain(encodedKey)) continue;
                 if (!sst.overlaps(key, key)) continue;
-                try (SSTableReader reader = new SSTableReader(sst.file(), schema, format, allocator)) {
+                try (SSTableReader reader =
+                        new SSTableReader(sst.file(), schema, format, allocator)) {
                     BatchIterator it = reader.scan();
                     while (it.hasNext()) {
                         VectorSchemaRoot batch = it.next();
@@ -509,8 +550,14 @@ public class LSMTable implements TableHandle {
     public int compact(long targetSizeBytes) {
         // L0 → L1: 文件数触发
         if (sstManager.levelFiles(0).size() >= l0FileLimit) {
-            compaction.compactLevel0To1(sstManager, schema, format, allocator,
-                    tableDir, targetSizeBytes, bloomBitsPerKey);
+            compaction.compactLevel0To1(
+                    sstManager,
+                    schema,
+                    format,
+                    allocator,
+                    tableDir,
+                    targetSizeBytes,
+                    bloomBitsPerKey);
         }
         // L1+ → L(n+1): 层大小触发（每层上限 = targetSizeBytes * multiplier^level）
         long levelSizeLimit = targetSizeBytes;
@@ -522,8 +569,15 @@ public class LSMTable implements TableHandle {
                 levelSize += sst.rowCount() * 100; // 每行约 100 字节估算
             }
             if (levelSize >= levelSizeLimit) {
-                compaction.compactLevel(level, sstManager, schema, format, allocator,
-                        tableDir, targetSizeBytes, bloomBitsPerKey);
+                compaction.compactLevel(
+                        level,
+                        sstManager,
+                        schema,
+                        format,
+                        allocator,
+                        tableDir,
+                        targetSizeBytes,
+                        bloomBitsPerKey);
             }
             levelSizeLimit *= levelSizeMultiplier;
             // 溢出保护
@@ -587,13 +641,15 @@ public class LSMTable implements TableHandle {
 
             long seq = sstManager.nextSeq();
             Path file = tableDir.resolve("sst-L0-" + String.format("%06d", seq) + ".sst");
-            SSTableWriter writer = new SSTableWriter(file, 0, schema, format, allocator, bloomBitsPerKey);
+            SSTableWriter writer =
+                    new SSTableWriter(file, 0, schema, format, allocator, bloomBitsPerKey);
             writer.writeFromIterator(normalized.iterator(), normalized.size());
             SSTableReader reader = new SSTableReader(file, schema, format, allocator);
             SSTable sst = reader.metadata();
             reader.close();
-            sstManager.addLevel0(new SSTable(file, 0, seq, sst.minKey(), sst.maxKey(),
-                    sst.rowCount(), sst.bloom()));
+            sstManager.addLevel0(
+                    new SSTable(
+                            file, 0, seq, sst.minKey(), sst.maxKey(), sst.rowCount(), sst.bloom()));
             wal.truncateAll();
         }
     }

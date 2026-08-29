@@ -1,29 +1,24 @@
 package com.minidb.server.plan.physical;
 
-import com.minidb.storage.common.ColumnMeta;
-import com.minidb.storage.common.ForeignKey;
 import com.minidb.server.catalog.MiniDbCatalog;
 import com.minidb.server.config.MiniDbConfig;
-import com.minidb.storage.common.TableSchema;
-import com.minidb.storage.common.BatchIterator;
-import com.minidb.storage.common.TableHandle;
 import com.minidb.server.exec.ConstraintChecker;
 import com.minidb.server.exec.ExecContext;
 import com.minidb.server.exec.IncrementalRefreshEngine;
 import com.minidb.server.exec.MVManager;
 import com.minidb.server.exec.RowCopier;
 import com.minidb.server.plan.Planner;
-import com.minidb.storage.common.MVDefinition;
 import com.minidb.server.transaction.TransactionManager;
+import com.minidb.storage.common.BatchIterator;
+import com.minidb.storage.common.ColumnMeta;
+import com.minidb.storage.common.ForeignKey;
 import com.minidb.storage.common.IndexDef;
+import com.minidb.storage.common.MVDefinition;
 import com.minidb.storage.common.SimpleTable;
+import com.minidb.storage.common.TableHandle;
+import com.minidb.storage.common.TableSchema;
 import com.minidb.storage.lsm.LSMTable;
-import java.util.ArrayList;
-import java.util.HashMap;
-import java.util.HashSet;
-import java.util.List;
-import java.util.Map;
-import java.util.Set;
+
 import org.apache.arrow.vector.VectorSchemaRoot;
 import org.apache.calcite.plan.RelOptCluster;
 import org.apache.calcite.plan.RelOptTable;
@@ -31,25 +26,51 @@ import org.apache.calcite.plan.RelTraitSet;
 import org.apache.calcite.rel.RelNode;
 import org.apache.calcite.rel.core.TableModify;
 
+import java.util.ArrayList;
+import java.util.HashMap;
+import java.util.HashSet;
+import java.util.List;
+import java.util.Map;
+import java.util.Set;
+
 public class MiniDbModify extends TableModify implements MiniDbRel {
 
     private long affected;
 
-    public MiniDbModify(RelOptCluster cluster, RelTraitSet traitSet, RelOptTable table,
-                        org.apache.calcite.prepare.Prepare.CatalogReader catalogReader,
-                        RelNode input, Operation operation,
-                        List<String> updateColumnList,
-                        List<org.apache.calcite.rex.RexNode> sourceExpressionList,
-                        boolean flattened) {
-        super(cluster, traitSet, table, catalogReader, input, operation,
-                updateColumnList, sourceExpressionList, flattened);
+    public MiniDbModify(
+            RelOptCluster cluster,
+            RelTraitSet traitSet,
+            RelOptTable table,
+            org.apache.calcite.prepare.Prepare.CatalogReader catalogReader,
+            RelNode input,
+            Operation operation,
+            List<String> updateColumnList,
+            List<org.apache.calcite.rex.RexNode> sourceExpressionList,
+            boolean flattened) {
+        super(
+                cluster,
+                traitSet,
+                table,
+                catalogReader,
+                input,
+                operation,
+                updateColumnList,
+                sourceExpressionList,
+                flattened);
     }
 
     @Override
     public RelNode copy(RelTraitSet traitSet, List<RelNode> inputs) {
-        return new MiniDbModify(getCluster(), traitSet, table, getCatalogReader(),
-                sole(inputs), getOperation(), getUpdateColumnList(),
-                getSourceExpressionList(), isFlattened());
+        return new MiniDbModify(
+                getCluster(),
+                traitSet,
+                table,
+                getCatalogReader(),
+                sole(inputs),
+                getOperation(),
+                getUpdateColumnList(),
+                getSourceExpressionList(),
+                isFlattened());
     }
 
     public long affected() {
@@ -110,14 +131,14 @@ public class MiniDbModify extends TableModify implements MiniDbRel {
             int dot = mvKey.indexOf('.');
             String mvSchema = mvKey.substring(0, dot);
             String mvName = mvKey.substring(dot + 1);
-            MVDefinition mvDef = ctx.storage().catalog()
-                    .getMaterializedView(mvSchema, mvName);
+            MVDefinition mvDef = ctx.storage().catalog().getMaterializedView(mvSchema, mvName);
             if (mvDef == null) continue;
             // 全量刷新：TRUNCATE + 重算(必须关 MV 重写,否则定义查询被重写为扫描 MV 自身,
             // 而此刻 MV 表刚被清空 → 恒空结果,见 Planner.planWithoutMvRewrite)
-            MiniDbRel mvPlan = (MiniDbRel)
-                    new Planner(ctx.storage().catalog())
-                            .planWithoutMvRewrite(mvDef.querySql(), mvSchema);
+            MiniDbRel mvPlan =
+                    (MiniDbRel)
+                            new Planner(ctx.storage().catalog())
+                                    .planWithoutMvRewrite(mvDef.querySql(), mvSchema);
             TableHandle mvTable = ctx.getTable(mvSchema, mvName);
             mvTable.clearParts();
             ExecContext mvCtx = new ExecContext(ctx.storage(), ctx.allocator(), mvSchema);
@@ -168,8 +189,10 @@ public class MiniDbModify extends TableModify implements MiniDbRel {
                     // 注意:不能直接查 target.schema().indexes()——handleCreateIndex
                     // 调 catalog.alterTable 更新了 catalog 元数据,但 target 句柄 schema
                     // 是创建时的快照,不含 indexes;需查 catalog 最新元数据。
-                    TableSchema ts = ctx.storage().catalog().getTable(
-                            target.schema().schemaName(), target.schema().name());
+                    TableSchema ts =
+                            ctx.storage()
+                                    .catalog()
+                                    .getTable(target.schema().schemaName(), target.schema().name());
                     if (ts != null && !ts.indexes().isEmpty()) {
                         ctx.storage().indexManager().onInsert(ts, copy);
                     }
@@ -186,19 +209,23 @@ public class MiniDbModify extends TableModify implements MiniDbRel {
     }
 
     /**
-     * UPDATE/DELETE for LSMTable: write matched rows directly to MemTable
-     * with UPDATE/DELETE op, instead of rewriting the entire table.
-     * For UPDATE, the input batch has the schema [table columns] + [update columns];
-     * we construct a full table-schema batch with updated values before writing.
+     * UPDATE/DELETE for LSMTable: write matched rows directly to MemTable with UPDATE/DELETE op,
+     * instead of rewriting the entire table. For UPDATE, the input batch has the schema [table
+     * columns] + [update columns]; we construct a full table-schema batch with updated values
+     * before writing.
      */
     private void lsmModify(ExecContext ctx, TableHandle target, BatchIterator input) {
         affected = 0;
         // 用 catalog 而非 target.schema() 查索引:handleCreateIndex 后
         // catalog 元数据已更新但 target 句柄的 schema 仍是创建时的快照。
-        TableSchema ts = ctx.storage().catalog().getTable(
-                target.schema().schemaName(), target.schema().name());
-        TableHandle.Operation op = getOperation() == Operation.UPDATE
-                ? TableHandle.Operation.UPDATE : TableHandle.Operation.DELETE;
+        TableSchema ts =
+                ctx.storage()
+                        .catalog()
+                        .getTable(target.schema().schemaName(), target.schema().name());
+        TableHandle.Operation op =
+                getOperation() == Operation.UPDATE
+                        ? TableHandle.Operation.UPDATE
+                        : TableHandle.Operation.DELETE;
         try {
             if (op == TableHandle.Operation.DELETE) {
                 // Materialize input first so we can validate foreign key RESTRICT
@@ -249,8 +276,11 @@ public class MiniDbModify extends TableModify implements MiniDbRel {
                             }
                             // Overwrite updated columns with new values from trailing input cols
                             for (int j = 0; j < updateCols.size(); j++) {
-                                RowCopier.writeValue(out.getFieldVectors().get(updateIdx.get(j)), i,
-                                        batch.getFieldVectors().get(numTableCols + j), i);
+                                RowCopier.writeValue(
+                                        out.getFieldVectors().get(updateIdx.get(j)),
+                                        i,
+                                        batch.getFieldVectors().get(numTableCols + j),
+                                        i);
                             }
                         }
                         out.setRowCount(batch.getRowCount());
@@ -278,9 +308,12 @@ public class MiniDbModify extends TableModify implements MiniDbRel {
     }
 
     /** UPDATE 的 UNIQUE 索引校验:新索引键不能与已有行冲突,排除本行(旧值仍在索引表中)。 */
-    private void validateUpdateUnique(ExecContext ctx, TableSchema schema,
-                                       TableHandle target, VectorSchemaRoot oldBatch,
-                                       VectorSchemaRoot newBatch) {
+    private void validateUpdateUnique(
+            ExecContext ctx,
+            TableSchema schema,
+            TableHandle target,
+            VectorSchemaRoot oldBatch,
+            VectorSchemaRoot newBatch) {
         if (schema == null || schema.indexes().isEmpty()) return;
         List<Integer> pkIdx = new ArrayList<>(schema.primaryKey().size());
         for (String col : schema.primaryKey()) {
@@ -298,8 +331,10 @@ public class MiniDbModify extends TableModify implements MiniDbRel {
 
         for (IndexDef idx : schema.indexes()) {
             if (!idx.unique()) continue;
-            TableHandle indexTable = ctx.storage().indexManager()
-                    .getIndex(schema.schemaName(), schema.name(), idx.name());
+            TableHandle indexTable =
+                    ctx.storage()
+                            .indexManager()
+                            .getIndex(schema.schemaName(), schema.name(), idx.name());
             if (indexTable == null) continue;
             List<Integer> idxPositions = new ArrayList<>(idx.columns().size());
             for (String col : idx.columns()) {
@@ -315,7 +350,10 @@ public class MiniDbModify extends TableModify implements MiniDbRel {
                 List<Object> newIdxKey = new ArrayList<>(idxPositions.size());
                 boolean hasNull = false;
                 for (int pos : idxPositions) {
-                    if (newBatch.getVector(pos).isNull(r)) { hasNull = true; break; }
+                    if (newBatch.getVector(pos).isNull(r)) {
+                        hasNull = true;
+                        break;
+                    }
                     newIdxKey.add(newBatch.getVector(pos).getObject(r));
                 }
                 if (hasNull) continue; // null 键不参与唯一性
@@ -367,10 +405,13 @@ public class MiniDbModify extends TableModify implements MiniDbRel {
             }
         }
     }
+
     private void validateInsert(ExecContext ctx, TableHandle target, VectorSchemaRoot batch) {
         // 用 catalog 而非 target.schema() 查索引元数据(handle 是创建时的快照)
-        TableSchema ts = ctx.storage().catalog().getTable(
-                target.schema().schemaName(), target.schema().name());
+        TableSchema ts =
+                ctx.storage()
+                        .catalog()
+                        .getTable(target.schema().schemaName(), target.schema().name());
         ConstraintChecker.validateInsert(ctx, ts != null ? ts : target.schema(), target, batch);
     }
 
@@ -378,9 +419,8 @@ public class MiniDbModify extends TableModify implements MiniDbRel {
     private void validateForeignKeys(ExecContext ctx, TableHandle target, VectorSchemaRoot batch) {
         for (ForeignKey fk : target.schema().foreignKeys()) {
             TableHandle refTable = ctx.getTable(fk.refSchema(), fk.refTable());
-            List<String> refColumns = fk.refColumns().isEmpty()
-                    ? refTable.schema().primaryKey()
-                    : fk.refColumns();
+            List<String> refColumns =
+                    fk.refColumns().isEmpty() ? refTable.schema().primaryKey() : fk.refColumns();
             List<Integer> childIdx = columnIndexes(target.schema(), fk.columns());
             List<Integer> refIdx = columnIndexes(refTable.schema(), refColumns);
             Set<List<Object>> refKeys = new HashSet<>();
@@ -399,8 +439,12 @@ public class MiniDbModify extends TableModify implements MiniDbRel {
                 List<Object> key = keyOf(batch, i, childIdx);
                 if (key != null && !refKeys.contains(key)) {
                     throw new IllegalArgumentException(
-                            "foreign key violation: " + fk.columns()
-                                    + " references " + fk.refTable() + "." + refColumns);
+                            "foreign key violation: "
+                                    + fk.columns()
+                                    + " references "
+                                    + fk.refTable()
+                                    + "."
+                                    + refColumns);
                 }
             }
         }
@@ -413,12 +457,13 @@ public class MiniDbModify extends TableModify implements MiniDbRel {
         }
         return idxs;
     }
+
     /**
-     * DELETE 的外键 RESTRICT 校验:被删除行的主键不能仍被其它表引用。只处理 child 外键
-     * 引用本表主键的常见情况(引用非主键唯一列暂不校验);UPDATE 本表被引用列(如改主键)
-     * 的外键校验暂未覆盖。
+     * DELETE 的外键 RESTRICT 校验:被删除行的主键不能仍被其它表引用。只处理 child 外键 引用本表主键的常见情况(引用非主键唯一列暂不校验);UPDATE
+     * 本表被引用列(如改主键) 的外键校验暂未覆盖。
      */
-    private void validateDeleteRestrict(ExecContext ctx, TableHandle target, VectorSchemaRoot matched) {
+    private void validateDeleteRestrict(
+            ExecContext ctx, TableHandle target, VectorSchemaRoot matched) {
         TableSchema schema = target.schema();
         if (schema.primaryKey().isEmpty()) {
             return;
@@ -440,13 +485,14 @@ public class MiniDbModify extends TableModify implements MiniDbRel {
                             || !fk.refTable().equalsIgnoreCase(schema.name())) {
                         continue;
                     }
-                    List<String> refColumns = fk.refColumns().isEmpty()
-                            ? schema.primaryKey() : fk.refColumns();
+                    List<String> refColumns =
+                            fk.refColumns().isEmpty() ? schema.primaryKey() : fk.refColumns();
                     if (!refColumns.equals(schema.primaryKey())) {
                         continue; // 引用非主键列,暂不校验
                     }
                     TableHandle childTable = ctx.getTable(schemaName, tableName);
-                    List<Integer> childIdx = ConstraintChecker.columnIndexes(childSchema, fk.columns());
+                    List<Integer> childIdx =
+                            ConstraintChecker.columnIndexes(childSchema, fk.columns());
                     try (BatchIterator it = childTable.scan()) {
                         while (it.hasNext()) {
                             VectorSchemaRoot b = it.next();
@@ -455,7 +501,9 @@ public class MiniDbModify extends TableModify implements MiniDbRel {
                                 if (key != null && deletedKeys.contains(key)) {
                                     throw new IllegalArgumentException(
                                             "foreign key violation: row still referenced by "
-                                                    + schemaName + "." + tableName);
+                                                    + schemaName
+                                                    + "."
+                                                    + tableName);
                                 }
                             }
                         }
@@ -466,8 +514,11 @@ public class MiniDbModify extends TableModify implements MiniDbRel {
     }
 
     /** 主键/唯一冲突校验:新行的键值不能与现有行(或同批早前行)重复。含 null 的键不参与(唯一约束允许多 null)。 */
-    private void validateUnique(TableHandle target, VectorSchemaRoot batch,
-                                List<String> columns, String constraintName) {
+    private void validateUnique(
+            TableHandle target,
+            VectorSchemaRoot batch,
+            List<String> columns,
+            String constraintName) {
         List<Integer> idxs = new ArrayList<>(columns.size());
         for (String column : columns) {
             idxs.add(target.schema().columnIndex(column));
@@ -504,17 +555,18 @@ public class MiniDbModify extends TableModify implements MiniDbRel {
         }
         return key;
     }
+
     /**
-     * UPDATE and DELETE must remove the matched rows from the table; the input
-     * only produces the matched rows, so we read all parts, keep unmatched rows
-     * and replace (UPDATE) or drop (DELETE) matched ones, then rewrite the parts.
+     * UPDATE and DELETE must remove the matched rows from the table; the input only produces the
+     * matched rows, so we read all parts, keep unmatched rows and replace (UPDATE) or drop (DELETE)
+     * matched ones, then rewrite the parts.
      *
-     * <p>SimpleTable 不支持索引(建索引时已拒绝),无需索引维护挂钩。</p>
+     * <p>SimpleTable 不支持索引(建索引时已拒绝),无需索引维护挂钩。
      */
     private void rewriteTable(ExecContext ctx, SimpleTable target, BatchIterator input) {
         int numTableCols = target.schema().columns().size();
-        List<String> updateCols = getOperation() == Operation.UPDATE
-                ? getUpdateColumnList() : List.of();
+        List<String> updateCols =
+                getOperation() == Operation.UPDATE ? getUpdateColumnList() : List.of();
         VectorSchemaRoot matched = materializeInput(input, ctx);
         input.close();
         if (matched == null || matched.getRowCount() == 0) {
@@ -554,9 +606,10 @@ public class MiniDbModify extends TableModify implements MiniDbRel {
         // 否则第二次 UPDATE/DELETE 会丢失第一次的变更。
         List<VectorSchemaRoot> newBatches = new ArrayList<>();
         affected = 0;
-        try (BatchIterator it = ctx.tx() != null
-                ? target.scan(ctx.tx().snapshotTxId(), ctx.tx().txId())
-                : target.scan()) {
+        try (BatchIterator it =
+                ctx.tx() != null
+                        ? target.scan(ctx.tx().snapshotTxId(), ctx.tx().txId())
+                        : target.scan()) {
             while (it.hasNext()) {
                 VectorSchemaRoot old = it.next();
                 VectorSchemaRoot nb = target.newBatchRoot();
@@ -576,7 +629,8 @@ public class MiniDbModify extends TableModify implements MiniDbRel {
                     // UPDATE: copy the original table columns, then overwrite the
                     // updated ones with the trailing source values from the input.
                     for (int j = 0; j < numTableCols; j++) {
-                        nb.getFieldVectors().get(j)
+                        nb.getFieldVectors()
+                                .get(j)
                                 .copyFromSafe(srcRow, kept, matched.getFieldVectors().get(j));
                     }
                     for (int j = 0; j < updateCols.size(); j++) {
@@ -599,7 +653,8 @@ public class MiniDbModify extends TableModify implements MiniDbRel {
         // 不能像 LSM 那样走 validateUpdateUnique,只能对完整新快照做批内查重)。
         if (getOperation() == Operation.UPDATE) {
             try {
-                validateUniqueAcross(newBatches, target, target.schema().primaryKey(), "primary key");
+                validateUniqueAcross(
+                        newBatches, target, target.schema().primaryKey(), "primary key");
                 for (List<String> uniqueCols : target.schema().uniqueKeys()) {
                     validateUniqueAcross(newBatches, target, uniqueCols, "unique");
                 }
@@ -635,11 +690,13 @@ public class MiniDbModify extends TableModify implements MiniDbRel {
     }
 
     /**
-     * 对 rewrite 出的完整新表内容做主键/唯一键查重(含 null 的键不参与,主键列 NOT NULL
-     * 由 TableSchema 保证故恒参与)。写盘前校验避免把矛盾数据落盘。
+     * 对 rewrite 出的完整新表内容做主键/唯一键查重(含 null 的键不参与,主键列 NOT NULL 由 TableSchema 保证故恒参与)。写盘前校验避免把矛盾数据落盘。
      */
-    private void validateUniqueAcross(List<VectorSchemaRoot> batches, TableHandle target,
-                                      List<String> columns, String constraintName) {
+    private void validateUniqueAcross(
+            List<VectorSchemaRoot> batches,
+            TableHandle target,
+            List<String> columns,
+            String constraintName) {
         if (columns.isEmpty()) {
             return;
         }
@@ -688,11 +745,14 @@ public class MiniDbModify extends TableModify implements MiniDbRel {
     }
 
     /**
-     * 把 UPDATE 的输入批([表列] + [更新值])物化成「更新后的全表行」批,供外键校验复用
-     * 与 INSERT 相同的 {@link #validateForeignKeys} 逻辑。matched 的每行对应一个被更新行。
+     * 把 UPDATE 的输入批([表列] + [更新值])物化成「更新后的全表行」批,供外键校验复用 与 INSERT 相同的 {@link #validateForeignKeys}
+     * 逻辑。matched 的每行对应一个被更新行。
      */
-    private VectorSchemaRoot updatedRowsRoot(SimpleTable target, VectorSchemaRoot matched,
-                                             int numTableCols, List<String> updateCols) {
+    private VectorSchemaRoot updatedRowsRoot(
+            SimpleTable target,
+            VectorSchemaRoot matched,
+            int numTableCols,
+            List<String> updateCols) {
         List<Integer> updateIdx = new ArrayList<>(updateCols.size());
         for (String col : updateCols) {
             updateIdx.add(target.schema().columnIndex(col));
@@ -702,8 +762,7 @@ public class MiniDbModify extends TableModify implements MiniDbRel {
         out.allocateNew();
         for (int i = 0; i < rows; i++) {
             for (int c = 0; c < numTableCols; c++) {
-                out.getFieldVectors().get(c)
-                        .copyFromSafe(i, i, matched.getFieldVectors().get(c));
+                out.getFieldVectors().get(c).copyFromSafe(i, i, matched.getFieldVectors().get(c));
             }
             for (int j = 0; j < updateCols.size(); j++) {
                 RowCopier.writeValue(
@@ -716,9 +775,8 @@ public class MiniDbModify extends TableModify implements MiniDbRel {
     }
 
     /**
-     * SERIALIZABLE 隔离级别:把被修改表的所有列写入事务写集。MiniDbScan.recordReadSet
-     * 按列粒度登记读集,写集必须与读集同粒度(键格式 schema.table.column),否则同一列
-     * 的读写冲突无法匹配。非事务或非 SERIALIZABLE 时 recordWrite 内部短路。
+     * SERIALIZABLE 隔离级别:把被修改表的所有列写入事务写集。MiniDbScan.recordReadSet 按列粒度登记读集,写集必须与读集同粒度(键格式
+     * schema.table.column),否则同一列 的读写冲突无法匹配。非事务或非 SERIALIZABLE 时 recordWrite 内部短路。
      */
     private void recordWriteSet(ExecContext ctx, String schemaName, String tableName) {
         if (!ctx.inTransaction()) {

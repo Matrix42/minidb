@@ -1,10 +1,12 @@
 package com.minidb.server.transaction;
 
 import com.minidb.server.exec.IncrementalRefreshEngine;
+
+import org.apache.arrow.vector.VectorSchemaRoot;
+
 import java.util.ArrayList;
 import java.util.List;
 import java.util.concurrent.atomic.AtomicReference;
-import org.apache.arrow.vector.VectorSchemaRoot;
 
 public class TxHandle {
     private final long txId;
@@ -18,14 +20,19 @@ public class TxHandle {
         this.status = new AtomicReference<>(TxStatus.ACTIVE);
     }
 
-    public long txId() { return txId; }
-    public long snapshotTxId() { return snapshotTxId; }
-    public TxStatus status() { return status.get(); }
+    public long txId() {
+        return txId;
+    }
 
-    /**
-     * READ_COMMITTED 级别：每语句执行前刷新快照。
-     * 只在 ACTIVE 状态下有效。
-     */
+    public long snapshotTxId() {
+        return snapshotTxId;
+    }
+
+    public TxStatus status() {
+        return status.get();
+    }
+
+    /** READ_COMMITTED 级别：每语句执行前刷新快照。 只在 ACTIVE 状态下有效。 */
     public void refreshSnapshot(long newSnapshotTxId) {
         if (status.get() == TxStatus.ACTIVE) {
             this.snapshotTxId = newSnapshotTxId;
@@ -34,6 +41,7 @@ public class TxHandle {
 
     /**
      * 标记为已提交。只在 ACTIVE → COMMITTED 转换时成功。
+     *
      * @return true 如果转换成功，false 如果状态不是 ACTIVE
      */
     public boolean markCommitted() {
@@ -42,6 +50,7 @@ public class TxHandle {
 
     /**
      * 标记为已回滚。只在 ACTIVE → ABORTED 转换时成功。
+     *
      * @return true 如果转换成功，false 如果状态不是 ACTIVE
      */
     public boolean markAborted() {
@@ -54,8 +63,7 @@ public class TxHandle {
             String mvSchemaName,
             String mvName,
             VectorSchemaRoot delta,
-            IncrementalRefreshEngine.DmlOperation operation) {
-    }
+            IncrementalRefreshEngine.DmlOperation operation) {}
 
     public void addPendingMVRefresh(MVDirtyEntry entry) {
         pendingMVRefresh.add(entry);

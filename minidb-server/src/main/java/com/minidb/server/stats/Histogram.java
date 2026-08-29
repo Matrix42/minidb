@@ -1,26 +1,27 @@
 package com.minidb.server.stats;
 
 import com.minidb.storage.common.ColumnType;
-import java.math.BigDecimal;
-import java.util.List;
-import java.util.Objects;
+
 import org.apache.calcite.rex.RexCall;
 import org.apache.calcite.rex.RexInputRef;
 import org.apache.calcite.rex.RexLiteral;
 import org.apache.calcite.rex.RexNode;
 import org.apache.calcite.sql.SqlKind;
 
+import java.math.BigDecimal;
+import java.util.List;
+import java.util.Objects;
+
 /**
  * Single-column equi-depth histogram with top-k MCV values.
  *
- * <p>Bucket boundaries and MCV values are stored as canonical {@link String}s
- * (e.g. {@code "1"}, {@code "3.14"}, {@code "a"}) rather than raw
- * {@link Comparable} objects so that the histogram can be (de)serialized to
- * JSON. The column's {@link ColumnType} tells {@link #histValue} how to parse
+ * <p>Bucket boundaries and MCV values are stored as canonical {@link String}s (e.g. {@code "1"},
+ * {@code "3.14"}, {@code "a"}) rather than raw {@link Comparable} objects so that the histogram can
+ * be (de)serialized to JSON. The column's {@link ColumnType} tells {@link #histValue} how to parse
  * those strings back into comparable values for selectivity estimation.
  *
- * <p>Statistics are persisted as JSON (Jackson) via {@link TableStats}; Java
- * serialization is no longer used.
+ * <p>Statistics are persisted as JSON (Jackson) via {@link TableStats}; Java serialization is no
+ * longer used.
  */
 public record Histogram(
         ColumnType type,
@@ -32,11 +33,9 @@ public record Histogram(
 
     public static final double DEFAULT_SELECTIVITY = 0.33;
 
-    public record Bucket(String lower, String upper, long rowCount) {
-    }
+    public record Bucket(String lower, String upper, long rowCount) {}
 
-    public record McValue(String value, long frequency) {
-    }
+    public record McValue(String value, long frequency) {}
 
     public Histogram {
         buckets = List.copyOf(buckets);
@@ -77,8 +76,12 @@ public record Histogram(
                 yield sel;
             }
             case NOT -> 1.0 - selectivity(call.getOperands().get(0), inputRows);
-            case EQUALS, NOT_EQUALS, LESS_THAN, LESS_THAN_OR_EQUAL,
-                 GREATER_THAN, GREATER_THAN_OR_EQUAL ->
+            case EQUALS,
+                            NOT_EQUALS,
+                            LESS_THAN,
+                            LESS_THAN_OR_EQUAL,
+                            GREATER_THAN,
+                            GREATER_THAN_OR_EQUAL ->
                     comparisonSelectivity(call, kind);
             default -> DEFAULT_SELECTIVITY;
         };
@@ -213,8 +216,18 @@ public record Histogram(
     @SuppressWarnings({"unchecked", "rawtypes"})
     private Comparable<Object> histValue(String s) {
         return switch (type) {
-            case INTEGER, BIGINT, SMALLINT, DOUBLE, REAL, FLOAT, DECIMAL, NUMERIC,
-                 DATE, TIME, TIMESTAMP -> (Comparable<Object>) (Comparable) Double.valueOf(s);
+            case INTEGER,
+                            BIGINT,
+                            SMALLINT,
+                            DOUBLE,
+                            REAL,
+                            FLOAT,
+                            DECIMAL,
+                            NUMERIC,
+                            DATE,
+                            TIME,
+                            TIMESTAMP ->
+                    (Comparable<Object>) (Comparable) Double.valueOf(s);
             case VARCHAR, CHAR, NCHAR, NVARCHAR -> (Comparable<Object>) (Comparable) s;
             case BOOLEAN -> (Comparable<Object>) (Comparable) Boolean.valueOf(s);
             default -> (Comparable<Object>) (Comparable) s;
@@ -240,10 +253,9 @@ public record Histogram(
     }
 
     /**
-     * Returns true only if the two normalized values can be safely compared.
-     * Both must be {@link Number} or neither must be. For the non-numeric case
-     * (e.g. String vs String) the kinds must match so that VARCHAR vs Boolean
-     * edge cases return false rather than throwing.
+     * Returns true only if the two normalized values can be safely compared. Both must be {@link
+     * Number} or neither must be. For the non-numeric case (e.g. String vs String) the kinds must
+     * match so that VARCHAR vs Boolean edge cases return false rather than throwing.
      */
     private static boolean typesCompatible(Comparable<?> a, Comparable<?> b) {
         boolean aNum = a instanceof Number;

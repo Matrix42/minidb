@@ -1,11 +1,13 @@
 package com.minidb.server.catalog;
-import com.minidb.storage.common.ColumnType;
+
 import com.minidb.storage.common.ColumnMeta;
+import com.minidb.storage.common.ColumnType;
 import com.minidb.storage.common.TableSchema;
+
+import org.junit.jupiter.api.Test;
 
 import java.util.List;
 import java.util.concurrent.atomic.AtomicInteger;
-import org.junit.jupiter.api.Test;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
@@ -15,9 +17,11 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
 class MiniDbCatalogTest {
 
     private TableSchema table(String name) {
-        return new TableSchema(name, List.of(
-                new ColumnMeta("id", ColumnType.INTEGER),
-                new ColumnMeta("name", ColumnType.VARCHAR)));
+        return new TableSchema(
+                name,
+                List.of(
+                        new ColumnMeta("id", ColumnType.INTEGER),
+                        new ColumnMeta("name", ColumnType.VARCHAR)));
     }
 
     @Test
@@ -83,16 +87,16 @@ class MiniDbCatalogTest {
 
     @Test
     void schemaNameDefaultsToPublicViaConvenienceFactory() {
-        TableSchema schema = new TableSchema("t1", List.of(
-                new ColumnMeta("id", ColumnType.INTEGER)));
+        TableSchema schema =
+                new TableSchema("t1", List.of(new ColumnMeta("id", ColumnType.INTEGER)));
         assertEquals("public", schema.schemaName());
         assertEquals("t1", schema.name());
     }
 
     @Test
     void explicitSchemaNameStored() {
-        TableSchema schema = new TableSchema("other", "t1", List.of(
-                new ColumnMeta("id", ColumnType.INTEGER)));
+        TableSchema schema =
+                new TableSchema("other", "t1", List.of(new ColumnMeta("id", ColumnType.INTEGER)));
         assertEquals("other", schema.schemaName());
         assertEquals("t1", schema.name());
     }
@@ -101,10 +105,14 @@ class MiniDbCatalogTest {
     void alterTableReplacesSchema() {
         MiniDbCatalog catalog = new MiniDbCatalog();
         catalog.createTable(table("t1"));
-        TableSchema newSchema = new TableSchema("public", "t1", List.of(
-                new ColumnMeta("id", ColumnType.INTEGER),
-                new ColumnMeta("name", ColumnType.VARCHAR),
-                new ColumnMeta("extra", ColumnType.INTEGER)));
+        TableSchema newSchema =
+                new TableSchema(
+                        "public",
+                        "t1",
+                        List.of(
+                                new ColumnMeta("id", ColumnType.INTEGER),
+                                new ColumnMeta("name", ColumnType.VARCHAR),
+                                new ColumnMeta("extra", ColumnType.INTEGER)));
         catalog.alterTable("public", "t1", newSchema);
         assertEquals(3, catalog.getTable("public", "t1").columns().size());
     }

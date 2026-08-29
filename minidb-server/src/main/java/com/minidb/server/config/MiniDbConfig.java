@@ -1,9 +1,11 @@
 package com.minidb.server.config;
 
+import com.minidb.server.transaction.TransactionIsolation;
+
 import com.fasterxml.jackson.core.type.TypeReference;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.fasterxml.jackson.dataformat.yaml.YAMLFactory;
-import com.minidb.server.transaction.TransactionIsolation;
+
 import java.io.IOException;
 import java.io.UncheckedIOException;
 import java.nio.file.Files;
@@ -46,7 +48,8 @@ public final class MiniDbConfig {
     public static final int DEFAULT_SERVER_PORT = 8899;
 
     /** 默认事务隔离级别,conf/config.yaml 的 server.isolation-level。 */
-    public static final TransactionIsolation DEFAULT_ISOLATION_LEVEL = TransactionIsolation.SERIALIZABLE;
+    public static final TransactionIsolation DEFAULT_ISOLATION_LEVEL =
+            TransactionIsolation.SERIALIZABLE;
 
     private static final ObjectMapper YAML = new ObjectMapper(new YAMLFactory());
 
@@ -62,10 +65,17 @@ public final class MiniDbConfig {
     private final int serverPort;
     private final TransactionIsolation isolationLevel;
 
-    private MiniDbConfig(long compactionTargetSizeBytes, int compactionAutoPartThreshold,
-                         long lsmMemtableSizeBytes, int lsmL0FileLimit, int lsmLevelSizeMultiplier,
-                         long lsmBackgroundIntervalMs, int lsmBloomBitsPerKey,
-                         int serverQueryThreads, int serverPort, TransactionIsolation isolationLevel) {
+    private MiniDbConfig(
+            long compactionTargetSizeBytes,
+            int compactionAutoPartThreshold,
+            long lsmMemtableSizeBytes,
+            int lsmL0FileLimit,
+            int lsmLevelSizeMultiplier,
+            long lsmBackgroundIntervalMs,
+            int lsmBloomBitsPerKey,
+            int serverQueryThreads,
+            int serverPort,
+            TransactionIsolation isolationLevel) {
         this.compactionTargetSizeBytes = compactionTargetSizeBytes;
         this.compactionAutoPartThreshold = compactionAutoPartThreshold;
         this.lsmMemtableSizeBytes = lsmMemtableSizeBytes;
@@ -140,7 +150,8 @@ public final class MiniDbConfig {
             if (targetMb != null && targetMb > 0) {
                 targetBytes = targetMb * 1024 * 1024;
             }
-            Integer threshold = asInt(compaction == null ? null : compaction.get("auto-part-threshold"));
+            Integer threshold =
+                    asInt(compaction == null ? null : compaction.get("auto-part-threshold"));
             if (threshold != null && threshold > 0) {
                 autoThreshold = threshold;
             }
@@ -179,14 +190,22 @@ public final class MiniDbConfig {
                 isolationLevel = TransactionIsolation.fromString(isoStr);
             }
         }
-        return new MiniDbConfig(targetBytes, autoThreshold,
-                lsmMemtable, lsmL0, lsmMultiplier, lsmInterval, lsmBloom, queryThreads, serverPort, isolationLevel);
+        return new MiniDbConfig(
+                targetBytes,
+                autoThreshold,
+                lsmMemtable,
+                lsmL0,
+                lsmMultiplier,
+                lsmInterval,
+                lsmBloom,
+                queryThreads,
+                serverPort,
+                isolationLevel);
     }
 
     private static Map<String, Object> readYaml(Path file) {
         try {
-            return YAML.readValue(file.toFile(), new TypeReference<>() {
-            });
+            return YAML.readValue(file.toFile(), new TypeReference<>() {});
         } catch (IOException e) {
             throw new UncheckedIOException("failed to load config: " + file, e);
         }

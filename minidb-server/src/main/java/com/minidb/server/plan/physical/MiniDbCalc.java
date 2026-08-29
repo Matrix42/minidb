@@ -1,13 +1,10 @@
 package com.minidb.server.plan.physical;
 
-import com.minidb.storage.common.ArrowTypes;
-import com.minidb.storage.common.BatchIterator;
 import com.minidb.server.exec.ExecContext;
 import com.minidb.server.exec.RowCopier;
-import java.util.ArrayDeque;
-import java.util.ArrayList;
-import java.util.Deque;
-import java.util.List;
+import com.minidb.storage.common.ArrowTypes;
+import com.minidb.storage.common.BatchIterator;
+
 import org.apache.arrow.vector.BitVector;
 import org.apache.arrow.vector.FieldVector;
 import org.apache.arrow.vector.ValueVector;
@@ -27,19 +24,24 @@ import org.apache.calcite.rex.RexOver;
 import org.apache.calcite.rex.RexProgram;
 import org.apache.calcite.rex.RexShuttle;
 
+import java.util.ArrayDeque;
+import java.util.ArrayList;
+import java.util.Deque;
+import java.util.List;
+
 /**
- * Generalized Project+Filter over a RexProgram: evaluates the program's
- * projections on each input row, keeps rows satisfying the program's condition
- * (if any), and renames output columns to the Calc row type.
+ * Generalized Project+Filter over a RexProgram: evaluates the program's projections on each input
+ * row, keeps rows satisfying the program's condition (if any), and renames output columns to the
+ * Calc row type.
  *
- * <p>Window functions (RexOver) take an eager path: the input is materialized,
- * the condition filters rows first (SQL WHERE runs before window functions),
- * then each RexOver is computed and the projections are evaluated.
+ * <p>Window functions (RexOver) take an eager path: the input is materialized, the condition
+ * filters rows first (SQL WHERE runs before window functions), then each RexOver is computed and
+ * the projections are evaluated.
  */
 public class MiniDbCalc extends Calc implements MiniDbRel {
 
-    public MiniDbCalc(RelOptCluster cluster, RelTraitSet traitSet,
-                      RelNode input, RexProgram program) {
+    public MiniDbCalc(
+            RelOptCluster cluster, RelTraitSet traitSet, RelNode input, RexProgram program) {
         super(cluster, traitSet, java.util.List.of(), input, program);
     }
 
@@ -91,21 +93,23 @@ public class MiniDbCalc extends Calc implements MiniDbRel {
 
     // ---- eager window path ----
 
-    private BatchIterator windowExecute(List<RexNode> projects, RexNode condition,
-                                        ExecContext ctx) {
+    private BatchIterator windowExecute(
+            List<RexNode> projects, RexNode condition, ExecContext ctx) {
         // WHERE runs before window functions, so filter the materialized rows
         // before computing the windows.
-        VectorSchemaRoot rows = filterRows(WindowFunctions.materialize(getInput(), ctx), condition, ctx);
+        VectorSchemaRoot rows =
+                filterRows(WindowFunctions.materialize(getInput(), ctx), condition, ctx);
 
         int inputCols = getInput().getRowType().getFieldCount();
         List<RexOver> overs = new ArrayList<>();
-        RexShuttle extract = new RexShuttle() {
-            @Override
-            public RexNode visitOver(RexOver over) {
-                overs.add(over);
-                return new RexInputRef(inputCols + overs.size() - 1, over.getType());
-            }
-        };
+        RexShuttle extract =
+                new RexShuttle() {
+                    @Override
+                    public RexNode visitOver(RexOver over) {
+                        overs.add(over);
+                        return new RexInputRef(inputCols + overs.size() - 1, over.getType());
+                    }
+                };
         List<RexNode> rewritten = new ArrayList<>();
         for (RexNode project : projects) {
             rewritten.add(project.accept(extract));
@@ -126,23 +130,24 @@ public class MiniDbCalc extends Calc implements MiniDbRel {
             VectorSchemaRoot out = VectorSchemaRoot.of(outVectors.toArray(new FieldVector[0]));
             out.setRowCount(rows.getRowCount());
             boolean[] done = {false};
-            return BatchIterator.interruptible(new BatchIterator() {
-                @Override
-                public boolean hasNext() {
-                    return !done[0];
-                }
+            return BatchIterator.interruptible(
+                    new BatchIterator() {
+                        @Override
+                        public boolean hasNext() {
+                            return !done[0];
+                        }
 
-                @Override
-                public VectorSchemaRoot next() {
-                    done[0] = true;
-                    return out;
-                }
+                        @Override
+                        public VectorSchemaRoot next() {
+                            done[0] = true;
+                            return out;
+                        }
 
-                @Override
-                public void close() {
-                    out.close();
-                }
-            });
+                        @Override
+                        public void close() {
+                            out.close();
+                        }
+                    });
         } finally {
             joined.close();
             rows.close();
@@ -192,15 +197,20 @@ public class MiniDbCalc extends Calc implements MiniDbRel {
         }
     }
 
-    private VectorSchemaRoot buildWindowBatch(VectorSchemaRoot rows, List<List<Object>> windowCols,
-                                              int inputCols, List<RexOver> overs, ExecContext ctx) {
+    private VectorSchemaRoot buildWindowBatch(
+            VectorSchemaRoot rows,
+            List<List<Object>> windowCols,
+            int inputCols,
+            List<RexOver> overs,
+            ExecContext ctx) {
         List<FieldVector> vectors = new ArrayList<>();
         for (RelDataTypeField field : getInput().getRowType().getFieldList()) {
             vectors.add(ArrowTypes.field(field).createVector(ctx.allocator()));
         }
         for (RexOver over : overs) {
-            vectors.add(ArrowTypes.field(over.getType(), "w" + overs.indexOf(over))
-                    .createVector(ctx.allocator()));
+            vectors.add(
+                    ArrowTypes.field(over.getType(), "w" + overs.indexOf(over))
+                            .createVector(ctx.allocator()));
         }
         for (FieldVector vector : vectors) {
             vector.setInitialCapacity(rows.getRowCount());
@@ -241,41 +251,42 @@ public class MiniDbCalc extends Calc implements MiniDbRel {
     private BatchIterator lazyExecute(List<RexNode> projects, RexNode condition, ExecContext ctx) {
         BatchIterator input = ((MiniDbRel) getInput()).execute(ctx);
         Deque<VectorSchemaRoot> owned = new ArrayDeque<>();
-        return BatchIterator.interruptible(new BatchIterator() {
-            VectorSchemaRoot pending;
+        return BatchIterator.interruptible(
+                new BatchIterator() {
+                    VectorSchemaRoot pending;
 
-            @Override
-            public boolean hasNext() {
-                while (pending == null && input.hasNext()) {
-                    VectorSchemaRoot batch = input.next();
-                    pending = calcBatch(batch, projects, condition, ctx);
-                    if (pending != null) {
-                        owned.add(pending);
+                    @Override
+                    public boolean hasNext() {
+                        while (pending == null && input.hasNext()) {
+                            VectorSchemaRoot batch = input.next();
+                            pending = calcBatch(batch, projects, condition, ctx);
+                            if (pending != null) {
+                                owned.add(pending);
+                            }
+                        }
+                        return pending != null;
                     }
-                }
-                return pending != null;
-            }
 
-            @Override
-            public VectorSchemaRoot next() {
-                VectorSchemaRoot out = pending;
-                pending = null;
-                return out;
-            }
+                    @Override
+                    public VectorSchemaRoot next() {
+                        VectorSchemaRoot out = pending;
+                        pending = null;
+                        return out;
+                    }
 
-            @Override
-            public void close() {
-                input.close();
-                for (VectorSchemaRoot root : owned) {
-                    root.close();
-                }
-                owned.clear();
-            }
-        });
+                    @Override
+                    public void close() {
+                        input.close();
+                        for (VectorSchemaRoot root : owned) {
+                            root.close();
+                        }
+                        owned.clear();
+                    }
+                });
     }
 
-    private VectorSchemaRoot calcBatch(VectorSchemaRoot batch, List<RexNode> projects,
-                                       RexNode condition, ExecContext ctx) {
+    private VectorSchemaRoot calcBatch(
+            VectorSchemaRoot batch, List<RexNode> projects, RexNode condition, ExecContext ctx) {
         List<ValueVector> evals = new ArrayList<>();
         List<FieldVector> outVectors = new ArrayList<>();
         ValueVector cond = null;
@@ -326,8 +337,8 @@ public class MiniDbCalc extends Calc implements MiniDbRel {
         return kept;
     }
 
-    private FieldVector renameFiltered(ValueVector src, String name,
-                                       ValueVector cond, int kept, ExecContext ctx) {
+    private FieldVector renameFiltered(
+            ValueVector src, String name, ValueVector cond, int kept, ExecContext ctx) {
         Field targetField = new Field(name, src.getField().getFieldType(), List.of());
         FieldVector dst = targetField.createVector(ctx.allocator());
         dst.setInitialCapacity(kept);
@@ -341,5 +352,4 @@ public class MiniDbCalc extends Calc implements MiniDbRel {
         dst.setValueCount(kept);
         return dst;
     }
-
 }

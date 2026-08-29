@@ -1,8 +1,7 @@
 package com.minidb.server.exec.functions;
 
 import com.minidb.storage.common.ArrowTypes;
-import java.util.ArrayList;
-import java.util.List;
+
 import org.apache.arrow.memory.BufferAllocator;
 import org.apache.arrow.vector.BigIntVector;
 import org.apache.arrow.vector.BitVector;
@@ -20,6 +19,9 @@ import org.apache.arrow.vector.VarBinaryVector;
 import org.apache.arrow.vector.VarCharVector;
 import org.apache.calcite.rel.type.RelDataType;
 
+import java.util.ArrayList;
+import java.util.List;
+
 /** 一个函数:若干重载 + 按输入/输出类型分发 + 分配输出向量。 */
 public final class Function {
     private final String name;
@@ -30,8 +32,8 @@ public final class Function {
         this.overloads = overloads;
     }
 
-    public ValueVector evaluate(List<ValueVector> args, RelDataType resultType, int rows,
-                                BufferAllocator allocator) {
+    public ValueVector evaluate(
+            List<ValueVector> args, RelDataType resultType, int rows, BufferAllocator allocator) {
         // 先解析(含输出类型)再分配:解析失败不泄漏输出向量。
         Class<? extends FieldVector> outputClass = outputVectorClass(resultType);
         Overload matched = resolveOverload(args, outputClass);
@@ -60,7 +62,8 @@ public final class Function {
         return out;
     }
 
-    private Overload resolveOverload(List<ValueVector> args, Class<? extends FieldVector> outputClass) {
+    private Overload resolveOverload(
+            List<ValueVector> args, Class<? extends FieldVector> outputClass) {
         for (Overload o : overloads) {
             if (o.outputType().equals(outputClass) && matches(o.inputTypes(), args)) {
                 return o;
@@ -74,12 +77,16 @@ public final class Function {
             }
         }
         throw new UnsupportedOperationException(
-                "no overload of " + name + " for argument types " + argClasses(args)
-                        + " with result " + outputClass.getSimpleName());
+                "no overload of "
+                        + name
+                        + " for argument types "
+                        + argClasses(args)
+                        + " with result "
+                        + outputClass.getSimpleName());
     }
 
-    private static FieldVector createOutputVector(Class<? extends FieldVector> vectorClass,
-                                                   BufferAllocator allocator) {
+    private static FieldVector createOutputVector(
+            Class<? extends FieldVector> vectorClass, BufferAllocator allocator) {
         if (vectorClass == SmallIntVector.class) {
             return new SmallIntVector("expr", allocator);
         }
@@ -119,7 +126,8 @@ public final class Function {
         throw new IllegalArgumentException("unsupported output vector class: " + vectorClass);
     }
 
-    private static boolean matches(List<Class<? extends ValueVector>> types, List<ValueVector> args) {
+    private static boolean matches(
+            List<Class<? extends ValueVector>> types, List<ValueVector> args) {
         if (types.size() != args.size()) {
             return false;
         }
@@ -156,8 +164,9 @@ public final class Function {
             case TIME -> TimeMilliVector.class;
             case TIMESTAMP -> TimeStampMilliVector.class;
             case BINARY, VARBINARY -> VarBinaryVector.class;
-            default -> throw new IllegalArgumentException(
-                    "unsupported result type: " + type.getSqlTypeName());
+            default ->
+                    throw new IllegalArgumentException(
+                            "unsupported result type: " + type.getSqlTypeName());
         };
     }
 }

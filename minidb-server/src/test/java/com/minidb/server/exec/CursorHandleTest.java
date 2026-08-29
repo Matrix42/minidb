@@ -1,16 +1,18 @@
 package com.minidb.server.exec;
 
-import static org.junit.jupiter.api.Assertions.assertEquals;
-import static org.junit.jupiter.api.Assertions.assertTrue;
-
 import com.minidb.server.catalog.MiniDbCatalog;
-import com.minidb.server.storage.StorageManager;
 import com.minidb.server.stats.StatsManager;
-import java.nio.file.Path;
+import com.minidb.server.storage.StorageManager;
+
 import org.apache.arrow.memory.RootAllocator;
 import org.apache.arrow.vector.VectorSchemaRoot;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
+
+import java.nio.file.Path;
+
+import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertTrue;
 
 class CursorHandleTest {
 

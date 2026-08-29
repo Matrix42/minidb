@@ -4,11 +4,13 @@ import com.minidb.server.catalog.MiniDbCatalog;
 import com.minidb.server.exec.QueryExecutor;
 import com.minidb.server.storage.JsonCatalogStore;
 import com.minidb.server.storage.StorageManager;
-import java.nio.file.Path;
+
 import org.apache.arrow.memory.BufferAllocator;
 import org.apache.arrow.memory.RootAllocator;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
+
+import java.nio.file.Path;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertNotNull;

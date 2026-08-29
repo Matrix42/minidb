@@ -5,29 +5,29 @@ import com.minidb.server.exec.QueryExecutor;
 import com.minidb.server.exec.QueryResult;
 import com.minidb.server.stats.StatsManager;
 import com.minidb.server.storage.StorageManager;
-import java.nio.file.Path;
-import java.util.ArrayList;
-import java.util.List;
-import java.util.Map;
+
 import org.apache.arrow.memory.BufferAllocator;
 import org.apache.arrow.memory.RootAllocator;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
 
+import java.nio.file.Path;
+import java.util.ArrayList;
+import java.util.List;
+import java.util.Map;
+
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 /**
- * 直接用 {@link QueryExecutor}(不走 MiniDbServer/JDBC 网络层)跑 TPC-DS 查询,
- * 验证内核执行路径能跑通。区别于 {@link TpcdsEndToEndTest}(走网络 + JDBC),
- * 本测试更快、更稳定,失败时能直接看到内核抛出的异常。
+ * 直接用 {@link QueryExecutor}(不走 MiniDbServer/JDBC 网络层)跑 TPC-DS 查询, 验证内核执行路径能跑通。区别于 {@link
+ * TpcdsEndToEndTest}(走网络 + JDBC), 本测试更快、更稳定,失败时能直接看到内核抛出的异常。
  */
 class TpcdsQueryExecutorTest {
 
     /**
-     * 只跑前 10 条保持单测快(覆盖 join/EXISTS 子查询/窗口/聚合等模式);全量 99 条在
-     * 0.01 scale 下约 9 分钟(query72/14 等重查询),需要全量验证时改用
-     * {@code TpcdsBenchmark run} 命令。
+     * 只跑前 10 条保持单测快(覆盖 join/EXISTS 子查询/窗口/聚合等模式);全量 99 条在 0.01 scale 下约 9 分钟(query72/14
+     * 等重查询),需要全量验证时改用 {@code TpcdsBenchmark run} 命令。
      */
     private static final int QUERY_LIMIT = 10;
 

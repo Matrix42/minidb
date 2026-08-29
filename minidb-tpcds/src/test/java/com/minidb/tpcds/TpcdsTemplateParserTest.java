@@ -1,7 +1,8 @@
 package com.minidb.tpcds;
 
-import java.util.Map;
 import org.junit.jupiter.api.Test;
+
+import java.util.Map;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
@@ -12,8 +13,9 @@ class TpcdsTemplateParserTest {
     @Test
     void parsesDefineAndSubstitution() {
         TpcdsTemplateParser parser = new TpcdsTemplateParser();
-        String tpl = "define YEAR = random(1998, 2002, uniform);\n\n"
-                + "select * from t where d_year = [YEAR];\n";
+        String tpl =
+                "define YEAR = random(1998, 2002, uniform);\n\n"
+                        + "select * from t where d_year = [YEAR];\n";
         String sql = parser.parseTemplate(tpl, 1);
         assertFalse(sql.contains("define"), "define 应被移除");
         assertFalse(sql.contains("["), "替换应完成: " + sql);
@@ -38,8 +40,9 @@ class TpcdsTemplateParserTest {
     @Test
     void ulistAndIndexedRef() {
         TpcdsTemplateParser parser = new TpcdsTemplateParser();
-        String tpl = "define N = ulist(random(1, 1000, uniform), 3);\n"
-                + "select [N.1], [N.2], [N.3];\n";
+        String tpl =
+                "define N = ulist(random(1, 1000, uniform), 3);\n"
+                        + "select [N.1], [N.2], [N.3];\n";
         String sql = parser.parseTemplate(tpl, 1);
         assertFalse(sql.contains("[N"), "应替换 [N.N]: " + sql);
         assertTrue(sql.matches("(?s)select \\d+, \\d+, \\d+.*"), sql);

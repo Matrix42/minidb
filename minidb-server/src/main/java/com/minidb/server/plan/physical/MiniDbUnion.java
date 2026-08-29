@@ -1,13 +1,10 @@
 package com.minidb.server.plan.physical;
 
-import com.minidb.storage.common.ArrowTypes;
-import com.minidb.storage.common.BatchIterator;
 import com.minidb.server.exec.ExecContext;
 import com.minidb.server.exec.RowCopier;
-import java.util.ArrayList;
-import java.util.LinkedHashSet;
-import java.util.List;
-import java.util.Set;
+import com.minidb.storage.common.ArrowTypes;
+import com.minidb.storage.common.BatchIterator;
+
 import org.apache.arrow.vector.FieldVector;
 import org.apache.arrow.vector.VectorSchemaRoot;
 import org.apache.calcite.plan.RelOptCluster;
@@ -16,10 +13,15 @@ import org.apache.calcite.rel.RelNode;
 import org.apache.calcite.rel.core.Union;
 import org.apache.calcite.rel.type.RelDataTypeField;
 
+import java.util.ArrayList;
+import java.util.LinkedHashSet;
+import java.util.List;
+import java.util.Set;
+
 public class MiniDbUnion extends Union implements MiniDbRel {
 
-    public MiniDbUnion(RelOptCluster cluster, RelTraitSet traitSet,
-                       List<RelNode> inputs, boolean all) {
+    public MiniDbUnion(
+            RelOptCluster cluster, RelTraitSet traitSet, List<RelNode> inputs, boolean all) {
         super(cluster, traitSet, inputs, all);
     }
 
@@ -56,27 +58,28 @@ public class MiniDbUnion extends Union implements MiniDbRel {
         }
 
         boolean[] done = {false};
-        return BatchIterator.interruptible(new BatchIterator() {
-            @Override
-            public boolean hasNext() {
-                return !done[0];
-            }
+        return BatchIterator.interruptible(
+                new BatchIterator() {
+                    @Override
+                    public boolean hasNext() {
+                        return !done[0];
+                    }
 
-            @Override
-            public VectorSchemaRoot next() {
-                done[0] = true;
-                return out;
-            }
+                    @Override
+                    public VectorSchemaRoot next() {
+                        done[0] = true;
+                        return out;
+                    }
 
-            @Override
-            public void close() {
-                out.close();
-            }
-        });
+                    @Override
+                    public void close() {
+                        out.close();
+                    }
+                });
     }
 
-    private VectorSchemaRoot mergeBatches(List<VectorSchemaRoot> batches, int total,
-                                          ExecContext ctx) {
+    private VectorSchemaRoot mergeBatches(
+            List<VectorSchemaRoot> batches, int total, ExecContext ctx) {
         boolean distinct = !all;
         // 去重 key 用 ColumnKey(列式 hash/equals),避免每行每列装箱成 List<Object>。
         int[] allCols = new int[getRowType().getFieldCount()];

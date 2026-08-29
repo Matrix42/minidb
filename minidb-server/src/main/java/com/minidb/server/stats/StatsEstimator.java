@@ -1,10 +1,12 @@
 package com.minidb.server.stats;
 
 import com.minidb.storage.common.TableSchema;
-import java.util.Locale;
+
 import org.apache.calcite.rex.RexCall;
 import org.apache.calcite.rex.RexInputRef;
 import org.apache.calcite.rex.RexNode;
+
+import java.util.Locale;
 
 public final class StatsEstimator {
 

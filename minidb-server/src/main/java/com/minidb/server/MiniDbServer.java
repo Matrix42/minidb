@@ -7,8 +7,9 @@ import com.minidb.server.config.MiniDbConfig;
 import com.minidb.server.exec.MetadataExecutor;
 import com.minidb.server.exec.QueryExecutor;
 import com.minidb.server.netty.SessionHandler;
-import com.minidb.server.storage.StorageManager;
 import com.minidb.server.stats.StatsManager;
+import com.minidb.server.storage.StorageManager;
+
 import io.netty.bootstrap.ServerBootstrap;
 import io.netty.channel.Channel;
 import io.netty.channel.ChannelInitializer;
@@ -16,6 +17,11 @@ import io.netty.channel.EventLoopGroup;
 import io.netty.channel.nio.NioEventLoopGroup;
 import io.netty.channel.socket.SocketChannel;
 import io.netty.channel.socket.nio.NioServerSocketChannel;
+import org.apache.arrow.memory.BufferAllocator;
+import org.apache.arrow.memory.RootAllocator;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
+
 import java.io.IOException;
 import java.io.UncheckedIOException;
 import java.net.InetSocketAddress;
@@ -23,10 +29,6 @@ import java.nio.file.Files;
 import java.nio.file.Path;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
-import org.apache.arrow.memory.BufferAllocator;
-import org.apache.arrow.memory.RootAllocator;
-import org.slf4j.Logger;
-import org.slf4j.LoggerFactory;
 
 public class MiniDbServer implements AutoCloseable {
 
@@ -59,20 +61,28 @@ public class MiniDbServer implements AutoCloseable {
         // 单机 OLTP 固定池更稳——大小取配置 server.query-threads(0=自动=可用核数),
         // 超额查询在队列排队,线程数封顶。
         int queryThreads = storage.config().serverQueryThreads();
-        queryPool = Executors.newFixedThreadPool(
-                queryThreads > 0 ? queryThreads : defaultQueryThreads());
-        ServerBootstrap bootstrap = new ServerBootstrap()
-                .group(boss, workers)
-                .channel(NioServerSocketChannel.class)
-                .childHandler(new ChannelInitializer<SocketChannel>() {
-                    @Override
-                    protected void initChannel(SocketChannel ch) {
-                        ch.pipeline().addLast(new MessageDecoder());
-                        ch.pipeline().addLast(new MessageEncoder());
-                        ch.pipeline().addLast(new SessionHandler(executor, metadata, queryPool,
-                                storage.transactionManager()));
-                    }
-                });
+        queryPool =
+                Executors.newFixedThreadPool(
+                        queryThreads > 0 ? queryThreads : defaultQueryThreads());
+        ServerBootstrap bootstrap =
+                new ServerBootstrap()
+                        .group(boss, workers)
+                        .channel(NioServerSocketChannel.class)
+                        .childHandler(
+                                new ChannelInitializer<SocketChannel>() {
+                                    @Override
+                                    protected void initChannel(SocketChannel ch) {
+                                        ch.pipeline().addLast(new MessageDecoder());
+                                        ch.pipeline().addLast(new MessageEncoder());
+                                        ch.pipeline()
+                                                .addLast(
+                                                        new SessionHandler(
+                                                                executor,
+                                                                metadata,
+                                                                queryPool,
+                                                                storage.transactionManager()));
+                                    }
+                                });
         channel = bootstrap.bind(port).sync().channel();
         LOG.info("MiniDB server bound to port {}", port);
     }
@@ -111,22 +121,29 @@ public class MiniDbServer implements AutoCloseable {
         if (port < 0) {
             port = config.serverPort();
         }
-        LOG.info("MiniDB starting on port {} with data dir {}, conf dir {}", port, dataDir, confDir);
+        LOG.info(
+                "MiniDB starting on port {} with data dir {}, conf dir {}", port, dataDir, confDir);
         MiniDbServer server = new MiniDbServer();
         server.start(port, dataDir, confDir);
         LOG.info("MiniDB listening on port {}", server.port());
         Path pidFileFinal = pidFile;
-        Runtime.getRuntime().addShutdownHook(new Thread(() -> {
-            LOG.info("MiniDB shutting down");
-            server.close();
-            if (pidFileFinal != null) {
-                try {
-                    Files.deleteIfExists(pidFileFinal);
-                } catch (IOException e) {
-                    LOG.warn("failed to delete pid file: {}", pidFileFinal, e);
-                }
-            }
-        }));
+        Runtime.getRuntime()
+                .addShutdownHook(
+                        new Thread(
+                                () -> {
+                                    LOG.info("MiniDB shutting down");
+                                    server.close();
+                                    if (pidFileFinal != null) {
+                                        try {
+                                            Files.deleteIfExists(pidFileFinal);
+                                        } catch (IOException e) {
+                                            LOG.warn(
+                                                    "failed to delete pid file: {}",
+                                                    pidFileFinal,
+                                                    e);
+                                        }
+                                    }
+                                }));
         if (pidFile != null) {
             try {
                 Files.writeString(pidFile, String.valueOf(ProcessHandle.current().pid()));

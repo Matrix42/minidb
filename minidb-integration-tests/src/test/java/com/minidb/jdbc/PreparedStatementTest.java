@@ -1,6 +1,9 @@
 package com.minidb.jdbc;
 
 import com.minidb.server.MiniDbServer;
+
+import org.junit.jupiter.api.Test;
+
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.sql.Connection;
@@ -11,7 +14,6 @@ import java.sql.ResultSet;
 import java.sql.Statement;
 import java.sql.Time;
 import java.sql.Timestamp;
-import org.junit.jupiter.api.Test;
 
 import static org.junit.jupiter.api.Assertions.assertArrayEquals;
 import static org.junit.jupiter.api.Assertions.assertEquals;
@@ -27,10 +29,9 @@ class PreparedStatementTest {
         server.start(0, dataDir);
         String url = "jdbc:minidb://127.0.0.1:" + server.port();
         try (Connection c = DriverManager.getConnection(url);
-             Statement s = c.createStatement()) {
+                Statement s = c.createStatement()) {
             s.execute("CREATE TABLE t (a SMALLINT, b BIGINT, c DOUBLE)");
-            try (PreparedStatement ps = c.prepareStatement(
-                    "INSERT INTO t VALUES (?, ?, ?)")) {
+            try (PreparedStatement ps = c.prepareStatement("INSERT INTO t VALUES (?, ?, ?)")) {
                 ps.setByte(1, (byte) 42);
                 ps.setShort(2, (short) 300);
                 ps.setFloat(3, 3.14f);
@@ -55,10 +56,9 @@ class PreparedStatementTest {
         server.start(0, dataDir);
         String url = "jdbc:minidb://127.0.0.1:" + server.port();
         try (Connection c = DriverManager.getConnection(url);
-             Statement s = c.createStatement()) {
+                Statement s = c.createStatement()) {
             s.execute("CREATE TABLE t (tm TIME)");
-            try (PreparedStatement ps = c.prepareStatement(
-                    "INSERT INTO t VALUES (?)")) {
+            try (PreparedStatement ps = c.prepareStatement("INSERT INTO t VALUES (?)")) {
                 ps.setTime(1, Time.valueOf("10:30:00"));
                 ps.executeUpdate();
             }
@@ -79,11 +79,10 @@ class PreparedStatementTest {
         server.start(0, dataDir);
         String url = "jdbc:minidb://127.0.0.1:" + server.port();
         try (Connection c = DriverManager.getConnection(url);
-             Statement s = c.createStatement()) {
+                Statement s = c.createStatement()) {
             s.execute("CREATE TABLE t (b VARBINARY)");
             byte[] data = {(byte) 0xCA, (byte) 0xFE, (byte) 0xBA, (byte) 0xBE};
-            try (PreparedStatement ps = c.prepareStatement(
-                    "INSERT INTO t VALUES (?)")) {
+            try (PreparedStatement ps = c.prepareStatement("INSERT INTO t VALUES (?)")) {
                 ps.setBytes(1, data);
                 ps.executeUpdate();
             }
@@ -104,10 +103,9 @@ class PreparedStatementTest {
         server.start(0, dataDir);
         String url = "jdbc:minidb://127.0.0.1:" + server.port();
         try (Connection c = DriverManager.getConnection(url);
-             Statement s = c.createStatement()) {
+                Statement s = c.createStatement()) {
             s.execute("CREATE TABLE t (d DATE, ts TIMESTAMP)");
-            try (PreparedStatement ps = c.prepareStatement(
-                    "INSERT INTO t VALUES (?, ?)")) {
+            try (PreparedStatement ps = c.prepareStatement("INSERT INTO t VALUES (?, ?)")) {
                 ps.setDate(1, Date.valueOf("2025-01-15"));
                 ps.setTimestamp(2, Timestamp.valueOf("2025-06-30 14:00:00"));
                 ps.executeUpdate();
@@ -130,10 +128,9 @@ class PreparedStatementTest {
         server.start(0, dataDir);
         String url = "jdbc:minidb://127.0.0.1:" + server.port();
         try (Connection c = DriverManager.getConnection(url);
-             Statement s = c.createStatement()) {
+                Statement s = c.createStatement()) {
             s.execute("CREATE TABLE t (id INTEGER, name VARCHAR)");
-            try (PreparedStatement ps = c.prepareStatement(
-                    "INSERT INTO t VALUES (?, ?)")) {
+            try (PreparedStatement ps = c.prepareStatement("INSERT INTO t VALUES (?, ?)")) {
                 ps.setNull(1, java.sql.Types.INTEGER);
                 ps.setString(2, "hello");
                 ps.executeUpdate();
@@ -157,10 +154,9 @@ class PreparedStatementTest {
         server.start(0, dataDir);
         String url = "jdbc:minidb://127.0.0.1:" + server.port();
         try (Connection c = DriverManager.getConnection(url);
-             Statement s = c.createStatement()) {
+                Statement s = c.createStatement()) {
             s.execute("CREATE TABLE t (a INTEGER, b DOUBLE, c BOOLEAN, d VARCHAR)");
-            try (PreparedStatement ps = c.prepareStatement(
-                    "INSERT INTO t VALUES (?, ?, ?, ?)")) {
+            try (PreparedStatement ps = c.prepareStatement("INSERT INTO t VALUES (?, ?, ?, ?)")) {
                 ps.setObject(1, 100);
                 ps.setObject(2, 2.718);
                 ps.setObject(3, true);

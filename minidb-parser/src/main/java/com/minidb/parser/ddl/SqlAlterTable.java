@@ -1,7 +1,5 @@
 package com.minidb.parser.ddl;
 
-import java.util.List;
-
 import org.apache.calcite.sql.SqlAlter;
 import org.apache.calcite.sql.SqlCall;
 import org.apache.calcite.sql.SqlDataTypeSpec;
@@ -16,19 +14,28 @@ import org.apache.calcite.sql.SqlWriter;
 import org.apache.calcite.sql.parser.SqlParserPos;
 import org.apache.calcite.util.ImmutableNullableList;
 
+import java.util.List;
+
 /**
- * Parse tree for {@code ALTER TABLE}. Calcite 无 ALTER TABLE 的 SqlNode 且
- * {@link SqlAlter} 不继承 {@link SqlDdl},故自定义并直接继承 {@link SqlDdl}
- * (这样 {@code QueryExecutor.handleDdl} 的 {@code instanceof SqlDdl} 能命中)。
+ * Parse tree for {@code ALTER TABLE}. Calcite 无 ALTER TABLE 的 SqlNode 且 {@link SqlAlter} 不继承 {@link
+ * SqlDdl},故自定义并直接继承 {@link SqlDdl} (这样 {@code QueryExecutor.handleDdl} 的 {@code instanceof SqlDdl}
+ * 能命中)。
  *
- * <p>一条语句只承载一个操作({@link AlterKind}),非 SqlNode 字段(nullable/constraintKind)
- * 不进 {@link #getOperandList}(该列表仅用于 unparse 序列化,DDL 节点不重新序列化)。
+ * <p>一条语句只承载一个操作({@link AlterKind}),非 SqlNode 字段(nullable/constraintKind) 不进 {@link
+ * #getOperandList}(该列表仅用于 unparse 序列化,DDL 节点不重新序列化)。
  */
 public class SqlAlterTable extends SqlDdl {
 
     public enum AlterKind {
-        ADD_COLUMN, DROP_COLUMN, RENAME_COLUMN, RENAME_TABLE, ALTER_TYPE,
-        SET_NOT_NULL, DROP_NOT_NULL, ADD_CONSTRAINT, DROP_CONSTRAINT
+        ADD_COLUMN,
+        DROP_COLUMN,
+        RENAME_COLUMN,
+        RENAME_TABLE,
+        ALTER_TYPE,
+        SET_NOT_NULL,
+        DROP_NOT_NULL,
+        ADD_CONSTRAINT,
+        DROP_CONSTRAINT
     }
 
     private static final SqlOperator OPERATOR =
@@ -36,23 +43,33 @@ public class SqlAlterTable extends SqlDdl {
 
     private final AlterKind kind;
     private final SqlIdentifier table;
-    private final SqlIdentifier column;         // ADD/DROP/RENAME/ALTER 的目标列
-    private final SqlIdentifier newColumn;      // RENAME COLUMN 的新列名
-    private final SqlIdentifier newTable;       // RENAME TABLE 的新表名
-    private final SqlDataTypeSpec dataType;     // ADD COLUMN / ALTER TYPE 的类型
-    private final SqlNode defaultExpr;          // ADD COLUMN DEFAULT 常量(可 null)
-    private final Boolean nullable;             // ADD COLUMN / SET/DROP NOT NULL 的可空性
+    private final SqlIdentifier column; // ADD/DROP/RENAME/ALTER 的目标列
+    private final SqlIdentifier newColumn; // RENAME COLUMN 的新列名
+    private final SqlIdentifier newTable; // RENAME TABLE 的新表名
+    private final SqlDataTypeSpec dataType; // ADD COLUMN / ALTER TYPE 的类型
+    private final SqlNode defaultExpr; // ADD COLUMN DEFAULT 常量(可 null)
+    private final Boolean nullable; // ADD COLUMN / SET/DROP NOT NULL 的可空性
     private final SqlIdentifier constraintName; // ADD/DROP CONSTRAINT 名(可 null)
-    private final SqlKind constraintKind;       // ADD_CONSTRAINT: PRIMARY_KEY/UNIQUE/OTHER(外键)
-    private final SqlNodeList columns;          // ADD_CONSTRAINT 本表列
-    private final SqlIdentifier refTable;       // 外键引用表
-    private final SqlNodeList refColumns;       // 外键引用列(可 null)
+    private final SqlKind constraintKind; // ADD_CONSTRAINT: PRIMARY_KEY/UNIQUE/OTHER(外键)
+    private final SqlNodeList columns; // ADD_CONSTRAINT 本表列
+    private final SqlIdentifier refTable; // 外键引用表
+    private final SqlNodeList refColumns; // 外键引用列(可 null)
 
-    public SqlAlterTable(SqlParserPos pos, AlterKind kind, SqlIdentifier table,
-                         SqlIdentifier column, SqlIdentifier newColumn, SqlIdentifier newTable,
-                         SqlDataTypeSpec dataType, SqlNode defaultExpr, Boolean nullable,
-                         SqlIdentifier constraintName, SqlKind constraintKind,
-                         SqlNodeList columns, SqlIdentifier refTable, SqlNodeList refColumns) {
+    public SqlAlterTable(
+            SqlParserPos pos,
+            AlterKind kind,
+            SqlIdentifier table,
+            SqlIdentifier column,
+            SqlIdentifier newColumn,
+            SqlIdentifier newTable,
+            SqlDataTypeSpec dataType,
+            SqlNode defaultExpr,
+            Boolean nullable,
+            SqlIdentifier constraintName,
+            SqlKind constraintKind,
+            SqlNodeList columns,
+            SqlIdentifier refTable,
+            SqlNodeList refColumns) {
         super(OPERATOR, pos);
         this.kind = kind;
         this.table = table;
@@ -128,8 +145,17 @@ public class SqlAlterTable extends SqlDdl {
 
     @Override
     public List<SqlNode> getOperandList() {
-        return ImmutableNullableList.of(table, column, newColumn, newTable,
-                dataType, defaultExpr, columns, refTable, refColumns, constraintName);
+        return ImmutableNullableList.of(
+                table,
+                column,
+                newColumn,
+                newTable,
+                dataType,
+                defaultExpr,
+                columns,
+                refTable,
+                refColumns,
+                constraintName);
     }
 
     @Override
@@ -215,8 +241,20 @@ public class SqlAlterTable extends SqlDdl {
 
     @Override
     public SqlCall clone(SqlParserPos pos) {
-        return new SqlAlterTable(pos, kind, table, column, newColumn, newTable,
-                dataType, defaultExpr, nullable, constraintName, constraintKind,
-                columns, refTable, refColumns);
+        return new SqlAlterTable(
+                pos,
+                kind,
+                table,
+                column,
+                newColumn,
+                newTable,
+                dataType,
+                defaultExpr,
+                nullable,
+                constraintName,
+                constraintKind,
+                columns,
+                refTable,
+                refColumns);
     }
 }

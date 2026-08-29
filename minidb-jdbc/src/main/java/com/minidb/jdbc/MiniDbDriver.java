@@ -1,6 +1,7 @@
 package com.minidb.jdbc;
 
 import com.minidb.protocol.Protocol;
+
 import java.net.URI;
 import java.sql.Connection;
 import java.sql.Driver;

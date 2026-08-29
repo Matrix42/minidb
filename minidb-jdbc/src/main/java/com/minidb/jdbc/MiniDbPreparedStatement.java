@@ -32,14 +32,13 @@ public class MiniDbPreparedStatement extends MiniDbStatement implements Prepared
     private final String template;
     private final Map<Integer, Object> params = new HashMap<>();
 
-    public MiniDbPreparedStatement(MiniDbConnection connection, MiniDbClient client,
-                                   String template) {
+    public MiniDbPreparedStatement(
+            MiniDbConnection connection, MiniDbClient client, String template) {
         super(connection, client);
         this.template = template;
     }
 
-    /** 渲染参数化 SQL:正确识别字符串字面量('...' 内含 SQL 转义 ''),避免把字面量内
-     *  的 ? 误当占位符,并跳过注释里的 ?。包内可见供测试。 */
+    /** 渲染参数化 SQL:正确识别字符串字面量('...' 内含 SQL 转义 ''),避免把字面量内 的 ? 误当占位符,并跳过注释里的 ?。包内可见供测试。 */
     String render() {
         StringBuilder out = new StringBuilder();
         int paramIndex = 1;
@@ -75,8 +74,9 @@ public class MiniDbPreparedStatement extends MiniDbStatement implements Prepared
         return out.toString();
     }
 
-    /** 从 template[i]('）复制一个完整字符串字面量到 out,返回字面量结束后的下标。
-     *  按 SQL 规则处理转义引号('')与反斜杠转义(\\'),避免在字面量内部/转义处截断。 */
+    /**
+     * 从 template[i]('）复制一个完整字符串字面量到 out,返回字面量结束后的下标。 按 SQL 规则处理转义引号('')与反斜杠转义(\\'),避免在字面量内部/转义处截断。
+     */
     private int appendStringLiteral(StringBuilder out, int start) {
         int i = start;
         int len = template.length();
@@ -121,8 +121,12 @@ public class MiniDbPreparedStatement extends MiniDbStatement implements Prepared
             // 用 toLocalTime() 取「当日钟面时间」(与 TimeMilliVector 的毫秒语义一致),
             // 不能用 UTC 格式化 getTime():那会把本地 10:30 按 epoch 错渲染成 02:30。
             java.time.LocalTime lt = t.toLocalTime();
-            return String.format(Locale.ROOT, "TIME '%02d:%02d:%02d'",
-                    lt.getHour(), lt.getMinute(), lt.getSecond());
+            return String.format(
+                    Locale.ROOT,
+                    "TIME '%02d:%02d:%02d'",
+                    lt.getHour(),
+                    lt.getMinute(),
+                    lt.getSecond());
         }
         if (value instanceof Boolean || value instanceof Number) {
             return value.toString();
@@ -254,7 +258,8 @@ public class MiniDbPreparedStatement extends MiniDbStatement implements Prepared
     }
 
     @Override
-    public void setUnicodeStream(int parameterIndex, InputStream x, int length) throws SQLException {
+    public void setUnicodeStream(int parameterIndex, InputStream x, int length)
+            throws SQLException {
         throw new SQLFeatureNotSupportedException();
     }
 
@@ -269,7 +274,8 @@ public class MiniDbPreparedStatement extends MiniDbStatement implements Prepared
     }
 
     @Override
-    public void setCharacterStream(int parameterIndex, Reader reader, int length) throws SQLException {
+    public void setCharacterStream(int parameterIndex, Reader reader, int length)
+            throws SQLException {
         throw new SQLFeatureNotSupportedException();
     }
 
@@ -319,11 +325,15 @@ public class MiniDbPreparedStatement extends MiniDbStatement implements Prepared
         // 用 cal 时区把时刻换算成钟面时间(与无 Calendar 版本 toLocalTime 语义一致,但时区可变)。
         Calendar c = Calendar.getInstance(cal.getTimeZone());
         c.setTimeInMillis(x.getTime());
-        params.put(parameterIndex, new RawSql(String.format(Locale.ROOT,
-                "TIME '%02d:%02d:%02d'",
-                c.get(Calendar.HOUR_OF_DAY),
-                c.get(Calendar.MINUTE),
-                c.get(Calendar.SECOND))));
+        params.put(
+                parameterIndex,
+                new RawSql(
+                        String.format(
+                                Locale.ROOT,
+                                "TIME '%02d:%02d:%02d'",
+                                c.get(Calendar.HOUR_OF_DAY),
+                                c.get(Calendar.MINUTE),
+                                c.get(Calendar.SECOND))));
     }
 
     @Override
@@ -364,7 +374,8 @@ public class MiniDbPreparedStatement extends MiniDbStatement implements Prepared
     }
 
     @Override
-    public void setNCharacterStream(int parameterIndex, Reader value, long length) throws SQLException {
+    public void setNCharacterStream(int parameterIndex, Reader value, long length)
+            throws SQLException {
         throw new SQLFeatureNotSupportedException();
     }
 
@@ -379,7 +390,8 @@ public class MiniDbPreparedStatement extends MiniDbStatement implements Prepared
     }
 
     @Override
-    public void setBlob(int parameterIndex, InputStream inputStream, long length) throws SQLException {
+    public void setBlob(int parameterIndex, InputStream inputStream, long length)
+            throws SQLException {
         throw new SQLFeatureNotSupportedException();
     }
 
@@ -394,7 +406,8 @@ public class MiniDbPreparedStatement extends MiniDbStatement implements Prepared
     }
 
     @Override
-    public void setObject(int parameterIndex, Object x, int targetSqlType, int scaleOrLength) throws SQLException {
+    public void setObject(int parameterIndex, Object x, int targetSqlType, int scaleOrLength)
+            throws SQLException {
         setObject(parameterIndex, x);
     }
 
@@ -404,12 +417,14 @@ public class MiniDbPreparedStatement extends MiniDbStatement implements Prepared
     }
 
     @Override
-    public void setBinaryStream(int parameterIndex, InputStream x, long length) throws SQLException {
+    public void setBinaryStream(int parameterIndex, InputStream x, long length)
+            throws SQLException {
         throw new SQLFeatureNotSupportedException();
     }
 
     @Override
-    public void setCharacterStream(int parameterIndex, Reader reader, long length) throws SQLException {
+    public void setCharacterStream(int parameterIndex, Reader reader, long length)
+            throws SQLException {
         throw new SQLFeatureNotSupportedException();
     }
 

@@ -1,6 +1,5 @@
 package com.minidb.jdbc;
 
-import java.util.List;
 import org.apache.arrow.memory.BufferAllocator;
 import org.apache.arrow.memory.RootAllocator;
 import org.apache.arrow.vector.IntVector;
@@ -12,8 +11,8 @@ import org.junit.jupiter.api.Test;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 /**
- * DatabaseMetaData 返回的 ResultSet 关闭时应连带关闭其内部创建的 Statement(#19),
- * 否则每次 getTables/getColumns/getSchemas/getTableTypes 泄漏一个 Statement。
+ * DatabaseMetaData 返回的 ResultSet 关闭时应连带关闭其内部创建的 Statement(#19), 否则每次
+ * getTables/getColumns/getSchemas/getTableTypes 泄漏一个 Statement。
  */
 class DatabaseMetaDataLeakTest {
 

@@ -2,20 +2,26 @@ package com.minidb.server.rule.physical;
 
 import com.minidb.server.plan.physical.MiniDbConvention;
 import com.minidb.server.plan.physical.MiniDbUnion;
-import java.util.ArrayList;
-import java.util.List;
+
 import org.apache.calcite.plan.Convention;
 import org.apache.calcite.rel.RelNode;
 import org.apache.calcite.rel.convert.ConverterRule;
 import org.apache.calcite.rel.logical.LogicalUnion;
 
+import java.util.ArrayList;
+import java.util.List;
+
 public final class MiniDbUnionRule extends ConverterRule {
 
     public MiniDbUnionRule() {
-        this(ConverterRule.Config.INSTANCE
-                .withConversion(LogicalUnion.class, Convention.NONE,
-                        MiniDbConvention.INSTANCE, "MiniDbUnionRule")
-                .withRuleFactory(MiniDbUnionRule::new));
+        this(
+                ConverterRule.Config.INSTANCE
+                        .withConversion(
+                                LogicalUnion.class,
+                                Convention.NONE,
+                                MiniDbConvention.INSTANCE,
+                                "MiniDbUnionRule")
+                        .withRuleFactory(MiniDbUnionRule::new));
     }
 
     private MiniDbUnionRule(ConverterRule.Config config) {
@@ -29,8 +35,10 @@ public final class MiniDbUnionRule extends ConverterRule {
         for (RelNode in : union.getInputs()) {
             inputs.add(convert(in, MiniDbConvention.INSTANCE));
         }
-        return new MiniDbUnion(union.getCluster(),
+        return new MiniDbUnion(
+                union.getCluster(),
                 union.getTraitSet().replace(MiniDbConvention.INSTANCE),
-                inputs, union.all);
+                inputs,
+                union.all);
     }
 }

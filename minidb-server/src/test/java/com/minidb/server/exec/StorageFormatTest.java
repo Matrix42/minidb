@@ -4,10 +4,7 @@ import com.minidb.server.catalog.MiniDbCatalog;
 import com.minidb.server.stats.StatsManager;
 import com.minidb.server.storage.StorageManager;
 import com.minidb.storage.common.StorageFormat;
-import java.nio.charset.StandardCharsets;
-import java.nio.file.Files;
-import java.nio.file.Path;
-import java.util.List;
+
 import org.apache.arrow.memory.BufferAllocator;
 import org.apache.arrow.memory.RootAllocator;
 import org.apache.arrow.vector.BigIntVector;
@@ -23,19 +20,20 @@ import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
 
+import java.nio.charset.StandardCharsets;
+import java.nio.file.Files;
+import java.nio.file.Path;
+import java.util.List;
+
 import static org.junit.jupiter.api.Assertions.assertArrayEquals;
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
-/**
- * 存储格式(Arrow/Parquet)的路由与读写。格式经 Flink 风格
- * {@code WITH ('format'=...)} 子句选择,默认 parquet。
- */
+/** 存储格式(Arrow/Parquet)的路由与读写。格式经 Flink 风格 {@code WITH ('format'=...)} 子句选择,默认 parquet。 */
 class StorageFormatTest {
 
-    @TempDir
-    Path dataDir;
+    @TempDir Path dataDir;
     BufferAllocator allocator;
     MiniDbCatalog catalog;
     StorageManager storage;
@@ -74,13 +72,15 @@ class StorageFormatTest {
 
     @Test
     void withUnknownOptionFails() {
-        assertThrows(IllegalArgumentException.class,
+        assertThrows(
+                IllegalArgumentException.class,
                 () -> executor.execute("CREATE TABLE t (id INTEGER) WITH ('compress'=false)"));
     }
 
     @Test
     void withFormatNonStringFails() {
-        assertThrows(IllegalArgumentException.class,
+        assertThrows(
+                IllegalArgumentException.class,
                 () -> executor.execute("CREATE TABLE t (id INTEGER) WITH ('format'=false)"));
     }
 
@@ -97,10 +97,14 @@ class StorageFormatTest {
         assertEquals(2, root.getRowCount());
         assertEquals(1, ((IntVector) root.getVector("id")).get(0));
         assertEquals(2, ((IntVector) root.getVector("id")).get(1));
-        assertEquals("alice", new String(
-                ((VarCharVector) root.getVector("name")).get(0), StandardCharsets.UTF_8));
-        assertEquals("bob", new String(
-                ((VarCharVector) root.getVector("name")).get(1), StandardCharsets.UTF_8));
+        assertEquals(
+                "alice",
+                new String(
+                        ((VarCharVector) root.getVector("name")).get(0), StandardCharsets.UTF_8));
+        assertEquals(
+                "bob",
+                new String(
+                        ((VarCharVector) root.getVector("name")).get(1), StandardCharsets.UTF_8));
         root.close();
 
         // part 文件用 .parquet 扩展名,不落 .arrow。
@@ -115,13 +119,16 @@ class StorageFormatTest {
 
     @Test
     void parquetRoundTripTypes() {
-        executor.execute("CREATE TABLE t (i INTEGER, b BIGINT, d DOUBLE, s VARCHAR,"
-                + " flag BOOLEAN, tm TIME, bin VARBINARY) WITH ('format'='parquet')");
-        executor.execute("INSERT INTO t VALUES"
-                + " (1, 10000000000, 1.5, '字符', TRUE, TIME '10:30:00', X'DEADBEEF'),"
-                + " (NULL, NULL, NULL, NULL, NULL, NULL, NULL)");
+        executor.execute(
+                "CREATE TABLE t (i INTEGER, b BIGINT, d DOUBLE, s VARCHAR,"
+                        + " flag BOOLEAN, tm TIME, bin VARBINARY) WITH ('format'='parquet')");
+        executor.execute(
+                "INSERT INTO t VALUES"
+                        + " (1, 10000000000, 1.5, '字符', TRUE, TIME '10:30:00', X'DEADBEEF'),"
+                        + " (NULL, NULL, NULL, NULL, NULL, NULL, NULL)");
 
-        QueryResult result = executor.execute("SELECT i, b, d, s, flag, tm, bin FROM t ORDER BY i NULLS LAST");
+        QueryResult result =
+                executor.execute("SELECT i, b, d, s, flag, tm, bin FROM t ORDER BY i NULLS LAST");
         VectorSchemaRoot root = ((QueryResult.Rows) result).data();
         assertEquals(2, root.getRowCount());
 
@@ -139,7 +146,8 @@ class StorageFormatTest {
         assertEquals("字符", new String(s.get(0), StandardCharsets.UTF_8));
         assertEquals(1, flag.get(0));
         assertEquals(10 * 3600_000 + 30 * 60_000, tm.get(0));
-        assertArrayEquals(new byte[]{(byte) 0xDE, (byte) 0xAD, (byte) 0xBE, (byte) 0xEF}, bin.get(0));
+        assertArrayEquals(
+                new byte[] {(byte) 0xDE, (byte) 0xAD, (byte) 0xBE, (byte) 0xEF}, bin.get(0));
 
         // 第二行全 NULL,回读后保持 NULL。
         assertTrue(i.isNull(1));

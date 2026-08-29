@@ -2,6 +2,9 @@ package com.minidb.storage.lsm;
 
 import com.minidb.storage.common.PartFormat;
 import com.minidb.storage.common.TableSchema;
+
+import org.apache.arrow.memory.BufferAllocator;
+
 import java.io.IOException;
 import java.io.UncheckedIOException;
 import java.nio.file.DirectoryStream;
@@ -10,37 +13,41 @@ import java.nio.file.Path;
 import java.util.*;
 import java.util.concurrent.ConcurrentSkipListMap;
 import java.util.concurrent.atomic.AtomicLong;
-import org.apache.arrow.memory.BufferAllocator;
 
 public class SSTableManager {
     // level → sorted SSTables (L0: 按 seq 降序; L1+: 按 minKey 升序)
-    private final ConcurrentSkipListMap<Integer, List<SSTable>> levels = new ConcurrentSkipListMap<>();
+    private final ConcurrentSkipListMap<Integer, List<SSTable>> levels =
+            new ConcurrentSkipListMap<>();
     private final AtomicLong seq = new AtomicLong(0);
 
     public void addLevel0(SSTable sst) {
-        levels.compute(0, (k, list) -> {
-            if (list == null) list = new ArrayList<>();
-            List<SSTable> newList = new ArrayList<>(list);
-            // L0: 按 seq 降序（新的在前）
-            int pos = 0;
-            while (pos < newList.size() && newList.get(pos).seq() > sst.seq()) {
-                pos++;
-            }
-            newList.add(pos, sst);
-            return newList;
-        });
+        levels.compute(
+                0,
+                (k, list) -> {
+                    if (list == null) list = new ArrayList<>();
+                    List<SSTable> newList = new ArrayList<>(list);
+                    // L0: 按 seq 降序（新的在前）
+                    int pos = 0;
+                    while (pos < newList.size() && newList.get(pos).seq() > sst.seq()) {
+                        pos++;
+                    }
+                    newList.add(pos, sst);
+                    return newList;
+                });
     }
 
     public void addLevelN(int level, List<SSTable> ssts) {
-        levels.compute(level, (k, list) -> {
-            if (list == null) list = new ArrayList<>();
-            List<SSTable> newList = new ArrayList<>(list);
-            newList.addAll(ssts);
-            // L1+: 按 minKey 升序（用 SSTable 自己的 KEY_COMPARATOR，
-            // 支持 Integer/Long/String 等混合类型，避免 MemTable.KEY_COMPARATOR 的 String 强转）
-            newList.sort(Comparator.comparing(SSTable::minKey, SSTable.KEY_COMPARATOR));
-            return newList;
-        });
+        levels.compute(
+                level,
+                (k, list) -> {
+                    if (list == null) list = new ArrayList<>();
+                    List<SSTable> newList = new ArrayList<>(list);
+                    newList.addAll(ssts);
+                    // L1+: 按 minKey 升序（用 SSTable 自己的 KEY_COMPARATOR，
+                    // 支持 Integer/Long/String 等混合类型，避免 MemTable.KEY_COMPARATOR 的 String 强转）
+                    newList.sort(Comparator.comparing(SSTable::minKey, SSTable.KEY_COMPARATOR));
+                    return newList;
+                });
     }
 
     public List<SSTable> levelFiles(int level) {
@@ -93,8 +100,8 @@ public class SSTableManager {
     }
 
     /** 从已有目录加载 SSTable 文件，恢复元数据（重启用） */
-    public void loadExisting(Path tableDir, TableSchema schema,
-                              PartFormat format, BufferAllocator allocator) {
+    public void loadExisting(
+            Path tableDir, TableSchema schema, PartFormat format, BufferAllocator allocator) {
         if (!Files.exists(tableDir)) return;
         try (DirectoryStream<Path> ds = Files.newDirectoryStream(tableDir, "sst-*.sst")) {
             for (Path file : ds) {
@@ -111,8 +118,15 @@ public class SSTableManager {
                 int sStart = lEnd + 1;
                 int sEnd = name.lastIndexOf('.');
                 long fileSeq = Long.parseLong(name.substring(sStart, sEnd));
-                SSTable loaded = new SSTable(file, level, fileSeq,
-                        sst.minKey(), sst.maxKey(), sst.rowCount(), sst.bloom());
+                SSTable loaded =
+                        new SSTable(
+                                file,
+                                level,
+                                fileSeq,
+                                sst.minKey(),
+                                sst.maxKey(),
+                                sst.rowCount(),
+                                sst.bloom());
                 if (level == 0) {
                     addLevel0(loaded);
                 } else {

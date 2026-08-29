@@ -2,6 +2,7 @@ package com.minidb.server.rule.physical;
 
 import com.minidb.server.plan.physical.MiniDbConvention;
 import com.minidb.server.plan.physical.MiniDbHashJoin;
+
 import org.apache.calcite.plan.Convention;
 import org.apache.calcite.plan.RelTraitSet;
 import org.apache.calcite.rel.RelNode;
@@ -12,9 +13,14 @@ import org.apache.calcite.rel.logical.LogicalJoin;
 public final class MiniDbHashJoinRule extends ConverterRule {
 
     public MiniDbHashJoinRule() {
-        this(Config.INSTANCE
-                .withConversion(LogicalJoin.class, Convention.NONE, MiniDbConvention.INSTANCE, "MiniDbHashJoinRule")
-                .withRuleFactory(MiniDbHashJoinRule::new));
+        this(
+                Config.INSTANCE
+                        .withConversion(
+                                LogicalJoin.class,
+                                Convention.NONE,
+                                MiniDbConvention.INSTANCE,
+                                "MiniDbHashJoinRule")
+                        .withRuleFactory(MiniDbHashJoinRule::new));
     }
 
     private MiniDbHashJoinRule(Config config) {
@@ -32,9 +38,12 @@ public final class MiniDbHashJoinRule extends ConverterRule {
             return null;
         }
         RelTraitSet traits = join.getTraitSet().replace(MiniDbConvention.INSTANCE);
-        return new MiniDbHashJoin(join.getCluster(), traits,
+        return new MiniDbHashJoin(
+                join.getCluster(),
+                traits,
                 convert(join.getLeft(), MiniDbConvention.INSTANCE),
                 convert(join.getRight(), MiniDbConvention.INSTANCE),
-                join.getCondition(), join.getJoinType());
+                join.getCondition(),
+                join.getJoinType());
     }
 }

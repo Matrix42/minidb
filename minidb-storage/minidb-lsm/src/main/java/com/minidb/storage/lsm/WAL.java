@@ -1,9 +1,8 @@
 package com.minidb.storage.lsm;
 
-import com.minidb.storage.common.ColumnMeta;
-import com.minidb.storage.common.ColumnType;
 import com.minidb.storage.common.RowValue;
 import com.minidb.storage.common.TableSchema;
+
 import java.io.*;
 import java.nio.ByteBuffer;
 import java.nio.channels.FileChannel;
@@ -14,16 +13,14 @@ import java.nio.file.Path;
 import java.nio.file.StandardOpenOption;
 import java.util.ArrayList;
 import java.util.Comparator;
-import java.util.HashSet;
 import java.util.List;
 import java.util.Set;
 import java.util.zip.CRC32;
 
 /**
- * 写前日志(WAL),按「代」分段:当前段 {@code wal.log} 接收新 append,双缓冲 flush 时
- * {@link #rotate()} 把当前段改成旧段 {@code wal-<gen>.log} 并开新当前段,对应表落盘后
- * {@link #dropSegment(int)} 删旧段。恢复按代升序重放所有段 + 当前段——swap 出的表
- * 在 flush 完成前其 WAL 数据必须保留(否则 crash 丢数据),完成后再删。
+ * 写前日志(WAL),按「代」分段:当前段 {@code wal.log} 接收新 append,双缓冲 flush 时 {@link #rotate()} 把当前段改成旧段 {@code
+ * wal-<gen>.log} 并开新当前段,对应表落盘后 {@link #dropSegment(int)} 删旧段。恢复按代升序重放所有段 + 当前段——swap 出的表 在 flush
+ * 完成前其 WAL 数据必须保留(否则 crash 丢数据),完成后再删。
  */
 public class WAL implements AutoCloseable {
 
@@ -47,8 +44,12 @@ public class WAL implements AutoCloseable {
         this.currentPath = walFile;
         this.dir = walFile.getParent();
         this.nextSegmentGen = maxSegmentGen() + 1;
-        this.channel = FileChannel.open(walFile,
-                StandardOpenOption.CREATE, StandardOpenOption.READ, StandardOpenOption.WRITE);
+        this.channel =
+                FileChannel.open(
+                        walFile,
+                        StandardOpenOption.CREATE,
+                        StandardOpenOption.READ,
+                        StandardOpenOption.WRITE);
         this.channel.position(this.channel.size()); // 追加写
     }
 
@@ -84,16 +85,20 @@ public class WAL implements AutoCloseable {
     }
 
     /**
-     * 双缓冲切换:当前段(数据 = 换出表)关后改名 {@code wal-<gen>.log},开新的空当前段。
-     * 返回旧段代号,落盘完成后由调用方 {@link #dropSegment(int)} 删除。
+     * 双缓冲切换:当前段(数据 = 换出表)关后改名 {@code wal-<gen>.log},开新的空当前段。 返回旧段代号,落盘完成后由调用方 {@link
+     * #dropSegment(int)} 删除。
      */
     public int rotate() {
         int gen = nextSegmentGen++;
         try {
             channel.close();
             Files.move(currentPath, dir.resolve(SEGMENT_PREFIX + gen + ".log"));
-            channel = FileChannel.open(currentPath,
-                    StandardOpenOption.CREATE, StandardOpenOption.READ, StandardOpenOption.WRITE);
+            channel =
+                    FileChannel.open(
+                            currentPath,
+                            StandardOpenOption.CREATE,
+                            StandardOpenOption.READ,
+                            StandardOpenOption.WRITE);
             channel.position(0);
         } catch (IOException e) {
             throw new UncheckedIOException(e);
@@ -129,8 +134,8 @@ public class WAL implements AutoCloseable {
     }
 
     /**
-     * 恢复并过滤未提交事务的条目:只保留 txId==0(非事务) 或 txId 在 committedTxIds 中的条目。
-     * committedTxIds 为 null 时不过滤(向后兼容旧 recover())。
+     * 恢复并过滤未提交事务的条目:只保留 txId==0(非事务) 或 txId 在 committedTxIds 中的条目。 committedTxIds 为 null 时不过滤(向后兼容旧
+     * recover())。
      */
     public List<Entry> recover(Set<Long> committedTxIds) {
         List<Entry> entries = new ArrayList<>();
@@ -378,7 +383,7 @@ public class WAL implements AutoCloseable {
 
     /** 单个 value 编码:字符串中间格式(与旧格式一致)。 */
     private static byte[] encodeValueString(Object v) {
-        if (v == null) return new byte[] { 0 }; // sentinel: 0x00 = null
+        if (v == null) return new byte[] {0}; // sentinel: 0x00 = null
         String s = v.toString();
         byte[] utf8 = s.getBytes(StandardCharsets.UTF_8);
         byte[] result = new byte[1 + utf8.length];

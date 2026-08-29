@@ -1,9 +1,8 @@
 package com.minidb.storage.common;
 
 /**
- * 一列元数据。precision/scale 仅对 DECIMAL/NUMERIC 有意义,其余类型恒
- * {@link #PRECISION_UNSET}/{@link #SCALE_UNSET}。nullable 表示是否可为 NULL
- * (列级 NOT NULL 约束)。
+ * 一列元数据。precision/scale 仅对 DECIMAL/NUMERIC 有意义,其余类型恒 {@link #PRECISION_UNSET}/{@link
+ * #SCALE_UNSET}。nullable 表示是否可为 NULL (列级 NOT NULL 约束)。
  */
 public record ColumnMeta(String name, ColumnType type, int precision, int scale, Boolean nullable) {
 

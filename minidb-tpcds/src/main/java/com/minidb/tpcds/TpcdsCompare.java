@@ -2,6 +2,7 @@ package com.minidb.tpcds;
 
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
+
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.util.ArrayList;
@@ -12,19 +13,15 @@ import java.util.List;
 import java.util.Map;
 import java.util.TreeMap;
 
-/**
- * 对比多次 TPC-DS 运行结果,生成单个自包含 HTML(Chart.js 分组柱状图):
- * X 轴 = 查询名,每查询 N 根柱(N 次运行),附逐条耗时/行数/失败原因的表格。
- */
+/** 对比多次 TPC-DS 运行结果,生成单个自包含 HTML(Chart.js 分组柱状图): X 轴 = 查询名,每查询 N 根柱(N 次运行),附逐条耗时/行数/失败原因的表格。 */
 public class TpcdsCompare {
 
     private static final String[] COLORS = {
-            "#4c6ef5", "#f59f00", "#40c057", "#fa5252", "#ae3ec9",
-            "#15aabf", "#f783ac", "#fab005", "#7950f2", "#82c91e"
+        "#4c6ef5", "#f59f00", "#40c057", "#fa5252", "#ae3ec9",
+        "#15aabf", "#f783ac", "#fab005", "#7950f2", "#82c91e"
     };
 
-    public record NamedRun(String name, Path path) {
-    }
+    public record NamedRun(String name, Path path) {}
 
     public void compare(List<NamedRun> runs, Path outputHtml) throws Exception {
         ObjectMapper mapper = new ObjectMapper();
@@ -48,14 +45,18 @@ public class TpcdsCompare {
         int n = names.size();
 
         // 按查询号排序对齐
-        TreeMap<String, long[]> aligned = new TreeMap<>(Comparator.comparingInt(TpcdsCompare::queryNumber));
+        TreeMap<String, long[]> aligned =
+                new TreeMap<>(Comparator.comparingInt(TpcdsCompare::queryNumber));
         for (int idx = 0; idx < n; idx++) {
             for (String qName : allResults.get(idx).keySet()) {
-                long[] times = aligned.computeIfAbsent(qName, k -> {
-                    long[] arr = new long[n];
-                    Arrays.fill(arr, -1);
-                    return arr;
-                });
+                long[] times =
+                        aligned.computeIfAbsent(
+                                qName,
+                                k -> {
+                                    long[] arr = new long[n];
+                                    Arrays.fill(arr, -1);
+                                    return arr;
+                                });
                 times[idx] = allResults.get(idx).get(qName).elapsedMs();
             }
         }
@@ -86,7 +87,9 @@ public class TpcdsCompare {
             for (int i = 0; i < n; i++) {
                 tableRows.append("<td>").append(fmt(times[i])).append("</td>");
             }
-            tableRows.append("<td>").append(escape(errorFor(allResults, qName)))
+            tableRows
+                    .append("<td>")
+                    .append(escape(errorFor(allResults, qName)))
                     .append("</td></tr>\n");
         }
 
@@ -96,9 +99,12 @@ public class TpcdsCompare {
             if (i > 0) {
                 dsJson.append(", ");
             }
-            dsJson.append("{label: '").append(escapeJs(names.get(i)))
-                    .append("', data: [").append(datasets[i])
-                    .append("], backgroundColor: '").append(COLORS[i % COLORS.length])
+            dsJson.append("{label: '")
+                    .append(escapeJs(names.get(i)))
+                    .append("', data: [")
+                    .append(datasets[i])
+                    .append("], backgroundColor: '")
+                    .append(COLORS[i % COLORS.length])
                     .append("'}");
         }
 
@@ -109,7 +115,8 @@ public class TpcdsCompare {
         }
         th.append("<th>失败原因</th></tr>");
 
-        String html = """
+        String html =
+                """
                 <!DOCTYPE html>
                 <html>
                 <head>
@@ -136,13 +143,13 @@ public class TpcdsCompare {
                 </script>
                 </body>
                 </html>
-                """.formatted(th, tableRows, labels, dsJson);
+                """
+                        .formatted(th, tableRows, labels, dsJson);
 
         Files.writeString(outputHtml, html);
     }
 
-    private record Result(long elapsedMs, String error) {
-    }
+    private record Result(long elapsedMs, String error) {}
 
     private Map<String, Result> readResults(JsonNode root) {
         Map<String, Result> map = new LinkedHashMap<>();

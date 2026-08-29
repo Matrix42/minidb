@@ -1,25 +1,40 @@
 package com.minidb.storage.lsm;
 
-import static org.junit.jupiter.api.Assertions.*;
 import com.minidb.storage.arrow.ArrowPartFormat;
 import com.minidb.storage.common.*;
-import java.nio.file.Path;
-import java.util.*;
+
 import org.apache.arrow.memory.RootAllocator;
 import org.apache.arrow.vector.VectorSchemaRoot;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
 
+import java.nio.file.Path;
+import java.util.*;
+
+import static org.junit.jupiter.api.Assertions.*;
+
 class LSMTableTest {
-    private final TableSchema schema = new TableSchema("public", "t",
-            List.of(new ColumnMeta("id", ColumnType.INTEGER), new ColumnMeta("name", ColumnType.VARCHAR)),
-            List.of("id"), List.of(), List.of());
+    private final TableSchema schema =
+            new TableSchema(
+                    "public",
+                    "t",
+                    List.of(
+                            new ColumnMeta("id", ColumnType.INTEGER),
+                            new ColumnMeta("name", ColumnType.VARCHAR)),
+                    List.of("id"),
+                    List.of(),
+                    List.of());
     private final RootAllocator allocator = new RootAllocator();
 
     @Test
     void writeAndScan(@TempDir Path dir) throws Exception {
-        LSMTable table = new LSMTable(schema, new ArrowPartFormat(), allocator, dir,
-                64 * 1024 * 1024); // 大 MemTable 避免 flush
+        LSMTable table =
+                new LSMTable(
+                        schema,
+                        new ArrowPartFormat(),
+                        allocator,
+                        dir,
+                        64 * 1024 * 1024); // 大 MemTable 避免 flush
 
         // INSERT
         VectorSchemaRoot batch = table.newBatchRoot();
@@ -38,7 +53,10 @@ class LSMTableTest {
         while (it.hasNext()) {
             VectorSchemaRoot b = it.next();
             for (int i = 0; i < b.getRowCount(); i++) {
-                rows.add(new Object[]{b.getVector(0).getObject(i), b.getVector(1).getObject(i).toString()});
+                rows.add(
+                        new Object[] {
+                            b.getVector(0).getObject(i), b.getVector(1).getObject(i).toString()
+                        });
             }
         }
         it.close();
@@ -54,8 +72,8 @@ class LSMTableTest {
 
     @Test
     void updateAndDelete(@TempDir Path dir) throws Exception {
-        LSMTable table = new LSMTable(schema, new ArrowPartFormat(), allocator, dir,
-                64 * 1024 * 1024);
+        LSMTable table =
+                new LSMTable(schema, new ArrowPartFormat(), allocator, dir, 64 * 1024 * 1024);
 
         // INSERT key=1
         VectorSchemaRoot batch = table.newBatchRoot();
@@ -97,14 +115,15 @@ class LSMTableTest {
 
     @Test
     void rowCount(@TempDir Path dir) throws Exception {
-        LSMTable table = new LSMTable(schema, new ArrowPartFormat(), allocator, dir,
-                64 * 1024 * 1024);
+        LSMTable table =
+                new LSMTable(schema, new ArrowPartFormat(), allocator, dir, 64 * 1024 * 1024);
 
         VectorSchemaRoot batch = table.newBatchRoot();
         batch.allocateNew();
         for (int i = 0; i < 5; i++) {
             ((org.apache.arrow.vector.IntVector) batch.getVector(0)).setSafe(i, i);
-            ((org.apache.arrow.vector.VarCharVector) batch.getVector(1)).setSafe(i, ("v" + i).getBytes());
+            ((org.apache.arrow.vector.VarCharVector) batch.getVector(1))
+                    .setSafe(i, ("v" + i).getBytes());
         }
         batch.setRowCount(5);
         table.writePart(batch, TableHandle.Operation.INSERT);
@@ -123,7 +142,8 @@ class LSMTableTest {
         batch.allocateNew();
         for (int i = 0; i < 20; i++) {
             ((org.apache.arrow.vector.IntVector) batch.getVector(0)).setSafe(i, i);
-            ((org.apache.arrow.vector.VarCharVector) batch.getVector(1)).setSafe(i, ("v" + i).getBytes());
+            ((org.apache.arrow.vector.VarCharVector) batch.getVector(1))
+                    .setSafe(i, ("v" + i).getBytes());
         }
         batch.setRowCount(20);
         table.writePart(batch, TableHandle.Operation.INSERT);
@@ -131,8 +151,8 @@ class LSMTableTest {
         table.close();
 
         // 重新打开
-        LSMTable table2 = new LSMTable(schema, new ArrowPartFormat(), allocator, dir,
-                64 * 1024 * 1024);
+        LSMTable table2 =
+                new LSMTable(schema, new ArrowPartFormat(), allocator, dir, 64 * 1024 * 1024);
         List<Object[]> rows = collect(table2);
         assertEquals(20, rows.size());
         table2.close();
@@ -142,14 +162,15 @@ class LSMTableTest {
     void emptyProjectionPreservesRowCount(@TempDir Path dir) throws Exception {
         // 空投影(COUNT(*) 等不引用任何列时)由 projectColumns 包装为 0 列 root,
         // 行数必须保留,否则聚合算子读到 0 行。
-        LSMTable table = new LSMTable(schema, new ArrowPartFormat(), allocator, dir,
-                64 * 1024 * 1024);
+        LSMTable table =
+                new LSMTable(schema, new ArrowPartFormat(), allocator, dir, 64 * 1024 * 1024);
 
         VectorSchemaRoot batch = table.newBatchRoot();
         batch.allocateNew();
         for (int i = 0; i < 3; i++) {
             ((org.apache.arrow.vector.IntVector) batch.getVector(0)).setSafe(i, i);
-            ((org.apache.arrow.vector.VarCharVector) batch.getVector(1)).setSafe(i, ("v" + i).getBytes());
+            ((org.apache.arrow.vector.VarCharVector) batch.getVector(1))
+                    .setSafe(i, ("v" + i).getBytes());
         }
         batch.setRowCount(3);
         table.writePart(batch, TableHandle.Operation.INSERT);
@@ -162,7 +183,7 @@ class LSMTableTest {
             assertEquals(3, b.getRowCount(), "空投影批的行数应保留");
         }
         assertEquals(3, rowCountOf(table.scan(new int[0])), "空投影不应丢行");
-        assertEquals(3, rowCountOf(table.scan(new int[]{0})), "单列投影不应丢行");
+        assertEquals(3, rowCountOf(table.scan(new int[] {0})), "单列投影不应丢行");
 
         table.close();
     }
@@ -189,7 +210,8 @@ class LSMTableTest {
                 for (int c = 0; c < row.length; c++) {
                     Object val = b.getVector(c).getObject(i);
                     // VarCharVector.getObject() returns Text, not String
-                    row[c] = val instanceof org.apache.arrow.vector.util.Text t ? t.toString() : val;
+                    row[c] =
+                            val instanceof org.apache.arrow.vector.util.Text t ? t.toString() : val;
                 }
                 rows.add(row);
             }

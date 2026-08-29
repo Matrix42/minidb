@@ -1,14 +1,12 @@
 package com.minidb.server.storage;
 
 import com.minidb.storage.arrow.ArrowPartFormat;
+import com.minidb.storage.common.BatchIterator;
 import com.minidb.storage.common.ColumnMeta;
 import com.minidb.storage.common.ColumnType;
 import com.minidb.storage.common.SimpleTable;
 import com.minidb.storage.common.TableSchema;
-import com.minidb.storage.common.BatchIterator;
-import java.nio.file.Path;
-import java.util.ArrayList;
-import java.util.List;
+
 import org.apache.arrow.memory.BufferAllocator;
 import org.apache.arrow.memory.RootAllocator;
 import org.apache.arrow.vector.IntVector;
@@ -19,23 +17,32 @@ import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
 
+import java.nio.file.Path;
+import java.util.ArrayList;
+import java.util.List;
+
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertNotNull;
 
 class ArrowTableTest {
 
-    @TempDir
-    Path tempDir;
+    @TempDir Path tempDir;
     BufferAllocator allocator;
     SimpleTable table;
 
     @BeforeEach
     void setUp() {
         allocator = new RootAllocator();
-        table = new SimpleTable(new TableSchema("t", List.of(
-                new ColumnMeta("id", ColumnType.INTEGER),
-                new ColumnMeta("name", ColumnType.VARCHAR))), allocator, tempDir,
-                new ArrowPartFormat());
+        table =
+                new SimpleTable(
+                        new TableSchema(
+                                "t",
+                                List.of(
+                                        new ColumnMeta("id", ColumnType.INTEGER),
+                                        new ColumnMeta("name", ColumnType.VARCHAR))),
+                        allocator,
+                        tempDir,
+                        new ArrowPartFormat());
     }
 
     @AfterEach
@@ -86,9 +93,13 @@ class ArrowTableTest {
 
     @Test
     void arrowSchemaCarriesSchemaMetadata() {
-        SimpleTable t = new SimpleTable(new TableSchema("other", "t", List.of(
-                new ColumnMeta("id", ColumnType.INTEGER))), allocator, tempDir.resolve("other"),
-                new ArrowPartFormat());
+        SimpleTable t =
+                new SimpleTable(
+                        new TableSchema(
+                                "other", "t", List.of(new ColumnMeta("id", ColumnType.INTEGER))),
+                        allocator,
+                        tempDir.resolve("other"),
+                        new ArrowPartFormat());
         java.util.Map<String, String> meta = t.arrowSchema().getCustomMetadata();
         assertNotNull(meta);
         assertEquals("other", meta.get("schema"));

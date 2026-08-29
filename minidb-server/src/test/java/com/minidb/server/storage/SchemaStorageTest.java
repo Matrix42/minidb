@@ -1,20 +1,22 @@
 package com.minidb.server.storage;
-import com.minidb.storage.common.SimpleTable;
 
+import com.minidb.server.catalog.MiniDbCatalog;
+import com.minidb.storage.common.BatchIterator;
 import com.minidb.storage.common.ColumnMeta;
 import com.minidb.storage.common.ColumnType;
-import com.minidb.server.catalog.MiniDbCatalog;
+import com.minidb.storage.common.SimpleTable;
 import com.minidb.storage.common.TableSchema;
-import com.minidb.storage.common.BatchIterator;
-import java.nio.file.Files;
-import java.nio.file.Path;
-import java.util.List;
+
 import org.apache.arrow.memory.BufferAllocator;
 import org.apache.arrow.memory.RootAllocator;
 import org.apache.arrow.vector.IntVector;
 import org.apache.arrow.vector.VectorSchemaRoot;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
+
+import java.nio.file.Files;
+import java.nio.file.Path;
+import java.util.List;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
@@ -24,8 +26,7 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
 class SchemaStorageTest {
 
     private TableSchema schema(String schema, String name) {
-        return new TableSchema(schema, name, List.of(
-                new ColumnMeta("id", ColumnType.INTEGER)));
+        return new TableSchema(schema, name, List.of(new ColumnMeta("id", ColumnType.INTEGER)));
     }
 
     private void insertRow(StorageManager storage, String schema, String table, int id) {
@@ -111,8 +112,7 @@ class SchemaStorageTest {
         try (BufferAllocator a = new RootAllocator()) {
             StorageManager storage2 = new StorageManager(catalog2, a, dir);
             storage2.loadAll();
-            assertEquals("other",
-                    storage2.getTable("other", "t").schema().schemaName());
+            assertEquals("other", storage2.getTable("other", "t").schema().schemaName());
             storage2.close();
         }
     }
@@ -122,8 +122,7 @@ class SchemaStorageTest {
         MiniDbCatalog catalog = new MiniDbCatalog();
         try (BufferAllocator a = new RootAllocator()) {
             StorageManager storage = new StorageManager(catalog, a, dir);
-            assertThrows(IllegalArgumentException.class,
-                    () -> storage.dropSchema("public"));
+            assertThrows(IllegalArgumentException.class, () -> storage.dropSchema("public"));
             storage.close();
         }
     }

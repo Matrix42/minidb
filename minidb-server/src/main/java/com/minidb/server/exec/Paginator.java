@@ -1,15 +1,16 @@
 package com.minidb.server.exec;
 
 import com.minidb.storage.common.BatchIterator;
+
 import org.apache.arrow.memory.BufferAllocator;
 import org.apache.arrow.vector.VectorSchemaRoot;
 import org.apache.arrow.vector.types.pojo.Schema;
 
 /**
- * Slices a pull-mode batch iterator into fixed-size pages for cursor paging.
- * Each page is a fresh, owned root (the caller serializes then closes it); the
- * input batches are owned by the underlying iterator and released by its
- * close(). nextPage returns null only after at least one page has been emitted.
+ * Slices a pull-mode batch iterator into fixed-size pages for cursor paging. Each page is a fresh,
+ * owned root (the caller serializes then closes it); the input batches are owned by the underlying
+ * iterator and released by its close(). nextPage returns null only after at least one page has been
+ * emitted.
  */
 public final class Paginator implements AutoCloseable {
 
@@ -74,9 +75,9 @@ public final class Paginator implements AutoCloseable {
     }
 
     /**
-     * Drops the fully-consumed batch and moves to the next one; false when
-     * exhausted. The consumed batch is NOT closed here — the iterator owns
-     * every batch it yields and releases them all in its own close().
+     * Drops the fully-consumed batch and moves to the next one; false when exhausted. The consumed
+     * batch is NOT closed here — the iterator owns every batch it yields and releases them all in
+     * its own close().
      */
     private boolean advance() {
         current = null;

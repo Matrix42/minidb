@@ -1,19 +1,21 @@
 package com.minidb.server.stats;
 
-import com.minidb.storage.common.ColumnMeta;
-import com.minidb.storage.common.ColumnType;
 import com.minidb.server.catalog.MiniDbCatalog;
-import com.minidb.storage.common.TableSchema;
 import com.minidb.server.exec.QueryExecutor;
 import com.minidb.server.storage.StorageManager;
-import java.nio.file.Path;
-import java.util.List;
+import com.minidb.storage.common.ColumnMeta;
+import com.minidb.storage.common.ColumnType;
+import com.minidb.storage.common.TableSchema;
+
 import org.apache.arrow.memory.BufferAllocator;
 import org.apache.arrow.memory.RootAllocator;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
+
+import java.nio.file.Path;
+import java.util.List;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertNotNull;
@@ -42,7 +44,8 @@ class StatsManagerTest {
 
     @Test
     void analyzeDelegatesToCatalog() {
-        storage.createTable(new TableSchema("t", List.of(new ColumnMeta("id", ColumnType.INTEGER))));
+        storage.createTable(
+                new TableSchema("t", List.of(new ColumnMeta("id", ColumnType.INTEGER))));
         QueryExecutor q = new QueryExecutor(catalog, storage, allocator, stats);
         q.execute("INSERT INTO t VALUES (1), (2), (2)");
         stats.analyze("t");

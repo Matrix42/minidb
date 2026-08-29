@@ -3,6 +3,7 @@ package com.minidb.protocol;
 import io.netty.buffer.ByteBuf;
 import io.netty.channel.ChannelHandlerContext;
 import io.netty.handler.codec.ByteToMessageDecoder;
+
 import java.nio.charset.StandardCharsets;
 import java.util.List;
 
@@ -16,8 +17,7 @@ public class MessageDecoder extends ByteToMessageDecoder {
             in.markReaderIndex();
             int magic = in.readUnsignedShort();
             if (magic != Protocol.MAGIC) {
-                throw new IllegalStateException(
-                        String.format("bad magic: 0x%04X", magic));
+                throw new IllegalStateException(String.format("bad magic: 0x%04X", magic));
             }
             byte type = in.readByte();
             int len = in.readInt();
@@ -43,8 +43,8 @@ public class MessageDecoder extends ByteToMessageDecoder {
                 byte[] sql = new byte[sqlLen];
                 in.readBytes(sql);
                 int fetchSize = in.readInt();
-                return new Message.ExecuteRequest(requestId,
-                        new String(sql, StandardCharsets.UTF_8), fetchSize);
+                return new Message.ExecuteRequest(
+                        requestId, new String(sql, StandardCharsets.UTF_8), fetchSize);
             }
             case MessageType.CLOSE_REQUEST -> {
                 return new Message.CloseRequest();
@@ -65,8 +65,8 @@ public class MessageDecoder extends ByteToMessageDecoder {
                 int msgLen = in.readInt();
                 byte[] msg = new byte[msgLen];
                 in.readBytes(msg);
-                return new Message.ExecuteResponse(requestId, ok,
-                        new String(msg, StandardCharsets.UTF_8));
+                return new Message.ExecuteResponse(
+                        requestId, ok, new String(msg, StandardCharsets.UTF_8));
             }
             case MessageType.ARROW_BATCH -> {
                 long requestId = in.readLong();
@@ -122,7 +122,8 @@ public class MessageDecoder extends ByteToMessageDecoder {
                 String tablePattern = readNullableString(in, tpLen);
                 int cpLen = in.readInt();
                 String columnPattern = readNullableString(in, cpLen);
-                return new Message.ColumnsRequest(requestId, schemaPattern, tablePattern, columnPattern);
+                return new Message.ColumnsRequest(
+                        requestId, schemaPattern, tablePattern, columnPattern);
             }
             case MessageType.BEGIN_REQUEST -> {
                 long requestId = in.readLong();
@@ -147,11 +148,12 @@ public class MessageDecoder extends ByteToMessageDecoder {
                 int msgLen = in.readInt();
                 byte[] msg = new byte[msgLen];
                 in.readBytes(msg);
-                return new Message.CommitResponse(requestId, ok,
-                        new String(msg, StandardCharsets.UTF_8));
+                return new Message.CommitResponse(
+                        requestId, ok, new String(msg, StandardCharsets.UTF_8));
             }
-            default -> throw new IllegalStateException(
-                    String.format("unknown message type: 0x%02X", type));
+            default ->
+                    throw new IllegalStateException(
+                            String.format("unknown message type: 0x%02X", type));
         }
     }
 

@@ -1,16 +1,11 @@
 package com.minidb.server.exec;
 
-import static org.junit.jupiter.api.Assertions.assertEquals;
-import static org.junit.jupiter.api.Assertions.assertFalse;
-import static org.junit.jupiter.api.Assertions.assertTrue;
-
 import com.minidb.server.calcite.MiniDbCalciteTable;
 import com.minidb.server.catalog.MiniDbCatalog;
 import com.minidb.server.stats.StatsManager;
 import com.minidb.server.storage.StorageManager;
 import com.minidb.storage.common.TableSchema;
-import java.nio.file.Path;
-import java.util.List;
+
 import org.apache.arrow.memory.BufferAllocator;
 import org.apache.arrow.memory.RootAllocator;
 import org.apache.calcite.util.ImmutableBitSet;
@@ -19,10 +14,15 @@ import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
 
+import java.nio.file.Path;
+import java.util.List;
+
+import static org.junit.jupiter.api.Assertions.assertFalse;
+import static org.junit.jupiter.api.Assertions.assertTrue;
+
 class IndexCboTest {
 
-    @TempDir
-    Path dataDir;
+    @TempDir Path dataDir;
 
     BufferAllocator allocator;
     MiniDbCatalog catalog;
@@ -56,13 +56,14 @@ class IndexCboTest {
         List<ImmutableBitSet> keys = table.getStatistic().getKeys();
 
         // 主键 id 在 keys 中
-        assertTrue(keys.stream().anyMatch(k -> k.equals(ImmutableBitSet.of(0))),
-                "主键 id 应在 keys 中");
+        assertTrue(keys.stream().anyMatch(k -> k.equals(ImmutableBitSet.of(0))), "主键 id 应在 keys 中");
         // UNIQUE 索引 idx_a 在 keys 中
-        assertTrue(keys.stream().anyMatch(k -> k.equals(ImmutableBitSet.of(1))),
+        assertTrue(
+                keys.stream().anyMatch(k -> k.equals(ImmutableBitSet.of(1))),
                 "UNIQUE 索引 idx_a 应在 keys 中");
         // 非唯一索引 idx_b 不在 keys 中
-        assertFalse(keys.stream().anyMatch(k -> k.equals(ImmutableBitSet.of(2))),
+        assertFalse(
+                keys.stream().anyMatch(k -> k.equals(ImmutableBitSet.of(2))),
                 "非唯一索引 idx_b 不应在 keys 中");
     }
 
@@ -76,7 +77,8 @@ class IndexCboTest {
         List<ImmutableBitSet> keys = table.getStatistic().getKeys();
 
         // 复合 UNIQUE (a,b) → 列索引 1,2
-        assertTrue(keys.stream().anyMatch(k -> k.equals(ImmutableBitSet.of(1, 2))),
+        assertTrue(
+                keys.stream().anyMatch(k -> k.equals(ImmutableBitSet.of(1, 2))),
                 "复合 UNIQUE 索引 (a,b) 应在 keys 中");
     }
 }

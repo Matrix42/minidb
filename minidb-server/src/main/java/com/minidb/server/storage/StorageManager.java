@@ -7,17 +7,23 @@ import com.minidb.server.transaction.TransactionManager;
 import com.minidb.server.transaction.TxLog;
 import com.minidb.storage.arrow.ArrowPartFormat;
 import com.minidb.storage.arrow.IpcFileTableStorage;
-import com.minidb.storage.common.PartFormat;
 import com.minidb.storage.common.BatchIterator;
+import com.minidb.storage.common.PartFormat;
 import com.minidb.storage.common.SimpleTable;
 import com.minidb.storage.common.StorageFormat;
 import com.minidb.storage.common.TableHandle;
 import com.minidb.storage.common.TableSchema;
-import com.minidb.storage.common.TableType;
 import com.minidb.storage.common.TableStorage;
+import com.minidb.storage.common.TableType;
 import com.minidb.storage.lsm.LSMBackgroundExecutor;
 import com.minidb.storage.lsm.LSMTable;
 import com.minidb.storage.parquet.ParquetPartFormat;
+
+import org.apache.arrow.memory.BufferAllocator;
+import org.apache.arrow.vector.VectorSchemaRoot;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
+
 import java.io.IOException;
 import java.io.UncheckedIOException;
 import java.nio.file.DirectoryStream;
@@ -29,14 +35,10 @@ import java.util.List;
 import java.util.Map;
 import java.util.Set;
 import java.util.concurrent.ConcurrentHashMap;
-import org.apache.arrow.memory.BufferAllocator;
-import org.apache.arrow.vector.VectorSchemaRoot;
-import org.slf4j.Logger;
-import org.slf4j.LoggerFactory;
 
 /**
- * 表目录 + catalog 持久化。数据不驻留内存:每表一个目录,数据是目录里的 part 文件。
- * 无主键表用 {@link SimpleTable}(直接落 part)、有主键表用 {@link LSMTable}(LSM-Tree)。
+ * 表目录 + catalog 持久化。数据不驻留内存:每表一个目录,数据是目录里的 part 文件。 无主键表用 {@link SimpleTable}(直接落 part)、有主键表用
+ * {@link LSMTable}(LSM-Tree)。
  */
 public class StorageManager implements AutoCloseable {
 
@@ -59,8 +61,8 @@ public class StorageManager implements AutoCloseable {
         this(catalog, allocator, dataDir, MiniDbConfig.load(dataDir));
     }
 
-    public StorageManager(MiniDbCatalog catalog, BufferAllocator allocator, Path dataDir,
-                          MiniDbConfig config) {
+    public StorageManager(
+            MiniDbCatalog catalog, BufferAllocator allocator, Path dataDir, MiniDbConfig config) {
         this.catalog = catalog;
         this.allocator = allocator;
         this.dataDir = dataDir;
@@ -70,12 +72,14 @@ public class StorageManager implements AutoCloseable {
         formats.put(StorageFormat.ARROW, new ArrowPartFormat());
         formats.put(StorageFormat.PARQUET, new ParquetPartFormat());
         catalog.addListener(this::persistCatalog);
-        this.lsmExecutor = new LSMBackgroundExecutor(
-                config.lsmL0FileLimit(), config.compactionTargetSizeBytes(),
-                config.lsmBackgroundIntervalMs());
+        this.lsmExecutor =
+                new LSMBackgroundExecutor(
+                        config.lsmL0FileLimit(),
+                        config.compactionTargetSizeBytes(),
+                        config.lsmBackgroundIntervalMs());
         lsmExecutor.start();
-        this.indexManager = new IndexManager(catalog, config, allocator,
-                formats, tableStorage, lsmExecutor);
+        this.indexManager =
+                new IndexManager(catalog, config, allocator, formats, tableStorage, lsmExecutor);
         this.txLog = new TxLog(dataDir.resolve("txlog.log"));
         this.transactionManager = new TransactionManager(config.isolationLevel(), txLog);
     }
@@ -117,8 +121,10 @@ public class StorageManager implements AutoCloseable {
         return tables.values();
     }
 
-    /** 启动:先恢复中断的 compaction,再恢复元数据,然后恢复事务日志,最后为每张表挂「目录句柄」
-     * 并执行事务感知恢复(LSMTable 重放 WAL 中已提交事务的变更,SimpleTable 清理 .tx/ 目录)。 */
+    /**
+     * 启动:先恢复中断的 compaction,再恢复元数据,然后恢复事务日志,最后为每张表挂「目录句柄」 并执行事务感知恢复(LSMTable 重放 WAL
+     * 中已提交事务的变更,SimpleTable 清理 .tx/ 目录)。
+     */
     public void loadAll() {
         recoverCompaction();
         restoreCatalog();
@@ -193,11 +199,11 @@ public class StorageManager implements AutoCloseable {
         tableStorage.delete(schemaName, tableName);
     }
 
-    /** 替换一张表的 TableSchema 并重建目录句柄(数据 part 不动,由调用方负责重写)。
-     *  LSMTable 先 close(flush MemTable+关闭 WAL)再重建。
-     *  保持旧表的存储类型不变(SimpleTable→SimpleTable, LSMTable→LSMTable),
-     *  避免 ADD/DROP PRIMARY KEY 等元数据操作导致数据丢失。
-     *  特例:LSMTable 掉主键后无法工作(所有行空 key),此时迁移到 SimpleTable。 */
+    /**
+     * 替换一张表的 TableSchema 并重建目录句柄(数据 part 不动,由调用方负责重写)。 LSMTable 先 close(flush MemTable+关闭 WAL)再重建。
+     * 保持旧表的存储类型不变(SimpleTable→SimpleTable, LSMTable→LSMTable), 避免 ADD/DROP PRIMARY KEY
+     * 等元数据操作导致数据丢失。 特例:LSMTable 掉主键后无法工作(所有行空 key),此时迁移到 SimpleTable。
+     */
     public void alterTable(String schemaName, String tableName, TableSchema newSchema) {
         String sk = storageKey(schemaName, tableName);
         TableHandle old = tables.remove(sk);
@@ -218,13 +224,23 @@ public class StorageManager implements AutoCloseable {
         catalog.alterTable(schemaName, tableName, newSchema);
         TableHandle table;
         if (old instanceof LSMTable) {
-            table = new LSMTable(newSchema, formatFor(newSchema), allocator,
-                    tableStorage.tableDir(schemaName, tableName), config.lsmMemtableSizeBytes(),
-                    config.lsmBloomBitsPerKey(), config.lsmL0FileLimit(),
-                    config.lsmLevelSizeMultiplier());
+            table =
+                    new LSMTable(
+                            newSchema,
+                            formatFor(newSchema),
+                            allocator,
+                            tableStorage.tableDir(schemaName, tableName),
+                            config.lsmMemtableSizeBytes(),
+                            config.lsmBloomBitsPerKey(),
+                            config.lsmL0FileLimit(),
+                            config.lsmLevelSizeMultiplier());
         } else {
-            table = new SimpleTable(newSchema, allocator,
-                    tableStorage.tableDir(schemaName, tableName), formatFor(newSchema));
+            table =
+                    new SimpleTable(
+                            newSchema,
+                            allocator,
+                            tableStorage.tableDir(schemaName, tableName),
+                            formatFor(newSchema));
         }
         tables.put(sk, table);
         if (table instanceof LSMTable) {
@@ -234,9 +250,12 @@ public class StorageManager implements AutoCloseable {
 
     /** 将 LSMTable 的数据迁移到 SimpleTable:扫描 SSTable → 写入 SimpleTable part 文件。 */
     private SimpleTable migrateLsmToSimple(LSMTable lsm, TableSchema newSchema) {
-        SimpleTable simple = new SimpleTable(newSchema, allocator,
-                tableStorage.tableDir(newSchema.schemaName(), newSchema.name()),
-                formatFor(newSchema));
+        SimpleTable simple =
+                new SimpleTable(
+                        newSchema,
+                        allocator,
+                        tableStorage.tableDir(newSchema.schemaName(), newSchema.name()),
+                        formatFor(newSchema));
         try (BatchIterator it = lsm.scan()) {
             while (it.hasNext()) {
                 VectorSchemaRoot batch = it.next();
@@ -325,10 +344,7 @@ public class StorageManager implements AutoCloseable {
         table.compact(config.compactionTargetSizeBytes());
     }
 
-    /**
-     * 恢复上次 compaction 中断留下的交换目录:表目录缺失时回滚 .bak,已存在时删 .bak,
-     * 残留 .tmp 直接删。保证表目录要么是旧数据要么是新数据。
-     */
+    /** 恢复上次 compaction 中断留下的交换目录:表目录缺失时回滚 .bak,已存在时删 .bak, 残留 .tmp 直接删。保证表目录要么是旧数据要么是新数据。 */
     private void recoverCompaction() {
         if (!Files.exists(dataDir)) {
             return;
@@ -350,7 +366,9 @@ public class StorageManager implements AutoCloseable {
             for (Path entry : entries) {
                 String name = entry.getFileName().toString();
                 if (name.endsWith(SimpleTable.COMPACT_BACKUP_SUFFIX)) {
-                    String table = name.substring(0, name.length() - SimpleTable.COMPACT_BACKUP_SUFFIX.length());
+                    String table =
+                            name.substring(
+                                    0, name.length() - SimpleTable.COMPACT_BACKUP_SUFFIX.length());
                     Path tableDir = schemaDir.resolve(table);
                     if (Files.exists(tableDir)) {
                         deleteRecursively(entry);
@@ -400,16 +418,24 @@ public class StorageManager implements AutoCloseable {
 
     // ---- 内部辅助 ----
 
-    /** 按 TableSchema 创建对应类型的 TableHandle。
-     * tableType 非 null 时按指定类型,为 null 时自动选择(有主键→LSM,无→Simple)。 */
+    /**
+     * 按 TableSchema 创建对应类型的 TableHandle。 tableType 非 null 时按指定类型,为 null 时自动选择(有主键→LSM,无→Simple)。
+     */
     private TableHandle createTableHandle(TableSchema schema) {
         PartFormat fmt = formatFor(schema);
         Path tDir = tableStorage.tableDir(schema.schemaName(), schema.name());
-        boolean useLsm = schema.tableType() == TableType.LSM
-                || (schema.tableType() == null && !schema.primaryKey().isEmpty());
+        boolean useLsm =
+                schema.tableType() == TableType.LSM
+                        || (schema.tableType() == null && !schema.primaryKey().isEmpty());
         if (useLsm) {
-            return new LSMTable(schema, fmt, allocator, tDir, config.lsmMemtableSizeBytes(),
-                    config.lsmBloomBitsPerKey(), config.lsmL0FileLimit(),
+            return new LSMTable(
+                    schema,
+                    fmt,
+                    allocator,
+                    tDir,
+                    config.lsmMemtableSizeBytes(),
+                    config.lsmBloomBitsPerKey(),
+                    config.lsmL0FileLimit(),
                     config.lsmLevelSizeMultiplier());
         }
         return new SimpleTable(schema, allocator, tDir, fmt);

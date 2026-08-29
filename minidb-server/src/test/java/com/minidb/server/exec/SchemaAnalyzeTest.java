@@ -3,7 +3,7 @@ package com.minidb.server.exec;
 import com.minidb.server.catalog.MiniDbCatalog;
 import com.minidb.server.stats.StatsManager;
 import com.minidb.server.storage.StorageManager;
-import java.nio.file.Path;
+
 import org.apache.arrow.memory.BufferAllocator;
 import org.apache.arrow.memory.RootAllocator;
 import org.apache.arrow.vector.VarCharVector;
@@ -13,13 +13,14 @@ import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
 
+import java.nio.file.Path;
+
 import static org.junit.jupiter.api.Assertions.assertNotNull;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 class SchemaAnalyzeTest {
 
-    @TempDir
-    Path dataDir;
+    @TempDir Path dataDir;
     BufferAllocator allocator;
     MiniDbCatalog catalog;
     StorageManager storage;
@@ -51,8 +52,9 @@ class SchemaAnalyzeTest {
         // 非 public 表的统计应写入 s1.t 并能在 EXPLAIN 里读回(坑 18 补全)。
         assertNotNull(catalog.getStats("s1", "t"));
 
-        VectorSchemaRoot root = ((QueryResult.Rows) executor.execute(
-                "EXPLAIN SELECT id FROM s1.t WHERE id > 1")).data();
+        VectorSchemaRoot root =
+                ((QueryResult.Rows) executor.execute("EXPLAIN SELECT id FROM s1.t WHERE id > 1"))
+                        .data();
         VarCharVector op = (VarCharVector) root.getVector("operation");
         VarCharVector remarks = (VarCharVector) root.getVector("remarks");
         String filterRemarks = null;
@@ -62,7 +64,8 @@ class SchemaAnalyzeTest {
             }
         }
         assertNotNull(filterRemarks);
-        assertTrue(filterRemarks.contains("estimated"),
+        assertTrue(
+                filterRemarks.contains("estimated"),
                 "非 public 表的 filter 应命中统计,实际 remarks=" + filterRemarks);
         root.close();
     }

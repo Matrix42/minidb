@@ -1,10 +1,5 @@
 package com.minidb.server.storage;
 
-import static org.junit.jupiter.api.Assertions.assertEquals;
-import static org.junit.jupiter.api.Assertions.assertNotNull;
-import static org.junit.jupiter.api.Assertions.assertNull;
-import static org.junit.jupiter.api.Assertions.assertTrue;
-
 import com.minidb.server.catalog.MiniDbCatalog;
 import com.minidb.server.exec.QueryExecutor;
 import com.minidb.server.stats.StatsManager;
@@ -12,9 +7,7 @@ import com.minidb.storage.common.BatchIterator;
 import com.minidb.storage.common.IndexDef;
 import com.minidb.storage.common.TableHandle;
 import com.minidb.storage.common.TableSchema;
-import java.nio.file.Files;
-import java.nio.file.Path;
-import java.util.List;
+
 import org.apache.arrow.memory.BufferAllocator;
 import org.apache.arrow.memory.RootAllocator;
 import org.apache.arrow.vector.IntVector;
@@ -24,10 +17,18 @@ import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
 
+import java.nio.file.Files;
+import java.nio.file.Path;
+import java.util.List;
+
+import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertNotNull;
+import static org.junit.jupiter.api.Assertions.assertNull;
+import static org.junit.jupiter.api.Assertions.assertTrue;
+
 class IndexStorageTest {
 
-    @TempDir
-    Path dataDir;
+    @TempDir Path dataDir;
 
     BufferAllocator allocator;
     MiniDbCatalog catalog;
@@ -48,7 +49,8 @@ class IndexStorageTest {
 
     @Test
     void createIndexDirectoryAndRowCountMatchData() {
-        QueryExecutor executor = new QueryExecutor(catalog, storage, allocator, new StatsManager(storage));
+        QueryExecutor executor =
+                new QueryExecutor(catalog, storage, allocator, new StatsManager(storage));
         executor.execute("CREATE TABLE t (id INTEGER NOT NULL PRIMARY KEY, a INTEGER, b VARCHAR)");
         executor.execute("INSERT INTO t VALUES (1, 10, 'x'), (2, 20, 'y'), (3, 10, 'z')");
 
@@ -65,7 +67,8 @@ class IndexStorageTest {
 
     @Test
     void populatedIndexPrefixScanReturnsPrimaryKeys() {
-        QueryExecutor executor = new QueryExecutor(catalog, storage, allocator, new StatsManager(storage));
+        QueryExecutor executor =
+                new QueryExecutor(catalog, storage, allocator, new StatsManager(storage));
         executor.execute("CREATE TABLE t (id INTEGER NOT NULL PRIMARY KEY, a INTEGER, b VARCHAR)");
         executor.execute("INSERT INTO t VALUES (1, 10, 'x'), (2, 20, 'y'), (3, 10, 'z')");
 
@@ -97,7 +100,8 @@ class IndexStorageTest {
 
     @Test
     void dropIndexRemovesDirectoryAndHandle() {
-        QueryExecutor executor = new QueryExecutor(catalog, storage, allocator, new StatsManager(storage));
+        QueryExecutor executor =
+                new QueryExecutor(catalog, storage, allocator, new StatsManager(storage));
         executor.execute("CREATE TABLE t (id INTEGER NOT NULL PRIMARY KEY, a INTEGER)");
         executor.execute("INSERT INTO t VALUES (1, 10), (2, 20)");
 
@@ -115,7 +119,8 @@ class IndexStorageTest {
 
     @Test
     void restartRecoveryRebuildsIndexHandles() throws Exception {
-        QueryExecutor executor = new QueryExecutor(catalog, storage, allocator, new StatsManager(storage));
+        QueryExecutor executor =
+                new QueryExecutor(catalog, storage, allocator, new StatsManager(storage));
         executor.execute("CREATE TABLE t (id BIGINT NOT NULL PRIMARY KEY, a INTEGER)");
         executor.execute("INSERT INTO t VALUES (1, 10), (2, 20), (3, 30)");
 
@@ -145,7 +150,8 @@ class IndexStorageTest {
 
     @Test
     void compositeIndexSchemaOrderAndEmptyTable() {
-        QueryExecutor executor = new QueryExecutor(catalog, storage, allocator, new StatsManager(storage));
+        QueryExecutor executor =
+                new QueryExecutor(catalog, storage, allocator, new StatsManager(storage));
         executor.execute("CREATE TABLE t (id INTEGER NOT NULL PRIMARY KEY, a INTEGER, b VARCHAR)");
         // 空表
         TableSchema data = catalog.getTable("public", "t");

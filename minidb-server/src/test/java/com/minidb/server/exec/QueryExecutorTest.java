@@ -1,10 +1,9 @@
 package com.minidb.server.exec;
 
 import com.minidb.server.catalog.MiniDbCatalog;
-import com.minidb.server.storage.StorageManager;
 import com.minidb.server.stats.StatsManager;
-import java.nio.charset.StandardCharsets;
-import java.nio.file.Path;
+import com.minidb.server.storage.StorageManager;
+
 import org.apache.arrow.memory.BufferAllocator;
 import org.apache.arrow.memory.RootAllocator;
 import org.apache.arrow.vector.BigIntVector;
@@ -17,6 +16,9 @@ import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
 
+import java.nio.charset.StandardCharsets;
+import java.nio.file.Path;
+
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertNotNull;
 import static org.junit.jupiter.api.Assertions.assertThrows;
@@ -24,8 +26,7 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
 
 class QueryExecutorTest {
 
-    @TempDir
-    Path dataDir;
+    @TempDir Path dataDir;
     BufferAllocator allocator;
     MiniDbCatalog catalog;
     StorageManager storage;
@@ -49,10 +50,11 @@ class QueryExecutorTest {
 
     @Test
     void recursiveCteCounter() {
-        QueryResult select = executor.execute(
-                "WITH RECURSIVE nums(n) AS "
-                + "(VALUES (1) UNION ALL SELECT n + 1 FROM nums WHERE n < 5) "
-                + "SELECT n FROM nums ORDER BY n");
+        QueryResult select =
+                executor.execute(
+                        "WITH RECURSIVE nums(n) AS "
+                                + "(VALUES (1) UNION ALL SELECT n + 1 FROM nums WHERE n < 5) "
+                                + "SELECT n FROM nums ORDER BY n");
         VectorSchemaRoot root = ((QueryResult.Rows) select).data();
         assertEquals(5, root.getRowCount());
         IntVector n = (IntVector) root.getVector("n");
@@ -66,12 +68,13 @@ class QueryExecutorTest {
     void recursiveCteGraphTraversal() {
         executor.execute("CREATE TABLE edges (src INTEGER, dst INTEGER)");
         executor.execute("INSERT INTO edges VALUES (1, 2), (2, 3), (1, 3), (3, 4)");
-        QueryResult select = executor.execute(
-                "WITH RECURSIVE reach(n) AS ("
-                + "  VALUES (1)"
-                + "  UNION"
-                + "  SELECT e.dst FROM edges e JOIN reach r ON e.src = r.n"
-                + ") SELECT n FROM reach ORDER BY n");
+        QueryResult select =
+                executor.execute(
+                        "WITH RECURSIVE reach(n) AS ("
+                                + "  VALUES (1)"
+                                + "  UNION"
+                                + "  SELECT e.dst FROM edges e JOIN reach r ON e.src = r.n"
+                                + ") SELECT n FROM reach ORDER BY n");
         VectorSchemaRoot root = ((QueryResult.Rows) select).data();
         assertEquals(4, root.getRowCount());
         IntVector n = (IntVector) root.getVector("n");
@@ -85,14 +88,14 @@ class QueryExecutorTest {
     void commonTableExpression() {
         executor.execute("CREATE TABLE t (id INTEGER, name VARCHAR)");
         executor.execute("INSERT INTO t VALUES (1, 'a'), (2, 'b'), (3, 'c')");
-        QueryResult select = executor.execute(
-                "WITH c AS (SELECT id, name FROM t WHERE id > 1) "
-                + "SELECT id, name FROM c ORDER BY id");
+        QueryResult select =
+                executor.execute(
+                        "WITH c AS (SELECT id, name FROM t WHERE id > 1) "
+                                + "SELECT id, name FROM c ORDER BY id");
         VectorSchemaRoot root = ((QueryResult.Rows) select).data();
         assertEquals(2, root.getRowCount());
         assertEquals(2, ((IntVector) root.getVector("id")).get(0));
-        assertEquals("b",
-                new String(((VarCharVector) root.getVector("name")).get(0)));
+        assertEquals("b", new String(((VarCharVector) root.getVector("name")).get(0)));
         root.close();
     }
 
@@ -100,33 +103,29 @@ class QueryExecutorTest {
     void chineseVarcharRoundTrip() {
         executor.execute("CREATE TABLE t (id INTEGER, name VARCHAR)");
         executor.execute("INSERT INTO t VALUES (1, '张总'), (2, '李四')");
-        QueryResult select = executor.execute(
-                "SELECT name FROM t WHERE name = '张总'");
+        QueryResult select = executor.execute("SELECT name FROM t WHERE name = '张总'");
         VectorSchemaRoot root = ((QueryResult.Rows) select).data();
         assertEquals(1, root.getRowCount());
-        assertEquals("张总", new String(
-                ((VarCharVector) root.getVector("name")).get(0),
-                StandardCharsets.UTF_8));
+        assertEquals(
+                "张总",
+                new String(
+                        ((VarCharVector) root.getVector("name")).get(0), StandardCharsets.UTF_8));
         root.close();
     }
 
     @Test
     void createTableInsertSelect() {
-        QueryResult ddl = executor.execute(
-                "CREATE TABLE t (id INTEGER, name VARCHAR)");
+        QueryResult ddl = executor.execute("CREATE TABLE t (id INTEGER, name VARCHAR)");
         assertEquals(0L, ((QueryResult.Update) ddl).count());
 
-        QueryResult insert = executor.execute(
-                "INSERT INTO t VALUES (1, 'a'), (2, 'b'), (3, 'c')");
+        QueryResult insert = executor.execute("INSERT INTO t VALUES (1, 'a'), (2, 'b'), (3, 'c')");
         assertEquals(3L, ((QueryResult.Update) insert).count());
 
-        QueryResult select = executor.execute(
-                "SELECT id, name FROM t WHERE id > 1 ORDER BY id");
+        QueryResult select = executor.execute("SELECT id, name FROM t WHERE id > 1 ORDER BY id");
         VectorSchemaRoot root = ((QueryResult.Rows) select).data();
         assertEquals(2, root.getRowCount());
         assertEquals(2, ((IntVector) root.getVector("id")).get(0));
-        assertEquals("b",
-                new String(((VarCharVector) root.getVector("name")).get(0)));
+        assertEquals("b", new String(((VarCharVector) root.getVector("name")).get(0)));
         root.close();
     }
 
@@ -134,8 +133,7 @@ class QueryExecutorTest {
     void limitTrimsRows() {
         executor.execute("CREATE TABLE t (id INTEGER)");
         executor.execute("INSERT INTO t VALUES (3), (1), (2)");
-        QueryResult select = executor.execute(
-                "SELECT id FROM t ORDER BY id LIMIT 2");
+        QueryResult select = executor.execute("SELECT id FROM t ORDER BY id LIMIT 2");
         VectorSchemaRoot root = ((QueryResult.Rows) select).data();
         assertEquals(2, root.getRowCount());
         assertEquals(1, ((IntVector) root.getVector("id")).get(0));
@@ -148,15 +146,15 @@ class QueryExecutorTest {
         executor.execute("CREATE TABLE t (id INTEGER, name VARCHAR)");
         executor.execute("INSERT INTO t VALUES (1, 'a'), (2, 'b')");
         // SQL IDEs format queries with newlines and double-quoted identifiers.
-        QueryResult select = executor.execute(
-                "select \"id\", \"name\"\n"
-              + "from \"public\".\"t\"\n"
-              + "order by \"id\"");
+        QueryResult select =
+                executor.execute(
+                        "select \"id\", \"name\"\n"
+                                + "from \"public\".\"t\"\n"
+                                + "order by \"id\"");
         VectorSchemaRoot root = ((QueryResult.Rows) select).data();
         assertEquals(2, root.getRowCount());
         assertEquals(1, ((IntVector) root.getVector("id")).get(0));
-        assertEquals("b",
-                new String(((VarCharVector) root.getVector("name")).get(1)));
+        assertEquals("b", new String(((VarCharVector) root.getVector("name")).get(1)));
         root.close();
     }
 
@@ -174,12 +172,10 @@ class QueryExecutorTest {
     void updateModifiesRows() {
         executor.execute("CREATE TABLE t (id INTEGER, name VARCHAR)");
         executor.execute("INSERT INTO t VALUES (1, 'a'), (2, 'b'), (3, 'c')");
-        QueryResult update = executor.execute(
-                "UPDATE t SET name = 'x' WHERE id = 1");
+        QueryResult update = executor.execute("UPDATE t SET name = 'x' WHERE id = 1");
         assertEquals(1L, ((QueryResult.Update) update).count());
 
-        QueryResult select = executor.execute(
-                "SELECT id, name FROM t ORDER BY id");
+        QueryResult select = executor.execute("SELECT id, name FROM t ORDER BY id");
         VectorSchemaRoot root = ((QueryResult.Rows) select).data();
         assertEquals(3, root.getRowCount());
         assertEquals("x", new String(((VarCharVector) root.getVector("name")).get(0)));
@@ -231,8 +227,7 @@ class QueryExecutorTest {
     void dropTableRemovesIt() {
         executor.execute("CREATE TABLE t (id INTEGER)");
         executor.execute("DROP TABLE t");
-        assertThrows(Exception.class,
-                () -> executor.execute("SELECT * FROM t"));
+        assertThrows(Exception.class, () -> executor.execute("SELECT * FROM t"));
     }
 
     @Test
@@ -291,14 +286,12 @@ class QueryExecutorTest {
 
     @Test
     void truncateMissingTableThrows() {
-        assertThrows(Exception.class,
-                () -> executor.execute("TRUNCATE TABLE nope"));
+        assertThrows(Exception.class, () -> executor.execute("TRUNCATE TABLE nope"));
     }
 
     @Test
     void badSqlThrowsWithMessage() {
-        Exception e = assertThrows(Exception.class,
-                () -> executor.execute("SELEC nope"));
+        Exception e = assertThrows(Exception.class, () -> executor.execute("SELEC nope"));
         assertTrue(e.getMessage() != null);
     }
 
@@ -314,7 +307,8 @@ class QueryExecutorTest {
         VarCharVector remarks = (VarCharVector) root.getVector("remarks");
         boolean foundEstimated = false;
         for (int i = 0; i < root.getRowCount(); i++) {
-            if (new String(op.get(i)).contains("Filter") && !remarks.isNull(i)
+            if (new String(op.get(i)).contains("Filter")
+                    && !remarks.isNull(i)
                     && new String(remarks.get(i)).contains("estimated")) {
                 foundEstimated = true;
             }
@@ -335,7 +329,8 @@ class QueryExecutorTest {
         VarCharVector remarks = (VarCharVector) root.getVector("remarks");
         boolean foundStale = false;
         for (int i = 0; i < root.getRowCount(); i++) {
-            if (new String(op.get(i)).contains("Filter") && !remarks.isNull(i)
+            if (new String(op.get(i)).contains("Filter")
+                    && !remarks.isNull(i)
                     && new String(remarks.get(i)).contains("stale")) {
                 foundStale = true;
             }
@@ -376,9 +371,11 @@ class QueryExecutorTest {
     @Test
     void explainRejectsDmlEndToEnd() {
         executor.execute("CREATE TABLE t (id INTEGER)");
-        assertThrows(IllegalArgumentException.class,
+        assertThrows(
+                IllegalArgumentException.class,
                 () -> executor.execute("EXPLAIN INSERT INTO t VALUES (1)"));
-        assertThrows(IllegalArgumentException.class,
+        assertThrows(
+                IllegalArgumentException.class,
                 () -> executor.execute("EXPLAIN ANALYZE DELETE FROM t"));
     }
 
@@ -388,9 +385,10 @@ class QueryExecutorTest {
     void aggregateCountSumAvgMinMax() {
         executor.execute("CREATE TABLE s (id INTEGER)");
         executor.execute("INSERT INTO s VALUES (1), (2), (3)");
-        QueryResult r = executor.execute(
-                "SELECT COUNT(*) AS c, SUM(id) AS s, AVG(id) AS a, "
-              + "MIN(id) AS mn, MAX(id) AS mx FROM s");
+        QueryResult r =
+                executor.execute(
+                        "SELECT COUNT(*) AS c, SUM(id) AS s, AVG(id) AS a, "
+                                + "MIN(id) AS mn, MAX(id) AS mx FROM s");
         VectorSchemaRoot root = ((QueryResult.Rows) r).data();
         assertEquals(1, root.getRowCount());
         assertEquals(3L, ((BigIntVector) root.getVector("c")).get(0));
@@ -408,13 +406,11 @@ class QueryExecutorTest {
         executor.execute("INSERT INTO sd VALUES (10.5)");
         executor.execute("INSERT INTO sd VALUES (20.5)");
         executor.execute("INSERT INTO sd VALUES (30.0)");
-        QueryResult r = executor.execute(
-                "SELECT SUM(price) AS s, AVG(price) AS a FROM sd");
+        QueryResult r = executor.execute("SELECT SUM(price) AS s, AVG(price) AS a FROM sd");
         VectorSchemaRoot root = ((QueryResult.Rows) r).data();
         assertEquals(1, root.getRowCount());
         assertEquals(61.0, ((Float8Vector) root.getVector("s")).get(0), 1e-9);
-        assertEquals(20.333333333333332,
-                ((Float8Vector) root.getVector("a")).get(0), 1e-9);
+        assertEquals(20.333333333333332, ((Float8Vector) root.getVector("a")).get(0), 1e-9);
         root.close();
     }
 
@@ -424,8 +420,7 @@ class QueryExecutorTest {
         executor.execute("INSERT INTO n VALUES (1)");
         executor.execute("INSERT INTO n VALUES (3)");
         executor.execute("UPDATE n SET id = NULL WHERE id = 1");
-        QueryResult r = executor.execute(
-                "SELECT COUNT(id) AS c, COUNT(*) AS s FROM n");
+        QueryResult r = executor.execute("SELECT COUNT(id) AS c, COUNT(*) AS s FROM n");
         VectorSchemaRoot root = ((QueryResult.Rows) r).data();
         assertEquals(1, root.getRowCount());
         assertEquals(1L, ((BigIntVector) root.getVector("c")).get(0));
@@ -437,17 +432,16 @@ class QueryExecutorTest {
     void groupBySingleColumn() {
         executor.execute("CREATE TABLE t (dept VARCHAR, id INTEGER)");
         executor.execute("INSERT INTO t VALUES ('a', 1), ('b', 2), ('a', 3)");
-        QueryResult r = executor.execute(
-                "SELECT dept, COUNT(*) AS c, SUM(id) AS s FROM t "
-              + "GROUP BY dept ORDER BY dept");
+        QueryResult r =
+                executor.execute(
+                        "SELECT dept, COUNT(*) AS c, SUM(id) AS s FROM t "
+                                + "GROUP BY dept ORDER BY dept");
         VectorSchemaRoot root = ((QueryResult.Rows) r).data();
         assertEquals(2, root.getRowCount());
-        assertEquals("a", new String(
-                ((VarCharVector) root.getVector("dept")).get(0)));
+        assertEquals("a", new String(((VarCharVector) root.getVector("dept")).get(0)));
         assertEquals(2L, ((BigIntVector) root.getVector("c")).get(0));
         assertEquals(4, ((IntVector) root.getVector("s")).get(0));
-        assertEquals("b", new String(
-                ((VarCharVector) root.getVector("dept")).get(1)));
+        assertEquals("b", new String(((VarCharVector) root.getVector("dept")).get(1)));
         assertEquals(1L, ((BigIntVector) root.getVector("c")).get(1));
         assertEquals(2, ((IntVector) root.getVector("s")).get(1));
         root.close();
@@ -460,8 +454,8 @@ class QueryExecutorTest {
         executor.execute("INSERT INTO t VALUES (1, 2, 20)");
         executor.execute("INSERT INTO t VALUES (1, 1, 30)");
         executor.execute("INSERT INTO t VALUES (2, 1, 40)");
-        QueryResult r = executor.execute(
-                "SELECT a, b, COUNT(*) AS c FROM t GROUP BY a, b ORDER BY a, b");
+        QueryResult r =
+                executor.execute("SELECT a, b, COUNT(*) AS c FROM t GROUP BY a, b ORDER BY a, b");
         VectorSchemaRoot root = ((QueryResult.Rows) r).data();
         assertEquals(3, root.getRowCount());
         assertEquals(2L, ((BigIntVector) root.getVector("c")).get(0)); // (1,1)
@@ -475,12 +469,11 @@ class QueryExecutorTest {
         executor.execute("CREATE TABLE t (dept VARCHAR, id INTEGER)");
         executor.execute("INSERT INTO t VALUES ('a', 1), ('b', 2), ('a', 3)");
         executor.execute("UPDATE t SET dept = NULL WHERE id = 2");
-        QueryResult r = executor.execute(
-                "SELECT dept, COUNT(*) AS c FROM t GROUP BY dept ORDER BY dept");
+        QueryResult r =
+                executor.execute("SELECT dept, COUNT(*) AS c FROM t GROUP BY dept ORDER BY dept");
         VectorSchemaRoot root = ((QueryResult.Rows) r).data();
         assertEquals(2, root.getRowCount());
-        assertEquals("a", new String(
-                ((VarCharVector) root.getVector("dept")).get(0)));
+        assertEquals("a", new String(((VarCharVector) root.getVector("dept")).get(0)));
         assertEquals(2L, ((BigIntVector) root.getVector("c")).get(0));
         assertTrue(((VarCharVector) root.getVector("dept")).isNull(1));
         assertEquals(1L, ((BigIntVector) root.getVector("c")).get(1));
@@ -490,8 +483,7 @@ class QueryExecutorTest {
     @Test
     void globalAggregateOverEmptyTable() {
         executor.execute("CREATE TABLE t (id INTEGER)");
-        QueryResult r = executor.execute(
-                "SELECT COUNT(*) AS c, SUM(id) AS s, AVG(id) AS a FROM t");
+        QueryResult r = executor.execute("SELECT COUNT(*) AS c, SUM(id) AS s, AVG(id) AS a FROM t");
         VectorSchemaRoot root = ((QueryResult.Rows) r).data();
         assertEquals(1, root.getRowCount());
         assertEquals(0L, ((BigIntVector) root.getVector("c")).get(0));
@@ -503,8 +495,7 @@ class QueryExecutorTest {
     @Test
     void groupByOverEmptyTableReturnsZeroRows() {
         executor.execute("CREATE TABLE t (dept VARCHAR)");
-        QueryResult r = executor.execute(
-                "SELECT dept, COUNT(*) AS c FROM t GROUP BY dept");
+        QueryResult r = executor.execute("SELECT dept, COUNT(*) AS c FROM t GROUP BY dept");
         VectorSchemaRoot root = ((QueryResult.Rows) r).data();
         assertEquals(0, root.getRowCount());
         assertEquals(2, root.getFieldVectors().size());
@@ -515,13 +506,12 @@ class QueryExecutorTest {
     void havingFiltersAggregates() {
         executor.execute("CREATE TABLE t (dept VARCHAR, id INTEGER)");
         executor.execute("INSERT INTO t VALUES ('a', 1), ('b', 2), ('a', 3)");
-        QueryResult r = executor.execute(
-                "SELECT dept, COUNT(*) AS c FROM t "
-              + "GROUP BY dept HAVING COUNT(*) > 1");
+        QueryResult r =
+                executor.execute(
+                        "SELECT dept, COUNT(*) AS c FROM t " + "GROUP BY dept HAVING COUNT(*) > 1");
         VectorSchemaRoot root = ((QueryResult.Rows) r).data();
         assertEquals(1, root.getRowCount());
-        assertEquals("a", new String(
-                ((VarCharVector) root.getVector("dept")).get(0)));
+        assertEquals("a", new String(((VarCharVector) root.getVector("dept")).get(0)));
         assertEquals(2L, ((BigIntVector) root.getVector("c")).get(0));
         root.close();
     }
@@ -557,8 +547,8 @@ class QueryExecutorTest {
     void explainAnalyzeAggregateMeasuresRows() {
         executor.execute("CREATE TABLE t (dept VARCHAR, id INTEGER)");
         executor.execute("INSERT INTO t VALUES ('a', 1), ('b', 2), ('a', 3)");
-        QueryResult r = executor.execute(
-                "EXPLAIN ANALYZE SELECT dept, COUNT(*) AS c FROM t GROUP BY dept");
+        QueryResult r =
+                executor.execute("EXPLAIN ANALYZE SELECT dept, COUNT(*) AS c FROM t GROUP BY dept");
         VectorSchemaRoot root = ((QueryResult.Rows) r).data();
         VarCharVector op = (VarCharVector) root.getVector("operation");
         BigIntVector rows = (BigIntVector) root.getVector("rows");
@@ -587,9 +577,10 @@ class QueryExecutorTest {
     void sumAvgMinMaxDistinct() {
         executor.execute("CREATE TABLE t (id INTEGER)");
         executor.execute("INSERT INTO t VALUES (1), (2), (3), (1)");
-        QueryResult r = executor.execute(
-                "SELECT SUM(DISTINCT id) AS s, AVG(DISTINCT id) AS a, "
-              + "MIN(DISTINCT id) AS mn, MAX(DISTINCT id) AS mx FROM t");
+        QueryResult r =
+                executor.execute(
+                        "SELECT SUM(DISTINCT id) AS s, AVG(DISTINCT id) AS a, "
+                                + "MIN(DISTINCT id) AS mn, MAX(DISTINCT id) AS mx FROM t");
         VectorSchemaRoot root = ((QueryResult.Rows) r).data();
         assertEquals(1, root.getRowCount());
         assertEquals(6, ((IntVector) root.getVector("s")).get(0)); // 1+2+3
@@ -603,8 +594,9 @@ class QueryExecutorTest {
     void groupByCountDistinct() {
         executor.execute("CREATE TABLE t (dept VARCHAR, id INTEGER)");
         executor.execute("INSERT INTO t VALUES ('a', 1), ('b', 2), ('a', 3), ('a', 1)");
-        QueryResult r = executor.execute(
-                "SELECT dept, COUNT(DISTINCT id) AS c FROM t GROUP BY dept ORDER BY dept");
+        QueryResult r =
+                executor.execute(
+                        "SELECT dept, COUNT(DISTINCT id) AS c FROM t GROUP BY dept ORDER BY dept");
         VectorSchemaRoot root = ((QueryResult.Rows) r).data();
         assertEquals(2, root.getRowCount());
         assertEquals(2L, ((BigIntVector) root.getVector("c")).get(0)); // a: {1,3}
@@ -626,8 +618,8 @@ class QueryExecutorTest {
     @Test
     void distinctOverEmptyTable() {
         executor.execute("CREATE TABLE t (id INTEGER)");
-        QueryResult r = executor.execute(
-                "SELECT COUNT(DISTINCT id) AS c, SUM(DISTINCT id) AS s FROM t");
+        QueryResult r =
+                executor.execute("SELECT COUNT(DISTINCT id) AS c, SUM(DISTINCT id) AS s FROM t");
         VectorSchemaRoot root = ((QueryResult.Rows) r).data();
         assertEquals(1, root.getRowCount());
         assertEquals(0L, ((BigIntVector) root.getVector("c")).get(0));
@@ -642,10 +634,8 @@ class QueryExecutorTest {
         QueryResult r = executor.execute("SELECT DISTINCT dept FROM t");
         VectorSchemaRoot root = ((QueryResult.Rows) r).data();
         assertEquals(2, root.getRowCount());
-        assertEquals("a", new String(
-                ((VarCharVector) root.getVector("dept")).get(0)));
-        assertEquals("b", new String(
-                ((VarCharVector) root.getVector("dept")).get(1)));
+        assertEquals("a", new String(((VarCharVector) root.getVector("dept")).get(0)));
+        assertEquals("b", new String(((VarCharVector) root.getVector("dept")).get(1)));
         root.close();
 
         QueryResult r2 = executor.execute("SELECT DISTINCT dept, id FROM t");
@@ -658,14 +648,11 @@ class QueryExecutorTest {
     void selectDistinctOrdered() {
         executor.execute("CREATE TABLE t (dept VARCHAR)");
         executor.execute("INSERT INTO t VALUES ('b'), ('a'), ('b'), ('a')");
-        QueryResult r = executor.execute(
-                "SELECT DISTINCT dept FROM t ORDER BY dept");
+        QueryResult r = executor.execute("SELECT DISTINCT dept FROM t ORDER BY dept");
         VectorSchemaRoot root = ((QueryResult.Rows) r).data();
         assertEquals(2, root.getRowCount());
-        assertEquals("a", new String(
-                ((VarCharVector) root.getVector("dept")).get(0)));
-        assertEquals("b", new String(
-                ((VarCharVector) root.getVector("dept")).get(1)));
+        assertEquals("a", new String(((VarCharVector) root.getVector("dept")).get(0)));
+        assertEquals("b", new String(((VarCharVector) root.getVector("dept")).get(1)));
         root.close();
     }
 
@@ -681,8 +668,7 @@ class QueryExecutorTest {
     @Test
     void unionAllKeepsDuplicates() {
         createUnionTables();
-        QueryResult r = executor.execute(
-                "SELECT id FROM a UNION ALL SELECT id FROM b");
+        QueryResult r = executor.execute("SELECT id FROM a UNION ALL SELECT id FROM b");
         VectorSchemaRoot root = ((QueryResult.Rows) r).data();
         assertEquals(6, root.getRowCount());
         IntVector id = (IntVector) root.getVector("id");
@@ -698,8 +684,7 @@ class QueryExecutorTest {
     @Test
     void unionDeduplicates() {
         createUnionTables();
-        QueryResult r = executor.execute(
-                "SELECT id FROM a UNION SELECT id FROM b");
+        QueryResult r = executor.execute("SELECT id FROM a UNION SELECT id FROM b");
         VectorSchemaRoot root = ((QueryResult.Rows) r).data();
         assertEquals(4, root.getRowCount());
         IntVector id = (IntVector) root.getVector("id");
@@ -715,8 +700,7 @@ class QueryExecutorTest {
         executor.execute("CREATE TABLE a (id INTEGER)");
         executor.execute("CREATE TABLE b (id INTEGER)");
         executor.execute("INSERT INTO b VALUES (1), (2)");
-        QueryResult r = executor.execute(
-                "SELECT id FROM a UNION ALL SELECT id FROM b");
+        QueryResult r = executor.execute("SELECT id FROM a UNION ALL SELECT id FROM b");
         VectorSchemaRoot root = ((QueryResult.Rows) r).data();
         assertEquals(2, root.getRowCount());
         root.close();
@@ -726,8 +710,7 @@ class QueryExecutorTest {
     void unionAllOverTwoEmptyTables() {
         executor.execute("CREATE TABLE a (id INTEGER)");
         executor.execute("CREATE TABLE b (id INTEGER)");
-        QueryResult r = executor.execute(
-                "SELECT id FROM a UNION ALL SELECT id FROM b");
+        QueryResult r = executor.execute("SELECT id FROM a UNION ALL SELECT id FROM b");
         VectorSchemaRoot root = ((QueryResult.Rows) r).data();
         assertEquals(0, root.getRowCount());
         assertEquals(1, root.getFieldVectors().size());
@@ -737,8 +720,8 @@ class QueryExecutorTest {
     @Test
     void unionOrdered() {
         createUnionTables();
-        QueryResult r = executor.execute(
-                "SELECT id FROM a UNION SELECT id FROM b ORDER BY id DESC");
+        QueryResult r =
+                executor.execute("SELECT id FROM a UNION SELECT id FROM b ORDER BY id DESC");
         VectorSchemaRoot root = ((QueryResult.Rows) r).data();
         assertEquals(4, root.getRowCount());
         IntVector id = (IntVector) root.getVector("id");
@@ -755,12 +738,10 @@ class QueryExecutorTest {
         executor.execute("CREATE TABLE b (dept VARCHAR, id INTEGER)");
         executor.execute("INSERT INTO a VALUES ('x', 1), ('y', 2)");
         executor.execute("INSERT INTO b VALUES ('z', 3)");
-        QueryResult r = executor.execute(
-                "SELECT dept, id FROM a UNION ALL SELECT dept, id FROM b");
+        QueryResult r = executor.execute("SELECT dept, id FROM a UNION ALL SELECT dept, id FROM b");
         VectorSchemaRoot root = ((QueryResult.Rows) r).data();
         assertEquals(3, root.getRowCount());
-        assertEquals("x", new String(
-                ((VarCharVector) root.getVector("dept")).get(0)));
+        assertEquals("x", new String(((VarCharVector) root.getVector("dept")).get(0)));
         assertEquals(3, ((IntVector) root.getVector("id")).get(2));
         root.close();
     }
@@ -768,8 +749,7 @@ class QueryExecutorTest {
     @Test
     void explainShowsUnionNode() {
         createUnionTables();
-        QueryResult r = executor.execute(
-                "EXPLAIN SELECT id FROM a UNION ALL SELECT id FROM b");
+        QueryResult r = executor.execute("EXPLAIN SELECT id FROM a UNION ALL SELECT id FROM b");
         VectorSchemaRoot root = ((QueryResult.Rows) r).data();
         VarCharVector op = (VarCharVector) root.getVector("operation");
         boolean found = false;
@@ -785,8 +765,8 @@ class QueryExecutorTest {
     @Test
     void explainAnalyzeUnionMeasuresRows() {
         createUnionTables();
-        QueryResult r = executor.execute(
-                "EXPLAIN ANALYZE SELECT id FROM a UNION ALL SELECT id FROM b");
+        QueryResult r =
+                executor.execute("EXPLAIN ANALYZE SELECT id FROM a UNION ALL SELECT id FROM b");
         VectorSchemaRoot root = ((QueryResult.Rows) r).data();
         VarCharVector op = (VarCharVector) root.getVector("operation");
         BigIntVector rows = (BigIntVector) root.getVector("rows");
@@ -810,8 +790,7 @@ class QueryExecutorTest {
     @Test
     void intersectDeduplicates() {
         createSetOpTables();
-        QueryResult r = executor.execute(
-                "SELECT id FROM a INTERSECT SELECT id FROM b");
+        QueryResult r = executor.execute("SELECT id FROM a INTERSECT SELECT id FROM b");
         VectorSchemaRoot root = ((QueryResult.Rows) r).data();
         assertEquals(2, root.getRowCount());
         IntVector id = (IntVector) root.getVector("id");
@@ -826,8 +805,7 @@ class QueryExecutorTest {
         executor.execute("CREATE TABLE b (id INTEGER)");
         executor.execute("INSERT INTO a VALUES (1), (2), (3), (3), (4)");
         executor.execute("INSERT INTO b VALUES (2), (3), (3), (5)");
-        QueryResult r = executor.execute(
-                "SELECT id FROM a INTERSECT ALL SELECT id FROM b");
+        QueryResult r = executor.execute("SELECT id FROM a INTERSECT ALL SELECT id FROM b");
         VectorSchemaRoot root = ((QueryResult.Rows) r).data();
         assertEquals(3, root.getRowCount()); // 2, 3, 3
         IntVector id = (IntVector) root.getVector("id");
@@ -840,8 +818,7 @@ class QueryExecutorTest {
     @Test
     void exceptDeduplicates() {
         createSetOpTables();
-        QueryResult r = executor.execute(
-                "SELECT id FROM a EXCEPT SELECT id FROM b");
+        QueryResult r = executor.execute("SELECT id FROM a EXCEPT SELECT id FROM b");
         VectorSchemaRoot root = ((QueryResult.Rows) r).data();
         assertEquals(3, root.getRowCount()); // 1, 3, 4 (3 survives once)
         IntVector id = (IntVector) root.getVector("id");
@@ -854,8 +831,7 @@ class QueryExecutorTest {
     @Test
     void exceptAllSubtractsCounts() {
         createSetOpTables();
-        QueryResult r = executor.execute(
-                "SELECT id FROM a EXCEPT ALL SELECT id FROM b");
+        QueryResult r = executor.execute("SELECT id FROM a EXCEPT ALL SELECT id FROM b");
         VectorSchemaRoot root = ((QueryResult.Rows) r).data();
         assertEquals(3, root.getRowCount()); // 1, 3 (a has 2, b has 1), 4
         IntVector id = (IntVector) root.getVector("id");
@@ -871,8 +847,7 @@ class QueryExecutorTest {
         executor.execute("CREATE TABLE b (id INTEGER)");
         executor.execute("INSERT INTO a VALUES (1), (2)");
         executor.execute("INSERT INTO b VALUES (1), (2), (3)");
-        QueryResult r = executor.execute(
-                "SELECT id FROM a EXCEPT ALL SELECT id FROM b");
+        QueryResult r = executor.execute("SELECT id FROM a EXCEPT ALL SELECT id FROM b");
         VectorSchemaRoot root = ((QueryResult.Rows) r).data();
         assertEquals(0, root.getRowCount());
         root.close();
@@ -884,8 +859,7 @@ class QueryExecutorTest {
         executor.execute("CREATE TABLE b (id INTEGER)");
         executor.execute("INSERT INTO a VALUES (1)");
         executor.execute("INSERT INTO b VALUES (2)");
-        QueryResult r = executor.execute(
-                "SELECT id FROM a INTERSECT SELECT id FROM b");
+        QueryResult r = executor.execute("SELECT id FROM a INTERSECT SELECT id FROM b");
         VectorSchemaRoot root = ((QueryResult.Rows) r).data();
         assertEquals(0, root.getRowCount());
         root.close();
@@ -897,22 +871,18 @@ class QueryExecutorTest {
         executor.execute("CREATE TABLE b (name VARCHAR)");
         executor.execute("INSERT INTO a VALUES ('x'), ('y'), ('z')");
         executor.execute("INSERT INTO b VALUES ('y'), ('z'), ('z')");
-        QueryResult r = executor.execute(
-                "SELECT name FROM a INTERSECT SELECT name FROM b");
+        QueryResult r = executor.execute("SELECT name FROM a INTERSECT SELECT name FROM b");
         VectorSchemaRoot root = ((QueryResult.Rows) r).data();
         assertEquals(2, root.getRowCount());
-        assertEquals("y", new String(
-                ((VarCharVector) root.getVector("name")).get(0)));
-        assertEquals("z", new String(
-                ((VarCharVector) root.getVector("name")).get(1)));
+        assertEquals("y", new String(((VarCharVector) root.getVector("name")).get(0)));
+        assertEquals("z", new String(((VarCharVector) root.getVector("name")).get(1)));
         root.close();
     }
 
     @Test
     void explainShowsSetOpNode() {
         createSetOpTables();
-        QueryResult r = executor.execute(
-                "EXPLAIN SELECT id FROM a INTERSECT SELECT id FROM b");
+        QueryResult r = executor.execute("EXPLAIN SELECT id FROM a INTERSECT SELECT id FROM b");
         VectorSchemaRoot root = ((QueryResult.Rows) r).data();
         VarCharVector op = (VarCharVector) root.getVector("operation");
         boolean found = false;
@@ -928,8 +898,8 @@ class QueryExecutorTest {
     @Test
     void explainAnalyzeSetOpMeasuresRows() {
         createSetOpTables();
-        QueryResult r = executor.execute(
-                "EXPLAIN ANALYZE SELECT id FROM a INTERSECT SELECT id FROM b");
+        QueryResult r =
+                executor.execute("EXPLAIN ANALYZE SELECT id FROM a INTERSECT SELECT id FROM b");
         VectorSchemaRoot root = ((QueryResult.Rows) r).data();
         VarCharVector op = (VarCharVector) root.getVector("operation");
         BigIntVector rows = (BigIntVector) root.getVector("rows");
@@ -953,13 +923,12 @@ class QueryExecutorTest {
     @Test
     void innerJoinEqui() {
         createJoinTables();
-        QueryResult r = executor.execute(
-                "SELECT a.id, b.val FROM a JOIN b ON a.id = b.id ORDER BY a.id");
+        QueryResult r =
+                executor.execute("SELECT a.id, b.val FROM a JOIN b ON a.id = b.id ORDER BY a.id");
         VectorSchemaRoot root = ((QueryResult.Rows) r).data();
         assertEquals(2, root.getRowCount());
         assertEquals(2, ((IntVector) root.getVector("id")).get(0));
-        assertEquals("b2", new String(
-                ((VarCharVector) root.getVector("val")).get(0)));
+        assertEquals("b2", new String(((VarCharVector) root.getVector("val")).get(0)));
         assertEquals(3, ((IntVector) root.getVector("id")).get(1));
         root.close();
     }
@@ -967,26 +936,25 @@ class QueryExecutorTest {
     @Test
     void leftJoinPreservesLeftRows() {
         createJoinTables();
-        QueryResult r = executor.execute(
-                "SELECT a.id, b.val FROM a LEFT JOIN b ON a.id = b.id "
-              + "ORDER BY a.id");
+        QueryResult r =
+                executor.execute(
+                        "SELECT a.id, b.val FROM a LEFT JOIN b ON a.id = b.id " + "ORDER BY a.id");
         VectorSchemaRoot root = ((QueryResult.Rows) r).data();
         assertEquals(3, root.getRowCount());
         assertEquals(1, ((IntVector) root.getVector("id")).get(0));
         assertTrue(root.getVector("val").isNull(0));
-        assertEquals("b2", new String(
-                ((VarCharVector) root.getVector("val")).get(1)));
-        assertEquals("b3", new String(
-                ((VarCharVector) root.getVector("val")).get(2)));
+        assertEquals("b2", new String(((VarCharVector) root.getVector("val")).get(1)));
+        assertEquals("b3", new String(((VarCharVector) root.getVector("val")).get(2)));
         root.close();
     }
 
     @Test
     void rightJoinPreservesRightRows() {
         createJoinTables();
-        QueryResult r = executor.execute(
-                "SELECT a.id, b.id AS bid FROM a RIGHT JOIN b ON a.id = b.id "
-              + "ORDER BY bid");
+        QueryResult r =
+                executor.execute(
+                        "SELECT a.id, b.id AS bid FROM a RIGHT JOIN b ON a.id = b.id "
+                                + "ORDER BY bid");
         VectorSchemaRoot root = ((QueryResult.Rows) r).data();
         assertEquals(3, root.getRowCount());
         assertTrue(root.getVector("id").isNull(2)); // b.id=4 unmatched
@@ -997,8 +965,8 @@ class QueryExecutorTest {
     @Test
     void fullJoinPreservesBoth() {
         createJoinTables();
-        QueryResult r = executor.execute(
-                "SELECT a.id, b.id AS bid FROM a FULL JOIN b ON a.id = b.id");
+        QueryResult r =
+                executor.execute("SELECT a.id, b.id AS bid FROM a FULL JOIN b ON a.id = b.id");
         VectorSchemaRoot root = ((QueryResult.Rows) r).data();
         assertEquals(4, root.getRowCount()); // 2 matched + 1 left + 1 right
         root.close();
@@ -1007,8 +975,7 @@ class QueryExecutorTest {
     @Test
     void nonEquiJoin() {
         createJoinTables();
-        QueryResult r = executor.execute(
-                "SELECT a.id, b.id AS bid FROM a JOIN b ON a.id > b.id");
+        QueryResult r = executor.execute("SELECT a.id, b.id AS bid FROM a JOIN b ON a.id > b.id");
         VectorSchemaRoot root = ((QueryResult.Rows) r).data();
         assertEquals(1, root.getRowCount()); // (3,2)
         assertEquals(3, ((IntVector) root.getVector("id")).get(0));
@@ -1022,8 +989,8 @@ class QueryExecutorTest {
         executor.execute("CREATE TABLE b (id INTEGER, val VARCHAR)");
         executor.execute("INSERT INTO a VALUES (1, 'x'), (2, 'y')");
         executor.execute("INSERT INTO b VALUES (1, 'x'), (2, 'z')");
-        QueryResult r = executor.execute(
-                "SELECT a.id FROM a JOIN b ON a.id = b.id AND a.name = b.val");
+        QueryResult r =
+                executor.execute("SELECT a.id FROM a JOIN b ON a.id = b.id AND a.name = b.val");
         VectorSchemaRoot root = ((QueryResult.Rows) r).data();
         assertEquals(1, root.getRowCount()); // (1, x) only
         assertEquals(1, ((IntVector) root.getVector("id")).get(0));
@@ -1036,8 +1003,8 @@ class QueryExecutorTest {
         executor.execute("CREATE TABLE b (id INTEGER)");
         executor.execute("INSERT INTO a VALUES (1), (NULL)");
         executor.execute("INSERT INTO b VALUES (1), (NULL)");
-        QueryResult r = executor.execute(
-                "SELECT a.id AS aid, b.id AS bid FROM a JOIN b ON a.id = b.id");
+        QueryResult r =
+                executor.execute("SELECT a.id AS aid, b.id AS bid FROM a JOIN b ON a.id = b.id");
         VectorSchemaRoot root = ((QueryResult.Rows) r).data();
         assertEquals(1, root.getRowCount());
         assertEquals(1, ((IntVector) root.getVector("aid")).get(0));
@@ -1048,9 +1015,10 @@ class QueryExecutorTest {
     @Test
     void threeWayJoin() {
         createJoinTables();
-        QueryResult r = executor.execute(
-                "SELECT a.id FROM a JOIN b ON a.id = b.id "
-              + "JOIN a c ON b.id = c.id ORDER BY a.id");
+        QueryResult r =
+                executor.execute(
+                        "SELECT a.id FROM a JOIN b ON a.id = b.id "
+                                + "JOIN a c ON b.id = c.id ORDER BY a.id");
         VectorSchemaRoot root = ((QueryResult.Rows) r).data();
         assertEquals(2, root.getRowCount());
         assertEquals(2, ((IntVector) root.getVector("id")).get(0));
@@ -1061,9 +1029,9 @@ class QueryExecutorTest {
     @Test
     void joinWithWhereFilter() {
         createJoinTables();
-        QueryResult r = executor.execute(
-                "SELECT a.id, b.val FROM a JOIN b ON a.id = b.id "
-              + "WHERE a.id > 2");
+        QueryResult r =
+                executor.execute(
+                        "SELECT a.id, b.val FROM a JOIN b ON a.id = b.id " + "WHERE a.id > 2");
         VectorSchemaRoot root = ((QueryResult.Rows) r).data();
         assertEquals(1, root.getRowCount());
         assertEquals(3, ((IntVector) root.getVector("id")).get(0));
@@ -1073,8 +1041,7 @@ class QueryExecutorTest {
     @Test
     void commaJoinIsInnerJoin() {
         createJoinTables();
-        QueryResult r = executor.execute(
-                "SELECT a.id FROM a, b WHERE a.id = b.id ORDER BY a.id");
+        QueryResult r = executor.execute("SELECT a.id FROM a, b WHERE a.id = b.id ORDER BY a.id");
         VectorSchemaRoot root = ((QueryResult.Rows) r).data();
         assertEquals(2, root.getRowCount());
         root.close();
@@ -1083,8 +1050,7 @@ class QueryExecutorTest {
     @Test
     void explainShowsJoinNode() {
         createJoinTables();
-        QueryResult r = executor.execute(
-                "EXPLAIN SELECT a.id FROM a JOIN b ON a.id = b.id");
+        QueryResult r = executor.execute("EXPLAIN SELECT a.id FROM a JOIN b ON a.id = b.id");
         VectorSchemaRoot root = ((QueryResult.Rows) r).data();
         VarCharVector op = (VarCharVector) root.getVector("operation");
         boolean found = false;
@@ -1100,8 +1066,8 @@ class QueryExecutorTest {
     @Test
     void explainAnalyzeJoinMeasuresRows() {
         createJoinTables();
-        QueryResult r = executor.execute(
-                "EXPLAIN ANALYZE SELECT a.id FROM a JOIN b ON a.id = b.id");
+        QueryResult r =
+                executor.execute("EXPLAIN ANALYZE SELECT a.id FROM a JOIN b ON a.id = b.id");
         VectorSchemaRoot root = ((QueryResult.Rows) r).data();
         VarCharVector op = (VarCharVector) root.getVector("operation");
         BigIntVector rows = (BigIntVector) root.getVector("rows");
@@ -1123,8 +1089,9 @@ class QueryExecutorTest {
     @Test
     void sumOverPartition() {
         createWindowTable();
-        QueryResult r = executor.execute(
-                "SELECT g, x, SUM(x) OVER (PARTITION BY g) AS s FROM t ORDER BY g, x");
+        QueryResult r =
+                executor.execute(
+                        "SELECT g, x, SUM(x) OVER (PARTITION BY g) AS s FROM t ORDER BY g, x");
         VectorSchemaRoot root = ((QueryResult.Rows) r).data();
         assertEquals(4, root.getRowCount());
         IntVector s = (IntVector) root.getVector("s");
@@ -1138,9 +1105,10 @@ class QueryExecutorTest {
     @Test
     void sumOverPartitionOrderByIsRunning() {
         createWindowTable();
-        QueryResult r = executor.execute(
-                "SELECT g, x, SUM(x) OVER (PARTITION BY g ORDER BY x) AS s FROM t "
-              + "ORDER BY g, x");
+        QueryResult r =
+                executor.execute(
+                        "SELECT g, x, SUM(x) OVER (PARTITION BY g ORDER BY x) AS s FROM t "
+                                + "ORDER BY g, x");
         VectorSchemaRoot root = ((QueryResult.Rows) r).data();
         IntVector s = (IntVector) root.getVector("s");
         assertEquals(1, s.get(0));
@@ -1153,9 +1121,10 @@ class QueryExecutorTest {
     @Test
     void rowNumberOverPartition() {
         createWindowTable();
-        QueryResult r = executor.execute(
-                "SELECT g, x, ROW_NUMBER() OVER (PARTITION BY g ORDER BY x) AS rn "
-              + "FROM t ORDER BY g, x");
+        QueryResult r =
+                executor.execute(
+                        "SELECT g, x, ROW_NUMBER() OVER (PARTITION BY g ORDER BY x) AS rn "
+                                + "FROM t ORDER BY g, x");
         VectorSchemaRoot root = ((QueryResult.Rows) r).data();
         BigIntVector rn = (BigIntVector) root.getVector("rn");
         assertEquals(1L, rn.get(0));
@@ -1169,8 +1138,9 @@ class QueryExecutorTest {
     void windowOrderByOnUnsortedInput() {
         executor.execute("CREATE TABLE t (x INTEGER)");
         executor.execute("INSERT INTO t VALUES (3), (1), (2)");
-        QueryResult r = executor.execute(
-                "SELECT x, ROW_NUMBER() OVER (ORDER BY x) AS rn FROM t ORDER BY x");
+        QueryResult r =
+                executor.execute(
+                        "SELECT x, ROW_NUMBER() OVER (ORDER BY x) AS rn FROM t ORDER BY x");
         VectorSchemaRoot root = ((QueryResult.Rows) r).data();
         assertEquals(3, root.getRowCount());
         IntVector x = (IntVector) root.getVector("x");
@@ -1189,9 +1159,10 @@ class QueryExecutorTest {
     void rankAndDenseRankWithPeers() {
         executor.execute("CREATE TABLE t (g VARCHAR, x INTEGER)");
         executor.execute("INSERT INTO t VALUES ('a', 1), ('a', 1), ('a', 2)");
-        QueryResult r = executor.execute(
-                "SELECT x, RANK() OVER (ORDER BY x) AS rk, "
-              + "DENSE_RANK() OVER (ORDER BY x) AS dr FROM t ORDER BY x");
+        QueryResult r =
+                executor.execute(
+                        "SELECT x, RANK() OVER (ORDER BY x) AS rk, "
+                                + "DENSE_RANK() OVER (ORDER BY x) AS dr FROM t ORDER BY x");
         VectorSchemaRoot root = ((QueryResult.Rows) r).data();
         BigIntVector rk = (BigIntVector) root.getVector("rk");
         BigIntVector dr = (BigIntVector) root.getVector("dr");
@@ -1207,8 +1178,7 @@ class QueryExecutorTest {
     @Test
     void countOverAllRows() {
         createWindowTable();
-        QueryResult r = executor.execute(
-                "SELECT g, COUNT(*) OVER () AS c FROM t ORDER BY g, x");
+        QueryResult r = executor.execute("SELECT g, COUNT(*) OVER () AS c FROM t ORDER BY g, x");
         VectorSchemaRoot root = ((QueryResult.Rows) r).data();
         BigIntVector c = (BigIntVector) root.getVector("c");
         for (int i = 0; i < 4; i++) {
@@ -1220,10 +1190,11 @@ class QueryExecutorTest {
     @Test
     void lagAndLead() {
         createWindowTable();
-        QueryResult r = executor.execute(
-                "SELECT g, x, LAG(x) OVER (PARTITION BY g ORDER BY x) AS lg, "
-              + "LEAD(x) OVER (PARTITION BY g ORDER BY x) AS ld "
-              + "FROM t ORDER BY g, x");
+        QueryResult r =
+                executor.execute(
+                        "SELECT g, x, LAG(x) OVER (PARTITION BY g ORDER BY x) AS lg, "
+                                + "LEAD(x) OVER (PARTITION BY g ORDER BY x) AS ld "
+                                + "FROM t ORDER BY g, x");
         VectorSchemaRoot root = ((QueryResult.Rows) r).data();
         IntVector lg = (IntVector) root.getVector("lg");
         IntVector ld = (IntVector) root.getVector("ld");
@@ -1241,8 +1212,9 @@ class QueryExecutorTest {
     @Test
     void lagWithOffsetAndDefault() {
         createWindowTable();
-        QueryResult r = executor.execute(
-                "SELECT x, LAG(x, 1, 0) OVER (ORDER BY x) AS lg FROM t ORDER BY x");
+        QueryResult r =
+                executor.execute(
+                        "SELECT x, LAG(x, 1, 0) OVER (ORDER BY x) AS lg FROM t ORDER BY x");
         VectorSchemaRoot root = ((QueryResult.Rows) r).data();
         IntVector lg = (IntVector) root.getVector("lg");
         assertEquals(0, lg.get(0));
@@ -1253,9 +1225,10 @@ class QueryExecutorTest {
     @Test
     void frameRowsBetweenPrecedingAndCurrent() {
         createWindowTable();
-        QueryResult r = executor.execute(
-                "SELECT x, SUM(x) OVER (ORDER BY x ROWS BETWEEN 1 PRECEDING "
-              + "AND CURRENT ROW) AS s FROM t ORDER BY x");
+        QueryResult r =
+                executor.execute(
+                        "SELECT x, SUM(x) OVER (ORDER BY x ROWS BETWEEN 1 PRECEDING "
+                                + "AND CURRENT ROW) AS s FROM t ORDER BY x");
         VectorSchemaRoot root = ((QueryResult.Rows) r).data();
         IntVector s = (IntVector) root.getVector("s");
         assertEquals(1, s.get(0));
@@ -1268,10 +1241,11 @@ class QueryExecutorTest {
     @Test
     void firstAndLastValue() {
         createWindowTable();
-        QueryResult r = executor.execute(
-                "SELECT g, FIRST_VALUE(x) OVER (PARTITION BY g ORDER BY x) AS fv, "
-              + "LAST_VALUE(x) OVER (PARTITION BY g ORDER BY x) AS lv "
-              + "FROM t ORDER BY g, x");
+        QueryResult r =
+                executor.execute(
+                        "SELECT g, FIRST_VALUE(x) OVER (PARTITION BY g ORDER BY x) AS fv, "
+                                + "LAST_VALUE(x) OVER (PARTITION BY g ORDER BY x) AS lv "
+                                + "FROM t ORDER BY g, x");
         VectorSchemaRoot root = ((QueryResult.Rows) r).data();
         IntVector fv = (IntVector) root.getVector("fv");
         IntVector lv = (IntVector) root.getVector("lv");
@@ -1284,9 +1258,10 @@ class QueryExecutorTest {
     @Test
     void windowFunctionWithFilter() {
         createWindowTable();
-        QueryResult r = executor.execute(
-                "SELECT g, x, SUM(x) OVER (PARTITION BY g) AS s FROM t "
-              + "WHERE x > 1 ORDER BY g, x");
+        QueryResult r =
+                executor.execute(
+                        "SELECT g, x, SUM(x) OVER (PARTITION BY g) AS s FROM t "
+                                + "WHERE x > 1 ORDER BY g, x");
         VectorSchemaRoot root = ((QueryResult.Rows) r).data();
         assertEquals(3, root.getRowCount()); // (a,2),(b,3),(b,4)
         IntVector s = (IntVector) root.getVector("s");
@@ -1302,11 +1277,12 @@ class QueryExecutorTest {
     void scalarFunctionsEndToEnd() {
         executor.execute("CREATE TABLE t (id INTEGER, name VARCHAR)");
         executor.execute("INSERT INTO t VALUES (1, '张总'), (2, ''), (-1, 'abc')");
-        QueryResult r = executor.execute(
-                "SELECT UPPER(name) AS up, CHAR_LENGTH(name) AS len, "
-              + "name || '_s' AS cat, SUBSTRING(name, 1, 2) AS sub, "
-              + "ABS(id) AS abs_id, id + 1 AS next_id "
-              + "FROM t ORDER BY id");
+        QueryResult r =
+                executor.execute(
+                        "SELECT UPPER(name) AS up, CHAR_LENGTH(name) AS len, "
+                                + "name || '_s' AS cat, SUBSTRING(name, 1, 2) AS sub, "
+                                + "ABS(id) AS abs_id, id + 1 AS next_id "
+                                + "FROM t ORDER BY id");
         VectorSchemaRoot root = ((QueryResult.Rows) r).data();
         assertEquals(3, root.getRowCount());
 
@@ -1348,9 +1324,10 @@ class QueryExecutorTest {
     void scalarFunctionsTrimRoundLengthConcat() {
         executor.execute("CREATE TABLE t (id INTEGER, name VARCHAR)");
         executor.execute("INSERT INTO t VALUES (1, ' 张总 '), (2, '李四')");
-        QueryResult r = executor.execute(
-                "SELECT TRIM(name) AS trimmed, LENGTH(name) AS len, CONCAT(name, '!') AS cat "
-              + "FROM t ORDER BY id");
+        QueryResult r =
+                executor.execute(
+                        "SELECT TRIM(name) AS trimmed, LENGTH(name) AS len, CONCAT(name, '!') AS cat "
+                                + "FROM t ORDER BY id");
         VectorSchemaRoot root = ((QueryResult.Rows) r).data();
         assertEquals(2, root.getRowCount());
 
@@ -1385,9 +1362,10 @@ class QueryExecutorTest {
     void scalarFunctionsNonBmpCodePoints() {
         executor.execute("CREATE TABLE t (id INTEGER, name VARCHAR)");
         executor.execute("INSERT INTO t VALUES (1, '😀a'), (2, 'b')");
-        QueryResult r = executor.execute(
-                "SELECT LENGTH(name) AS len, SUBSTRING(name, 1, 1) AS sub "
-              + "FROM t ORDER BY id");
+        QueryResult r =
+                executor.execute(
+                        "SELECT LENGTH(name) AS len, SUBSTRING(name, 1, 1) AS sub "
+                                + "FROM t ORDER BY id");
         VectorSchemaRoot root = ((QueryResult.Rows) r).data();
         IntVector len = (IntVector) root.getVector("len");
         VarCharVector sub = (VarCharVector) root.getVector("sub");
@@ -1416,12 +1394,14 @@ class QueryExecutorTest {
     void castStringNumberConversions() {
         executor.execute("CREATE TABLE t (id INTEGER)");
         executor.execute("INSERT INTO t VALUES (42)");
-        QueryResult r = executor.execute(
-                "SELECT CAST(id AS VARCHAR) AS s, CAST('123' AS INTEGER) AS n, "
-              + "CAST('2.5' AS DOUBLE) AS d FROM t");
+        QueryResult r =
+                executor.execute(
+                        "SELECT CAST(id AS VARCHAR) AS s, CAST('123' AS INTEGER) AS n, "
+                                + "CAST('2.5' AS DOUBLE) AS d FROM t");
         VectorSchemaRoot root = ((QueryResult.Rows) r).data();
-        assertEquals("42", new String(
-                ((VarCharVector) root.getVector("s")).get(0), StandardCharsets.UTF_8));
+        assertEquals(
+                "42",
+                new String(((VarCharVector) root.getVector("s")).get(0), StandardCharsets.UTF_8));
         assertEquals(123, ((IntVector) root.getVector("n")).get(0));
         assertEquals(2.5, ((Float8Vector) root.getVector("d")).get(0), 1e-9);
         root.close();
@@ -1430,8 +1410,9 @@ class QueryExecutorTest {
     @Test
     void explainAnalyzeWindowProjectMeasuresRows() {
         createWindowTable();
-        QueryResult r = executor.execute(
-                "EXPLAIN ANALYZE SELECT g, SUM(x) OVER (PARTITION BY g) AS s FROM t");
+        QueryResult r =
+                executor.execute(
+                        "EXPLAIN ANALYZE SELECT g, SUM(x) OVER (PARTITION BY g) AS s FROM t");
         VectorSchemaRoot root = ((QueryResult.Rows) r).data();
         VarCharVector op = (VarCharVector) root.getVector("operation");
         BigIntVector rows = (BigIntVector) root.getVector("rows");

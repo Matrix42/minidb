@@ -1,16 +1,16 @@
 package com.minidb.server.plan.physical;
 
 import com.minidb.server.exec.ValueComparators;
+
 import org.apache.arrow.vector.ValueVector;
 import org.apache.arrow.vector.VectorSchemaRoot;
 
 /**
  * 列式行键:对 {@code root} 的 key 列在 {@code row} 行的值做 hash/equals,不装箱。
  *
- * <p>hash 只依赖 key 值(与列位置无关),故 build 侧与 probe 侧即使 key 列位置不同
- * (如 leftKeys vs rightKeys)也能相等;equals 逐对比较 key 列的值。null-safe:null 与
- * null 相等、null 与非 null 不等,故既可用于 join(调用方已剔除 null 键)也可用于
- * 窗口函数分区(null 归入同一分区)。
+ * <p>hash 只依赖 key 值(与列位置无关),故 build 侧与 probe 侧即使 key 列位置不同 (如 leftKeys vs rightKeys)也能相等;equals
+ * 逐对比较 key 列的值。null-safe:null 与 null 相等、null 与非 null 不等,故既可用于 join(调用方已剔除 null 键)也可用于 窗口函数分区(null
+ * 归入同一分区)。
  */
 final class ColumnKey {
     private final VectorSchemaRoot root;

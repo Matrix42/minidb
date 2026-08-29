@@ -60,6 +60,7 @@ public class TransactionManager {
 
     /**
      * 计算事务开始时的快照点。
+     *
      * @param txId 当前事务 ID（预留，未来可能用于基于 txId 的精确快照计算）
      */
     private long computeSnapshot(long txId) {
@@ -69,10 +70,7 @@ public class TransactionManager {
         };
     }
 
-    /**
-     * 提交事务：冲突检测 → 写全局日志 → 标记 COMMITTED。
-     * 调用方负责在各表上调用 commitTx(txId) 完成数据合并。
-     */
+    /** 提交事务：冲突检测 → 写全局日志 → 标记 COMMITTED。 调用方负责在各表上调用 commitTx(txId) 完成数据合并。 */
     public void commit(long txId) {
         TxHandle handle = txHandles.get(txId);
         if (handle == null || handle.status() != TxStatus.ACTIVE) {
@@ -151,16 +149,18 @@ public class TransactionManager {
 
     public void recordRead(long txId, String key) {
         if (isolationLevel != TransactionIsolation.SERIALIZABLE) return;
-        TxAccessSet access = accessSets.computeIfAbsent(txId,
-                k -> new TxAccessSet(txHandles.get(txId).snapshotTxId()));
+        TxAccessSet access =
+                accessSets.computeIfAbsent(
+                        txId, k -> new TxAccessSet(txHandles.get(txId).snapshotTxId()));
         access.readSet.add(key);
     }
 
     public void recordWrite(long txId, String key) {
         if (isolationLevel != TransactionIsolation.SERIALIZABLE) return;
         lastWriteTx.put(key, txId);
-        TxAccessSet access = accessSets.computeIfAbsent(txId,
-                k -> new TxAccessSet(txHandles.get(txId).snapshotTxId()));
+        TxAccessSet access =
+                accessSets.computeIfAbsent(
+                        txId, k -> new TxAccessSet(txHandles.get(txId).snapshotTxId()));
         access.writeSet.add(key);
     }
 
@@ -173,9 +173,14 @@ public class TransactionManager {
             Long writerTx = lastWriteTx.get(col);
             if (writerTx != null && writerTx != txId && access.snapshotTxId < writerTx) {
                 throw new IllegalStateException(
-                        "serialization conflict: transaction " + txId
-                                + " read " + col + " but transaction " + writerTx
-                                + " wrote it after snapshot " + access.snapshotTxId);
+                        "serialization conflict: transaction "
+                                + txId
+                                + " read "
+                                + col
+                                + " but transaction "
+                                + writerTx
+                                + " wrote it after snapshot "
+                                + access.snapshotTxId);
             }
         }
         // 写写冲突:本事务写过的列被快照之后开始/提交的事务写过——txId 单调递增,
@@ -184,9 +189,14 @@ public class TransactionManager {
             Long writerTx = lastWriteTx.get(col);
             if (writerTx != null && writerTx != txId && access.snapshotTxId < writerTx) {
                 throw new IllegalStateException(
-                        "serialization conflict: transaction " + txId
-                                + " wrote " + col + " but transaction " + writerTx
-                                + " also wrote it after snapshot " + access.snapshotTxId);
+                        "serialization conflict: transaction "
+                                + txId
+                                + " wrote "
+                                + col
+                                + " but transaction "
+                                + writerTx
+                                + " also wrote it after snapshot "
+                                + access.snapshotTxId);
             }
         }
     }

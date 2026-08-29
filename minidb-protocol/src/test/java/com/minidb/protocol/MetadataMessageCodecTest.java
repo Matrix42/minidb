@@ -2,7 +2,6 @@ package com.minidb.protocol;
 
 import io.netty.buffer.ByteBuf;
 import io.netty.buffer.Unpooled;
-import java.nio.charset.StandardCharsets;
 import org.junit.jupiter.api.Test;
 
 import static org.junit.jupiter.api.Assertions.assertArrayEquals;
@@ -53,11 +52,12 @@ class MetadataMessageCodecTest {
 
     @Test
     void tablesRequestRoundTripWithTypes() {
-        Message out = roundTrip(new Message.TablesRequest(3L, "s", "t", new String[]{"TABLE", "VIEW"}));
+        Message out =
+                roundTrip(new Message.TablesRequest(3L, "s", "t", new String[] {"TABLE", "VIEW"}));
         Message.TablesRequest t = (Message.TablesRequest) out;
         assertEquals(3L, t.requestId());
         assertEquals("s", t.schemaPattern());
-        assertArrayEquals(new String[]{"TABLE", "VIEW"}, t.types());
+        assertArrayEquals(new String[] {"TABLE", "VIEW"}, t.types());
     }
 
     @Test

@@ -1,5 +1,12 @@
 package com.minidb.storage.common;
 
+import org.apache.arrow.memory.ArrowBuf;
+import org.apache.arrow.memory.BufferAllocator;
+import org.apache.arrow.vector.FieldVector;
+import org.apache.arrow.vector.VectorSchemaRoot;
+import org.apache.arrow.vector.types.pojo.Field;
+import org.apache.arrow.vector.types.pojo.Schema;
+
 import java.io.IOException;
 import java.io.UncheckedIOException;
 import java.nio.file.DirectoryStream;
@@ -13,28 +20,25 @@ import java.util.Map;
 import java.util.Set;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.atomic.AtomicInteger;
-import org.apache.arrow.memory.ArrowBuf;
-import org.apache.arrow.memory.BufferAllocator;
-import org.apache.arrow.vector.FieldVector;
-import org.apache.arrow.vector.VectorSchemaRoot;
-import org.apache.arrow.vector.types.pojo.Field;
-import org.apache.arrow.vector.types.pojo.Schema;
 
 /**
- * 一张表:一个目录,目录(可嵌套)里是若干 part 文件。数据不驻留内存——写入把 batch 直接
- * 落成一个新 part,读取递归读所有 part 逐个返回 batch(用完释放)。part 的物理编码由
- * {@link PartFormat} 决定(arrow/parquet),本类只负责目录组织与分段。
+ * 一张表:一个目录,目录(可嵌套)里是若干 part 文件。数据不驻留内存——写入把 batch 直接 落成一个新 part,读取递归读所有 part 逐个返回 batch(用完释放)。part
+ * 的物理编码由 {@link PartFormat} 决定(arrow/parquet),本类只负责目录组织与分段。
  */
 public class SimpleTable implements TableHandle {
 
     /** compaction 交换目录的后缀:新 part 先写 .tmp,交换时旧目录暂存 .bak。 */
     public static final String COMPACT_TMP_SUFFIX = ".compact.tmp";
+
     public static final String COMPACT_BACKUP_SUFFIX = ".compact.bak";
 
     /** 事务临时目录名前缀:事务写入暂存于 .tx/<txId>/ 下,提交时移到正式目录。 */
     private static final String TX_DIR_PREFIX = ".tx";
-    /** rewrite 标记文件名:置于 .tx/<txId>/ 下,表示该目录存的是整表新快照(UPDATE/DELETE 的
-     *  事务路径),提交时替换 base 而非追加;也供崩溃恢复识别 rewrite 类型提交。 */
+
+    /**
+     * rewrite 标记文件名:置于 .tx/<txId>/ 下,表示该目录存的是整表新快照(UPDATE/DELETE 的 事务路径),提交时替换 base 而非追加;也供崩溃恢复识别
+     * rewrite 类型提交。
+     */
     private static final String REWRITE_MARKER = ".rewrite";
 
     private final TableSchema schema;
@@ -46,8 +50,8 @@ public class SimpleTable implements TableHandle {
     // 事务内做了整表 rewrite 的事务集合(其 .tx/<txId>/ 是完整新快照)。
     private final Set<Long> rewriteTxs = ConcurrentHashMap.newKeySet();
 
-    public SimpleTable(TableSchema schema, BufferAllocator allocator, Path tableDir,
-                       PartFormat format) {
+    public SimpleTable(
+            TableSchema schema, BufferAllocator allocator, Path tableDir, PartFormat format) {
         this.schema = schema;
         this.allocator = allocator;
         this.tableDir = tableDir;
@@ -144,9 +148,11 @@ public class SimpleTable implements TableHandle {
 
             @Override
             public VectorSchemaRoot next() {
-                VectorSchemaRoot batch = projectedColumns == null
-                        ? format.read(parts.get(idx++), arrowSchema, allocator)
-                        : format.read(parts.get(idx++), arrowSchema, allocator, projectedColumns);
+                VectorSchemaRoot batch =
+                        projectedColumns == null
+                                ? format.read(parts.get(idx++), arrowSchema, allocator)
+                                : format.read(
+                                        parts.get(idx++), arrowSchema, allocator, projectedColumns);
                 read.add(batch);
                 return batch;
             }
@@ -188,7 +194,9 @@ public class SimpleTable implements TableHandle {
     /** 把一个 batch 直接落成一个新 part 文件。 */
     public void writePart(VectorSchemaRoot batch) {
         int seq = partSeq.incrementAndGet();
-        format.write(tableDir.resolve(String.format("part-%06d.%s", seq, format.fileExtension())), batch);
+        format.write(
+                tableDir.resolve(String.format("part-%06d.%s", seq, format.fileExtension())),
+                batch);
     }
 
     @Override
@@ -210,7 +218,8 @@ public class SimpleTable implements TableHandle {
             throw new UncheckedIOException(e);
         }
         int seq = txPartSeq(txDir);
-        format.write(txDir.resolve(String.format("part-%06d.%s", seq, format.fileExtension())), batch);
+        format.write(
+                txDir.resolve(String.format("part-%06d.%s", seq, format.fileExtension())), batch);
     }
 
     /** 事务临时目录中已有 part 文件的最大序号 + 1。 */
@@ -224,8 +233,11 @@ public class SimpleTable implements TableHandle {
                         String name = p.getFileName().toString();
                         if (name.startsWith("part-") && name.endsWith(suffix)) {
                             try {
-                                int seq = Integer.parseInt(
-                                        name.substring("part-".length(), name.length() - suffix.length()));
+                                int seq =
+                                        Integer.parseInt(
+                                                name.substring(
+                                                        "part-".length(),
+                                                        name.length() - suffix.length()));
                                 max = Math.max(max, seq);
                             } catch (NumberFormatException ignored) {
                                 // 非标准命名,跳过
@@ -249,8 +261,7 @@ public class SimpleTable implements TableHandle {
             rewriteTxs.remove(txId);
             return;
         }
-        boolean rewrite = rewriteTxs.remove(txId)
-                || Files.exists(txDir.resolve(REWRITE_MARKER));
+        boolean rewrite = rewriteTxs.remove(txId) || Files.exists(txDir.resolve(REWRITE_MARKER));
         try {
             if (rewrite) {
                 // 替换 base:删旧 part 后移入新快照。若崩溃在「删旧」与「移入」之间,
@@ -265,7 +276,9 @@ public class SimpleTable implements TableHandle {
                     }
                     // 用 partSeq 分配新序号,避免临时目录内 part 名与正式目录冲突
                     int seq = partSeq.incrementAndGet();
-                    Path target = tableDir.resolve(String.format("part-%06d.%s", seq, format.fileExtension()));
+                    Path target =
+                            tableDir.resolve(
+                                    String.format("part-%06d.%s", seq, format.fileExtension()));
                     Files.move(part, target, StandardCopyOption.ATOMIC_MOVE);
                 }
             }
@@ -291,8 +304,10 @@ public class SimpleTable implements TableHandle {
         }
     }
 
-    /** 清空事务 txId 临时目录下的 part(保留 rewrite 标记),供同一事务的多次 UPDATE/DELETE
-     *  迭代替换快照:每次 rewrite 都基于自身上一版快照重生,再写新 part。 */
+    /**
+     * 清空事务 txId 临时目录下的 part(保留 rewrite 标记),供同一事务的多次 UPDATE/DELETE 迭代替换快照:每次 rewrite
+     * 都基于自身上一版快照重生,再写新 part。
+     */
     public void clearRewriteParts(long txId) {
         Path txDir = tableDir.resolve(TX_DIR_PREFIX).resolve(String.valueOf(txId));
         if (!Files.exists(txDir)) {
@@ -319,10 +334,7 @@ public class SimpleTable implements TableHandle {
         }
     }
 
-    /**
-     * 恢复时根据已提交事务集合处理临时目录:
-     * 已提交的 → 将 part 移到正式目录;未提交的 → 删除临时目录。
-     */
+    /** 恢复时根据已提交事务集合处理临时目录: 已提交的 → 将 part 移到正式目录;未提交的 → 删除临时目录。 */
     public void recoverTxDirs(Set<Long> committedTxIds) {
         Path txRoot = tableDir.resolve(TX_DIR_PREFIX);
         if (!Files.exists(txRoot)) {
@@ -369,9 +381,8 @@ public class SimpleTable implements TableHandle {
     }
 
     /**
-     * 合并所有 part:按大小(近似 buffer 字节和)切分,目标单个 part ≤ {@code targetSizeBytes}。
-     * 合并后 part 文件被整体替换;交换是「旧目录 → .bak、.tmp → 表目录、删 .bak」的原子改名,
-     * 任意时刻崩溃要么是旧数据要么是新数据(不会混读或空目录)。
+     * 合并所有 part:按大小(近似 buffer 字节和)切分,目标单个 part ≤ {@code targetSizeBytes}。 合并后 part 文件被整体替换;交换是「旧目录
+     * → .bak、.tmp → 表目录、删 .bak」的原子改名, 任意时刻崩溃要么是旧数据要么是新数据(不会混读或空目录)。
      *
      * @return 合并后的 part 数
      */
@@ -458,10 +469,12 @@ public class SimpleTable implements TableHandle {
 
     private void flushPart(VectorSchemaRoot out, int outRows, Path destDir, int seq) {
         out.setRowCount(outRows);
-        format.write(destDir.resolve(String.format("part-%06d.%s", seq, format.fileExtension())), out);
+        format.write(
+                destDir.resolve(String.format("part-%06d.%s", seq, format.fileExtension())), out);
     }
 
-    private static void copyRow(VectorSchemaRoot src, int srcRow, VectorSchemaRoot dst, int dstRow) {
+    private static void copyRow(
+            VectorSchemaRoot src, int srcRow, VectorSchemaRoot dst, int dstRow) {
         for (int c = 0; c < src.getFieldVectors().size(); c++) {
             dst.getVector(c).copyFromSafe(srcRow, dstRow, src.getVector(c));
         }
@@ -559,7 +572,10 @@ public class SimpleTable implements TableHandle {
             String name = part.getFileName().toString();
             if (name.startsWith("part-") && name.endsWith(suffix)) {
                 try {
-                    int seq = Integer.parseInt(name.substring("part-".length(), name.length() - suffix.length()));
+                    int seq =
+                            Integer.parseInt(
+                                    name.substring(
+                                            "part-".length(), name.length() - suffix.length()));
                     max = Math.max(max, seq);
                 } catch (NumberFormatException ignored) {
                     // 非标准命名,跳过

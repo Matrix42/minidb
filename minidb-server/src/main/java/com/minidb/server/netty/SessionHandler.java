@@ -4,10 +4,9 @@ import com.minidb.protocol.Message;
 import com.minidb.protocol.Protocol;
 import com.minidb.server.catalog.MiniDbCatalog;
 import com.minidb.server.exec.CursorHandle;
+import com.minidb.server.exec.IncrementalRefreshEngine;
 import com.minidb.server.exec.MetadataExecutor;
 import com.minidb.server.exec.Paginator;
-import com.minidb.server.exec.IncrementalRefreshEngine;
-import com.minidb.server.exec.MVManager;
 import com.minidb.server.exec.QueryExecutor;
 import com.minidb.server.exec.QueryResult;
 import com.minidb.server.transaction.TransactionIsolation;
@@ -15,16 +14,10 @@ import com.minidb.server.transaction.TransactionManager;
 import com.minidb.server.transaction.TxHandle;
 import com.minidb.server.transaction.TxStatus;
 import com.minidb.storage.common.MVDefinition;
+
 import io.netty.buffer.ByteBuf;
 import io.netty.channel.ChannelHandlerContext;
 import io.netty.channel.SimpleChannelInboundHandler;
-import java.util.HashMap;
-import java.util.Map;
-import java.util.Set;
-import java.util.concurrent.ConcurrentHashMap;
-import java.util.concurrent.ExecutorService;
-import java.util.concurrent.Future;
-import java.util.function.Supplier;
 import org.apache.arrow.memory.BufferAllocator;
 import org.apache.arrow.vector.VectorSchemaRoot;
 import org.apache.arrow.vector.VectorUnloader;
@@ -35,6 +28,14 @@ import org.apache.arrow.vector.ipc.message.IpcOption;
 import org.apache.arrow.vector.ipc.message.MessageSerializer;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
+
+import java.util.HashMap;
+import java.util.Map;
+import java.util.Set;
+import java.util.concurrent.ConcurrentHashMap;
+import java.util.concurrent.ExecutorService;
+import java.util.concurrent.Future;
+import java.util.function.Supplier;
 
 public class SessionHandler extends SimpleChannelInboundHandler<Message> {
 
@@ -50,19 +51,25 @@ public class SessionHandler extends SimpleChannelInboundHandler<Message> {
     // SessionHandler is per-channel and only touched by the Netty event loop
     // thread, so a plain HashMap needs no synchronization.
     private final Map<Long, Paginator> cursors = new HashMap<>();
+
     /** 未完成的查询 Future,用于 channelInactive 时 cancel(true) 中断线程。 */
     private final Set<Future<?>> outstanding = ConcurrentHashMap.newKeySet();
+
     /** 当前活跃事务,仅事件循环线程访问(commit/rollback 在 worker 线程写,需 volatile 保证可见)。 */
     private volatile TxHandle tx;
+
     private boolean autoCommit = true;
 
-    public SessionHandler(QueryExecutor executor, MetadataExecutor metadata,
-                         ExecutorService queryPool) {
+    public SessionHandler(
+            QueryExecutor executor, MetadataExecutor metadata, ExecutorService queryPool) {
         this(executor, metadata, queryPool, null);
     }
 
-    public SessionHandler(QueryExecutor executor, MetadataExecutor metadata,
-                         ExecutorService queryPool, TransactionManager txManager) {
+    public SessionHandler(
+            QueryExecutor executor,
+            MetadataExecutor metadata,
+            ExecutorService queryPool,
+            TransactionManager txManager) {
         this.executor = executor;
         this.metadata = metadata;
         this.queryPool = queryPool;
@@ -83,15 +90,30 @@ public class SessionHandler extends SimpleChannelInboundHandler<Message> {
             LOG.info("metadata schemas: schemaPattern='{}'", req.schemaPattern());
             handleMetadata(ctx, req.requestId(), () -> metadata.schemas(req.schemaPattern()));
         } else if (msg instanceof Message.TablesRequest req) {
-            LOG.info("metadata tables: schemaPattern='{}', tableNamePattern='{}'",
-                    req.schemaPattern(), req.tableNamePattern());
-            handleMetadata(ctx, req.requestId(), () -> metadata.tables(
-                    req.schemaPattern(), req.tableNamePattern(), req.types()));
+            LOG.info(
+                    "metadata tables: schemaPattern='{}', tableNamePattern='{}'",
+                    req.schemaPattern(),
+                    req.tableNamePattern());
+            handleMetadata(
+                    ctx,
+                    req.requestId(),
+                    () ->
+                            metadata.tables(
+                                    req.schemaPattern(), req.tableNamePattern(), req.types()));
         } else if (msg instanceof Message.ColumnsRequest req) {
-            LOG.info("metadata columns: schemaPattern='{}', tableNamePattern='{}', columnNamePattern='{}'",
-                    req.schemaPattern(), req.tableNamePattern(), req.columnNamePattern());
-            handleMetadata(ctx, req.requestId(), () -> metadata.columns(
-                    req.schemaPattern(), req.tableNamePattern(), req.columnNamePattern()));
+            LOG.info(
+                    "metadata columns: schemaPattern='{}', tableNamePattern='{}', columnNamePattern='{}'",
+                    req.schemaPattern(),
+                    req.tableNamePattern(),
+                    req.columnNamePattern());
+            handleMetadata(
+                    ctx,
+                    req.requestId(),
+                    () ->
+                            metadata.columns(
+                                    req.schemaPattern(),
+                                    req.tableNamePattern(),
+                                    req.columnNamePattern()));
         } else if (msg instanceof Message.CloseRequest) {
             ctx.close();
         } else if (msg instanceof Message.BeginRequest) {
@@ -111,29 +133,35 @@ public class SessionHandler extends SimpleChannelInboundHandler<Message> {
         String schema = currentSchema;
         TxHandle currentTx = tx;
         // 事务内刷新 READ_COMMITTED 快照(每语句执行前)
-        if (txManager != null && currentTx != null && currentTx.status() == TxStatus.ACTIVE
+        if (txManager != null
+                && currentTx != null
+                && currentTx.status() == TxStatus.ACTIVE
                 && txManager.isolationLevel() == TransactionIsolation.READ_COMMITTED) {
             currentTx.refreshSnapshot(txManager.latestCommittedTxId());
         }
-        Future<?> future = queryPool.submit(() -> {
-            long start = System.nanoTime();
-            try {
-                QueryResult result = currentTx != null
-                        ? executor.executeCursor(req.sql(), schema, currentTx)
-                        : executor.executeCursor(req.sql(), schema);
-                // 客户端断开(channelInactive→cancel)时线程被中断,丢弃结果。
-                if (Thread.currentThread().isInterrupted()) {
-                    closeResult(result);
-                    return;
-                }
-                ctx.executor().execute(() -> handleResult(ctx, req, result, start));
-            } catch (Exception e) {
-                if (Thread.currentThread().isInterrupted()) {
-                    return;
-                }
-                ctx.executor().execute(() -> handleError(ctx, req, e, start));
-            }
-        });
+        Future<?> future =
+                queryPool.submit(
+                        () -> {
+                            long start = System.nanoTime();
+                            try {
+                                QueryResult result =
+                                        currentTx != null
+                                                ? executor.executeCursor(
+                                                        req.sql(), schema, currentTx)
+                                                : executor.executeCursor(req.sql(), schema);
+                                // 客户端断开(channelInactive→cancel)时线程被中断,丢弃结果。
+                                if (Thread.currentThread().isInterrupted()) {
+                                    closeResult(result);
+                                    return;
+                                }
+                                ctx.executor().execute(() -> handleResult(ctx, req, result, start));
+                            } catch (Exception e) {
+                                if (Thread.currentThread().isInterrupted()) {
+                                    return;
+                                }
+                                ctx.executor().execute(() -> handleError(ctx, req, e, start));
+                            }
+                        });
         outstanding.add(future);
     }
 
@@ -154,66 +182,90 @@ public class SessionHandler extends SimpleChannelInboundHandler<Message> {
 
     private void handleCommit(ChannelHandlerContext ctx, Message.CommitRequest req) {
         if (tx == null || tx.status() != TxStatus.ACTIVE) {
-            ctx.writeAndFlush(Message.CommitResponse.error(req.requestId(), "no active transaction"));
+            ctx.writeAndFlush(
+                    Message.CommitResponse.error(req.requestId(), "no active transaction"));
             return;
         }
         long txId = tx.txId();
-        Future<?> future = queryPool.submit(() -> {
-            try {
-                // 1. 事务管理器 commit（写全局日志 + 冲突检测）
-                txManager.commit(txId);
-                // 2. 各表 commitTx（合并数据）
-                for (var table : executor.storage().allTableHandles()) {
-                    table.commitTx(txId);
-                }
-                // 3. 增量刷新物化视图（事务已提交，数据可见）
-                refreshPendingMVs();
-                ctx.executor().execute(() ->
-                        ctx.writeAndFlush(Message.CommitResponse.ok(req.requestId())));
-                tx = null;
-            } catch (Exception e) {
-                // commit 一旦失败,状态可能已是 COMMITTED(全局日志已写);此时不能再调
-                // txManager.rollback(会因状态非 ACTIVE 而抛 IllegalStateException,掩盖原始异常)。
-                // 只尽力清理各表资源,并把原始错误回给客户端。
-                for (var table : executor.storage().allTableHandles()) {
-                    try {
-                        table.rollbackTx(txId);
-                    } catch (Exception ignored) {
-                        // 尽力清理
-                    }
-                }
-                tx = null;
-                ctx.executor().execute(() ->
-                        ctx.writeAndFlush(Message.CommitResponse.error(req.requestId(), e.getMessage())));
-            }
-        });
+        Future<?> future =
+                queryPool.submit(
+                        () -> {
+                            try {
+                                // 1. 事务管理器 commit（写全局日志 + 冲突检测）
+                                txManager.commit(txId);
+                                // 2. 各表 commitTx（合并数据）
+                                for (var table : executor.storage().allTableHandles()) {
+                                    table.commitTx(txId);
+                                }
+                                // 3. 增量刷新物化视图（事务已提交，数据可见）
+                                refreshPendingMVs();
+                                ctx.executor()
+                                        .execute(
+                                                () ->
+                                                        ctx.writeAndFlush(
+                                                                Message.CommitResponse.ok(
+                                                                        req.requestId())));
+                                tx = null;
+                            } catch (Exception e) {
+                                // commit 一旦失败,状态可能已是 COMMITTED(全局日志已写);此时不能再调
+                                // txManager.rollback(会因状态非 ACTIVE 而抛 IllegalStateException,掩盖原始异常)。
+                                // 只尽力清理各表资源,并把原始错误回给客户端。
+                                for (var table : executor.storage().allTableHandles()) {
+                                    try {
+                                        table.rollbackTx(txId);
+                                    } catch (Exception ignored) {
+                                        // 尽力清理
+                                    }
+                                }
+                                tx = null;
+                                ctx.executor()
+                                        .execute(
+                                                () ->
+                                                        ctx.writeAndFlush(
+                                                                Message.CommitResponse.error(
+                                                                        req.requestId(),
+                                                                        e.getMessage())));
+                            }
+                        });
         outstanding.add(future);
     }
 
     private void handleRollback(ChannelHandlerContext ctx, Message.RollbackRequest req) {
         if (tx == null || tx.status() != TxStatus.ACTIVE) {
-            ctx.writeAndFlush(Message.CommitResponse.error(req.requestId(), "no active transaction"));
+            ctx.writeAndFlush(
+                    Message.CommitResponse.error(req.requestId(), "no active transaction"));
             return;
         }
         long txId = tx.txId();
-        Future<?> future = queryPool.submit(() -> {
-            try {
-                txManager.rollback(txId);
-                // 各表 rollbackTx
-                for (var table : executor.storage().allTableHandles()) {
-                    table.rollbackTx(txId);
-                }
-                // 释放 pending MV refresh delta 数据
-                drainPendingMVRefresh();
-                ctx.executor().execute(() ->
-                        ctx.writeAndFlush(Message.CommitResponse.ok(req.requestId())));
-                tx = null;
-            } catch (Exception e) {
-                tx = null;
-                ctx.executor().execute(() ->
-                        ctx.writeAndFlush(Message.CommitResponse.error(req.requestId(), e.getMessage())));
-            }
-        });
+        Future<?> future =
+                queryPool.submit(
+                        () -> {
+                            try {
+                                txManager.rollback(txId);
+                                // 各表 rollbackTx
+                                for (var table : executor.storage().allTableHandles()) {
+                                    table.rollbackTx(txId);
+                                }
+                                // 释放 pending MV refresh delta 数据
+                                drainPendingMVRefresh();
+                                ctx.executor()
+                                        .execute(
+                                                () ->
+                                                        ctx.writeAndFlush(
+                                                                Message.CommitResponse.ok(
+                                                                        req.requestId())));
+                                tx = null;
+                            } catch (Exception e) {
+                                tx = null;
+                                ctx.executor()
+                                        .execute(
+                                                () ->
+                                                        ctx.writeAndFlush(
+                                                                Message.CommitResponse.error(
+                                                                        req.requestId(),
+                                                                        e.getMessage())));
+                            }
+                        });
         outstanding.add(future);
     }
 
@@ -227,21 +279,35 @@ public class SessionHandler extends SimpleChannelInboundHandler<Message> {
             // 避免表多/commit 慢时阻塞 Netty 事件循环。
             if (tx != null && tx.status() == TxStatus.ACTIVE) {
                 long txId = tx.txId();
-                Future<?> future = queryPool.submit(() -> {
-                    try {
-                        txManager.commit(txId);
-                        for (var table : executor.storage().allTableHandles()) {
-                            table.commitTx(txId);
-                        }
-                        ctx.executor().execute(() ->
-                                ctx.writeAndFlush(Message.CommitResponse.ok(req.requestId())));
-                        tx = null;
-                    } catch (Exception e) {
-                        tx = null;
-                        ctx.executor().execute(() ->
-                                ctx.writeAndFlush(Message.CommitResponse.error(req.requestId(), e.getMessage())));
-                    }
-                });
+                Future<?> future =
+                        queryPool.submit(
+                                () -> {
+                                    try {
+                                        txManager.commit(txId);
+                                        for (var table : executor.storage().allTableHandles()) {
+                                            table.commitTx(txId);
+                                        }
+                                        ctx.executor()
+                                                .execute(
+                                                        () ->
+                                                                ctx.writeAndFlush(
+                                                                        Message.CommitResponse.ok(
+                                                                                req.requestId())));
+                                        tx = null;
+                                    } catch (Exception e) {
+                                        tx = null;
+                                        ctx.executor()
+                                                .execute(
+                                                        () ->
+                                                                ctx.writeAndFlush(
+                                                                        Message.CommitResponse
+                                                                                .error(
+                                                                                        req
+                                                                                                .requestId(),
+                                                                                        e
+                                                                                                .getMessage())));
+                                    }
+                                });
                 outstanding.add(future);
                 this.autoCommit = req.autoCommit();
                 return;
@@ -262,16 +328,24 @@ public class SessionHandler extends SimpleChannelInboundHandler<Message> {
         IncrementalRefreshEngine engine = executor.mvManager().refreshEngine();
         for (TxHandle.MVDirtyEntry entry : tx.drainPendingMVRefresh()) {
             try {
-                MVDefinition mvDef = executor.storage().catalog()
-                        .getMaterializedView(entry.mvSchemaName(), entry.mvName());
+                MVDefinition mvDef =
+                        executor.storage()
+                                .catalog()
+                                .getMaterializedView(entry.mvSchemaName(), entry.mvName());
                 if (mvDef != null) {
                     engine.refresh(mvDef, entry.delta(), entry.operation());
                 }
             } catch (Exception e) {
-                LOG.warn("MV incremental refresh failed: {}.{}",
-                        entry.mvSchemaName(), entry.mvName(), e);
+                LOG.warn(
+                        "MV incremental refresh failed: {}.{}",
+                        entry.mvSchemaName(),
+                        entry.mvName(),
+                        e);
             } finally {
-                try { entry.delta().close(); } catch (Exception ignored) { }
+                try {
+                    entry.delta().close();
+                } catch (Exception ignored) {
+                }
             }
         }
     }
@@ -279,13 +353,15 @@ public class SessionHandler extends SimpleChannelInboundHandler<Message> {
     private void drainPendingMVRefresh() {
         if (tx == null || !tx.hasPendingMVRefresh()) return;
         for (TxHandle.MVDirtyEntry entry : tx.drainPendingMVRefresh()) {
-            try { entry.delta().close(); } catch (Exception ignored) { }
+            try {
+                entry.delta().close();
+            } catch (Exception ignored) {
+            }
         }
     }
 
-
-    private void handleResult(ChannelHandlerContext ctx, Message.ExecuteRequest req,
-                              QueryResult result, long start) {
+    private void handleResult(
+            ChannelHandlerContext ctx, Message.ExecuteRequest req, QueryResult result, long start) {
         long elapsedMs = (System.nanoTime() - start) / 1_000_000;
         if (result instanceof QueryResult.UseSchema us) {
             currentSchema = us.schemaName();
@@ -306,8 +382,11 @@ public class SessionHandler extends SimpleChannelInboundHandler<Message> {
                 int pageSize = req.fetchSize() > 0 ? req.fetchSize() : DEFAULT_FETCH_SIZE;
                 VectorSchemaRoot page = paginator.nextPage(pageSize);
                 boolean last = paginator.isDone();
-                LOG.info("query ok: first page {} rows (last={}) in {} ms",
-                        page.getRowCount(), last, elapsedMs);
+                LOG.info(
+                        "query ok: first page {} rows (last={}) in {} ms",
+                        page.getRowCount(),
+                        last,
+                        elapsedMs);
                 sendRows(ctx, req.requestId(), page, last);
                 page.close();
                 if (last) {
@@ -323,7 +402,8 @@ public class SessionHandler extends SimpleChannelInboundHandler<Message> {
     }
 
     /** 在事件循环线程处理查询失败。 */
-    private void handleError(ChannelHandlerContext ctx, Message.ExecuteRequest req, Exception e, long start) {
+    private void handleError(
+            ChannelHandlerContext ctx, Message.ExecuteRequest req, Exception e, long start) {
         long elapsedMs = (System.nanoTime() - start) / 1_000_000;
         LOG.warn("query failed in {} ms: {}", elapsedMs, req.sql(), e);
         String message = e.getMessage() == null ? e.toString() : e.getMessage();
@@ -340,13 +420,13 @@ public class SessionHandler extends SimpleChannelInboundHandler<Message> {
         }
     }
 
-    private void sendRows(ChannelHandlerContext ctx, long requestId, VectorSchemaRoot root,
-                          boolean lastBatch) {
+    private void sendRows(
+            ChannelHandlerContext ctx, long requestId, VectorSchemaRoot root, boolean lastBatch) {
         // 编码直接进 Netty ByteBuf(零 byte[] 中间拷贝),数据所有权随消息转给 Encoder。
         ByteBuf buf = ctx.alloc().buffer();
         try {
-            try (ArrowStreamWriter writer = new ArrowStreamWriter(
-                    root, null, new ByteBufChannel(buf))) {
+            try (ArrowStreamWriter writer =
+                    new ArrowStreamWriter(root, null, new ByteBufChannel(buf))) {
                 writer.start();
                 writer.writeBatch();
                 writer.end();
@@ -361,12 +441,16 @@ public class SessionHandler extends SimpleChannelInboundHandler<Message> {
     }
 
     /**
-     * 分页续批:只编码 IPC record-batch message(无 magic/schema/EOS)。schema 已在
-     * 本 cursor 的首批发过,客户端按 cursorId 复用——大结果集每页省掉 schema 重复编码
-     * 的固定开销。VectorUnloader.getRecordBatch 已 retain buffers,serialize 后可安全 close。
+     * 分页续批:只编码 IPC record-batch message(无 magic/schema/EOS)。schema 已在 本 cursor 的首批发过,客户端按 cursorId
+     * 复用——大结果集每页省掉 schema 重复编码 的固定开销。VectorUnloader.getRecordBatch 已 retain buffers,serialize 后可安全
+     * close。
      */
-    private void sendContinuation(ChannelHandlerContext ctx, long requestId, long cursorId,
-                                  VectorSchemaRoot root, boolean lastBatch) {
+    private void sendContinuation(
+            ChannelHandlerContext ctx,
+            long requestId,
+            long cursorId,
+            VectorSchemaRoot root,
+            boolean lastBatch) {
         ByteBuf buf = ctx.alloc().buffer();
         try {
             ArrowRecordBatch recordBatch = new VectorUnloader(root).getRecordBatch();
@@ -388,8 +472,9 @@ public class SessionHandler extends SimpleChannelInboundHandler<Message> {
     private void handleFetch(ChannelHandlerContext ctx, Message.FetchRequest req) {
         Paginator paginator = cursors.get(req.cursorId());
         if (paginator == null) {
-            ctx.writeAndFlush(Message.ExecuteResponse.error(req.requestId(),
-                    "unknown cursor: " + req.cursorId()));
+            ctx.writeAndFlush(
+                    Message.ExecuteResponse.error(
+                            req.requestId(), "unknown cursor: " + req.cursorId()));
             return;
         }
         try {
@@ -397,8 +482,9 @@ public class SessionHandler extends SimpleChannelInboundHandler<Message> {
             if (page == null) {
                 cursors.remove(req.cursorId());
                 paginator.close();
-                ctx.writeAndFlush(Message.ExecuteResponse.error(req.requestId(),
-                        "cursor already exhausted: " + req.cursorId()));
+                ctx.writeAndFlush(
+                        Message.ExecuteResponse.error(
+                                req.requestId(), "cursor already exhausted: " + req.cursorId()));
                 return;
             }
             boolean last = paginator.isDone();
@@ -458,8 +544,8 @@ public class SessionHandler extends SimpleChannelInboundHandler<Message> {
         super.channelInactive(ctx);
     }
 
-    private void handleMetadata(ChannelHandlerContext ctx, long requestId,
-                                Supplier<VectorSchemaRoot> supplier) {
+    private void handleMetadata(
+            ChannelHandlerContext ctx, long requestId, Supplier<VectorSchemaRoot> supplier) {
         long start = System.nanoTime();
         try {
             VectorSchemaRoot root = supplier.get();

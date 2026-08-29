@@ -3,8 +3,7 @@ package com.minidb.server.exec;
 import com.minidb.server.catalog.MiniDbCatalog;
 import com.minidb.server.stats.StatsManager;
 import com.minidb.server.storage.StorageManager;
-import java.nio.charset.StandardCharsets;
-import java.nio.file.Path;
+
 import org.apache.arrow.memory.BufferAllocator;
 import org.apache.arrow.memory.RootAllocator;
 import org.apache.arrow.vector.IntVector;
@@ -15,13 +14,15 @@ import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
 
+import java.nio.charset.StandardCharsets;
+import java.nio.file.Path;
+
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 
 class ViewTest {
 
-    @TempDir
-    Path dataDir;
+    @TempDir Path dataDir;
     BufferAllocator allocator;
     MiniDbCatalog catalog;
     StorageManager storage;
@@ -125,7 +126,8 @@ class ViewTest {
     @Test
     void createViewColumnListMismatch() {
         executor.execute("CREATE TABLE t (id INTEGER, name VARCHAR)");
-        assertThrows(Exception.class,
+        assertThrows(
+                Exception.class,
                 () -> executor.execute("CREATE VIEW v (a) AS SELECT id, name FROM t"));
     }
 
@@ -150,11 +152,12 @@ class ViewTest {
         BufferAllocator allocator2 = new RootAllocator();
         StorageManager storage2 = new StorageManager(catalog2, allocator2, dataDir);
         storage2.loadAll();
-        QueryExecutor executor2 = new QueryExecutor(
-                catalog2, storage2, allocator2, new StatsManager(storage2));
+        QueryExecutor executor2 =
+                new QueryExecutor(catalog2, storage2, allocator2, new StatsManager(storage2));
         try {
             int[] ids = new int[0];
-            VectorSchemaRoot root = ((QueryResult.Rows) executor2.execute("SELECT id FROM v")).data();
+            VectorSchemaRoot root =
+                    ((QueryResult.Rows) executor2.execute("SELECT id FROM v")).data();
             IntVector v = (IntVector) root.getVector("id");
             ids = new int[v.getValueCount()];
             for (int i = 0; i < ids.length; i++) {

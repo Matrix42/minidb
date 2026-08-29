@@ -2,6 +2,7 @@ package com.minidb.server.rule.physical;
 
 import com.minidb.server.plan.physical.MiniDbConvention;
 import com.minidb.server.plan.physical.MiniDbProject;
+
 import org.apache.calcite.plan.Convention;
 import org.apache.calcite.rel.RelNode;
 import org.apache.calcite.rel.convert.ConverterRule;
@@ -10,10 +11,14 @@ import org.apache.calcite.rel.logical.LogicalProject;
 public final class MiniDbProjectRule extends ConverterRule {
 
     public MiniDbProjectRule() {
-        this(ConverterRule.Config.INSTANCE
-                .withConversion(LogicalProject.class, Convention.NONE,
-                        MiniDbConvention.INSTANCE, "MiniDbProjectRule")
-                .withRuleFactory(MiniDbProjectRule::new));
+        this(
+                ConverterRule.Config.INSTANCE
+                        .withConversion(
+                                LogicalProject.class,
+                                Convention.NONE,
+                                MiniDbConvention.INSTANCE,
+                                "MiniDbProjectRule")
+                        .withRuleFactory(MiniDbProjectRule::new));
     }
 
     private MiniDbProjectRule(ConverterRule.Config config) {
@@ -23,9 +28,11 @@ public final class MiniDbProjectRule extends ConverterRule {
     @Override
     public RelNode convert(RelNode rel) {
         LogicalProject project = (LogicalProject) rel;
-        return new MiniDbProject(project.getCluster(),
+        return new MiniDbProject(
+                project.getCluster(),
                 project.getTraitSet().replace(MiniDbConvention.INSTANCE),
                 convert(project.getInput(), MiniDbConvention.INSTANCE),
-                project.getProjects(), project.getRowType());
+                project.getProjects(),
+                project.getRowType());
     }
 }

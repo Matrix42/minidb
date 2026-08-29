@@ -1,8 +1,10 @@
 package com.minidb.jdbc;
+
 import com.minidb.protocol.Message;
 import com.minidb.protocol.MessageDecoder;
 import com.minidb.protocol.MessageEncoder;
 import com.minidb.protocol.Protocol;
+
 import io.netty.bootstrap.Bootstrap;
 import io.netty.buffer.ByteBuf;
 import io.netty.buffer.ByteBufInputStream;
@@ -14,17 +16,6 @@ import io.netty.channel.SimpleChannelInboundHandler;
 import io.netty.channel.nio.NioEventLoopGroup;
 import io.netty.channel.socket.SocketChannel;
 import io.netty.channel.socket.nio.NioSocketChannel;
-import java.io.IOException;
-import java.nio.channels.Channels;
-import java.sql.SQLException;
-import java.util.ArrayList;
-import java.util.Map;
-import java.util.concurrent.CompletableFuture;
-import java.util.concurrent.ConcurrentHashMap;
-import java.util.concurrent.ExecutionException;
-import java.util.concurrent.TimeUnit;
-import java.util.concurrent.TimeoutException;
-import java.util.concurrent.atomic.AtomicLong;
 import org.apache.arrow.memory.BufferAllocator;
 import org.apache.arrow.memory.RootAllocator;
 import org.apache.arrow.vector.VectorLoader;
@@ -36,19 +27,27 @@ import org.apache.arrow.vector.ipc.message.ArrowRecordBatch;
 import org.apache.arrow.vector.ipc.message.MessageSerializer;
 import org.apache.arrow.vector.types.pojo.Schema;
 
+import java.io.IOException;
+import java.nio.channels.Channels;
+import java.sql.SQLException;
+import java.util.ArrayList;
+import java.util.Map;
+import java.util.concurrent.CompletableFuture;
+import java.util.concurrent.ConcurrentHashMap;
+import java.util.concurrent.ExecutionException;
+import java.util.concurrent.TimeUnit;
+import java.util.concurrent.TimeoutException;
+import java.util.concurrent.atomic.AtomicLong;
 
 public class MiniDbClient implements AutoCloseable {
 
     public sealed interface ClientResult {
-        record Cursor(long cursorId, int fetchSize, VectorSchemaRoot firstPage,
-                      boolean lastBatch) implements ClientResult {
-        }
+        record Cursor(long cursorId, int fetchSize, VectorSchemaRoot firstPage, boolean lastBatch)
+                implements ClientResult {}
 
-        record Rows(VectorSchemaRoot data, boolean lastBatch) implements ClientResult {
-        }
+        record Rows(VectorSchemaRoot data, boolean lastBatch) implements ClientResult {}
 
-        record Update(long count) implements ClientResult {
-        }
+        record Update(long count) implements ClientResult {}
     }
 
     private static final long DEFAULT_TIMEOUT_SECONDS = 30;
@@ -58,8 +57,7 @@ public class MiniDbClient implements AutoCloseable {
     private final boolean noTimeout;
     private final EventLoopGroup group = new NioEventLoopGroup(1);
     private final BufferAllocator allocator = new RootAllocator();
-    private final Map<Long, CompletableFuture<ClientResult>> pending =
-            new ConcurrentHashMap<>();
+    private final Map<Long, CompletableFuture<ClientResult>> pending = new ConcurrentHashMap<>();
     private final AtomicLong nextRequestId = new AtomicLong(1);
     private volatile boolean connected = false;
     // 是否已通过 close()/finalize() 释放资源,防止重复释放。
@@ -72,8 +70,8 @@ public class MiniDbClient implements AutoCloseable {
     }
 
     /**
-     * 兜底:用户忘记 close() 而让 client 被 GC 时,释放 EventLoopGroup 与 RootAllocator,
-     * 避免堆外内存与 Netty 线程永久泄漏。转发 close()(其已做幂等)。
+     * 兜底:用户忘记 close() 而让 client 被 GC 时,释放 EventLoopGroup 与 RootAllocator, 避免堆外内存与 Netty 线程永久泄漏。转发
+     * close()(其已做幂等)。
      */
     @Override
     protected void finalize() {
@@ -89,11 +87,10 @@ public class MiniDbClient implements AutoCloseable {
     }
 
     /**
-     * Reports whether the underlying channel is still connected. Goes false when
-     * the channel goes inactive (server closed, network dropped, etc.) — see
-     * {@link ResponseCollector#channelInactive}. MiniDbConnection delegates
-     * isClosed()/isValid() here so a pool learns the connection is dead without
-     * having to try a query.
+     * Reports whether the underlying channel is still connected. Goes false when the channel goes
+     * inactive (server closed, network dropped, etc.) — see {@link
+     * ResponseCollector#channelInactive}. MiniDbConnection delegates isClosed()/isValid() here so a
+     * pool learns the connection is dead without having to try a query.
      */
     public boolean isConnected() {
         return connected;
@@ -107,33 +104,50 @@ public class MiniDbClient implements AutoCloseable {
     public void connect(String host, int port) throws SQLException {
         CompletableFuture<Void> handshake = new CompletableFuture<>();
         try {
-            Bootstrap bootstrap = new Bootstrap()
-                    .group(group)
-                    .channel(NioSocketChannel.class)
-                    .handler(new ChannelInitializer<SocketChannel>() {
-                        @Override
-                        protected void initChannel(SocketChannel ch) {
-                            ch.pipeline().addLast(new MessageDecoder());
-                            ch.pipeline().addLast(new MessageEncoder());
-                            ch.pipeline().addLast(
-                                    new ResponseCollector(handshake, pending,
-                                            MiniDbClient.this::markDisconnected,
-                                            new ResponseCollector.ArrowDecoder() {
-                                                @Override
-                                                public VectorSchemaRoot decodeFull(ByteBuf data)
-                                                        throws SQLException {
-                                                    return readArrow(data);
-                                                }
+            Bootstrap bootstrap =
+                    new Bootstrap()
+                            .group(group)
+                            .channel(NioSocketChannel.class)
+                            .handler(
+                                    new ChannelInitializer<SocketChannel>() {
+                                        @Override
+                                        protected void initChannel(SocketChannel ch) {
+                                            ch.pipeline().addLast(new MessageDecoder());
+                                            ch.pipeline().addLast(new MessageEncoder());
+                                            ch.pipeline()
+                                                    .addLast(
+                                                            new ResponseCollector(
+                                                                    handshake,
+                                                                    pending,
+                                                                    MiniDbClient.this
+                                                                            ::markDisconnected,
+                                                                    new ResponseCollector
+                                                                            .ArrowDecoder() {
+                                                                        @Override
+                                                                        public VectorSchemaRoot
+                                                                                decodeFull(
+                                                                                        ByteBuf
+                                                                                                data)
+                                                                                        throws
+                                                                                                SQLException {
+                                                                            return readArrow(data);
+                                                                        }
 
-                                                @Override
-                                                public VectorSchemaRoot decodeContinuation(
-                                                        Schema schema, ByteBuf data)
-                                                        throws SQLException {
-                                                    return readContinuation(schema, data);
-                                                }
-                                            }));
-                        }
-                    });
+                                                                        @Override
+                                                                        public VectorSchemaRoot
+                                                                                decodeContinuation(
+                                                                                        Schema
+                                                                                                schema,
+                                                                                        ByteBuf
+                                                                                                data)
+                                                                                        throws
+                                                                                                SQLException {
+                                                                            return readContinuation(
+                                                                                    schema, data);
+                                                                        }
+                                                                    }));
+                                        }
+                                    });
             channel = bootstrap.connect(host, port).sync().channel();
             channel.writeAndFlush(new Message.Handshake(Protocol.VERSION)).sync();
             handshake.get(HANDSHAKE_TIMEOUT_SECONDS, TimeUnit.SECONDS);
@@ -146,8 +160,7 @@ public class MiniDbClient implements AutoCloseable {
             throw new SQLException("handshake timeout", e);
         } catch (ExecutionException e) {
             channel.close();
-            throw new SQLException("handshake failed: " + e.getCause().getMessage(),
-                    e.getCause());
+            throw new SQLException("handshake failed: " + e.getCause().getMessage(), e.getCause());
         }
     }
 
@@ -224,6 +237,7 @@ public class MiniDbClient implements AutoCloseable {
 
     /**
      * 发送事务控制消息（Begin/Commit/Rollback/SetAutoCommit）并同步等待响应。
+     *
      * @param requestId 消息的请求 ID，需与 msg 内嵌的 requestId 一致
      * @param msg 事务控制消息
      */
@@ -256,14 +270,17 @@ public class MiniDbClient implements AutoCloseable {
 
     public VectorSchemaRoot tables(String schemaPattern, String tableNamePattern, String[] types)
             throws SQLException {
-        return sendMetadata(new Message.TablesRequest(allocateRequestId(),
-                schemaPattern, tableNamePattern, types));
+        return sendMetadata(
+                new Message.TablesRequest(
+                        allocateRequestId(), schemaPattern, tableNamePattern, types));
     }
 
-    public VectorSchemaRoot columns(String schemaPattern, String tableNamePattern, String columnNamePattern)
+    public VectorSchemaRoot columns(
+            String schemaPattern, String tableNamePattern, String columnNamePattern)
             throws SQLException {
-        return sendMetadata(new Message.ColumnsRequest(allocateRequestId(),
-                schemaPattern, tableNamePattern, columnNamePattern));
+        return sendMetadata(
+                new Message.ColumnsRequest(
+                        allocateRequestId(), schemaPattern, tableNamePattern, columnNamePattern));
     }
 
     private long allocateRequestId() throws SQLException {
@@ -274,9 +291,12 @@ public class MiniDbClient implements AutoCloseable {
     }
 
     private VectorSchemaRoot sendMetadata(Message req) throws SQLException {
-        long id = req instanceof Message.SchemasRequest r ? r.requestId()
-                : req instanceof Message.TablesRequest t ? t.requestId()
-                : ((Message.ColumnsRequest) req).requestId();
+        long id =
+                req instanceof Message.SchemasRequest r
+                        ? r.requestId()
+                        : req instanceof Message.TablesRequest t
+                                ? t.requestId()
+                                : ((Message.ColumnsRequest) req).requestId();
         CompletableFuture<ClientResult> fut = new CompletableFuture<>();
         pending.put(id, fut);
         if (!connected) {
@@ -340,19 +360,18 @@ public class MiniDbClient implements AutoCloseable {
             if (cause instanceof SQLException sqle) {
                 throw sqle;
             }
-            throw new SQLException(cause != null ? cause.getMessage() : "query failed",
-                    cause != null ? cause : e);
+            throw new SQLException(
+                    cause != null ? cause.getMessage() : "query failed", cause != null ? cause : e);
         }
     }
 
     private VectorSchemaRoot readArrow(ByteBuf data) throws SQLException {
-        try (ArrowStreamReader reader = new ArrowStreamReader(
-                new ByteBufInputStream(data), allocator)) {
+        try (ArrowStreamReader reader =
+                new ArrowStreamReader(new ByteBufInputStream(data), allocator)) {
             reader.loadNextBatch();
             VectorSchemaRoot source = reader.getVectorSchemaRoot();
             VectorSchemaRoot copy = VectorSchemaRoot.create(source.getSchema(), allocator);
-            ArrowRecordBatch recordBatch =
-                    new VectorUnloader(source).getRecordBatch();
+            ArrowRecordBatch recordBatch = new VectorUnloader(source).getRecordBatch();
             new VectorLoader(copy).load(recordBatch);
             recordBatch.close();
             return copy;
@@ -362,15 +381,16 @@ public class MiniDbClient implements AutoCloseable {
     }
 
     /**
-     * 解码分页续批(仅 record-batch message,无 schema):按首批发来的 schema 建 root,
-     * 直接把消息 body load 进 root —— 省掉 ArrowStreamReader 路径必须的整页拷贝。
-     * 返回的 root 归调用方(close 时释放 body buffers)。
+     * 解码分页续批(仅 record-batch message,无 schema):按首批发来的 schema 建 root, 直接把消息 body load 进 root —— 省掉
+     * ArrowStreamReader 路径必须的整页拷贝。 返回的 root 归调用方(close 时释放 body buffers)。
      */
     private VectorSchemaRoot readContinuation(Schema schema, ByteBuf data) throws SQLException {
         try {
             VectorSchemaRoot root = VectorSchemaRoot.create(schema, allocator);
-            try (ReadChannel channel = new ReadChannel(Channels.newChannel(new ByteBufInputStream(data)))) {
-                try (ArrowRecordBatch recordBatch = MessageSerializer.deserializeRecordBatch(channel, allocator)) {
+            try (ReadChannel channel =
+                    new ReadChannel(Channels.newChannel(new ByteBufInputStream(data)))) {
+                try (ArrowRecordBatch recordBatch =
+                        MessageSerializer.deserializeRecordBatch(channel, allocator)) {
                     new VectorLoader(root).load(recordBatch);
                 }
             }
@@ -381,9 +401,8 @@ public class MiniDbClient implements AutoCloseable {
     }
 
     /**
-     * Routes inbound messages to the per-request future, and fans connection
-     * loss out to all pending futures so execute() fails fast instead of
-     * blocking until the timeout.
+     * Routes inbound messages to the per-request future, and fans connection loss out to all
+     * pending futures so execute() fails fast instead of blocking until the timeout.
      */
     private static class ResponseCollector extends SimpleChannelInboundHandler<Message> {
         interface ArrowDecoder {
@@ -402,10 +421,11 @@ public class MiniDbClient implements AutoCloseable {
         // 最后一页发来后移除、连接断开清空。Schema 是纯元数据,残留条目无内存风险。
         private final Map<Long, Schema> cursorSchemas = new ConcurrentHashMap<>();
 
-        ResponseCollector(CompletableFuture<Void> handshake,
-                           Map<Long, CompletableFuture<ClientResult>> pending,
-                           Runnable onDisconnect,
-                           ArrowDecoder arrowDecoder) {
+        ResponseCollector(
+                CompletableFuture<Void> handshake,
+                Map<Long, CompletableFuture<ClientResult>> pending,
+                Runnable onDisconnect,
+                ArrowDecoder arrowDecoder) {
             this.handshake = handshake;
             this.pending = pending;
             this.onDisconnect = onDisconnect;
@@ -478,7 +498,8 @@ public class MiniDbClient implements AutoCloseable {
                 try {
                     Schema schema = cursorSchemas.get(c.cursorId());
                     if (schema == null) {
-                        throw new SQLException("continuation without schema: cursor " + c.cursorId());
+                        throw new SQLException(
+                                "continuation without schema: cursor " + c.cursorId());
                     }
                     VectorSchemaRoot root = arrowDecoder.decodeContinuation(schema, c.data());
                     if (c.lastBatch()) {

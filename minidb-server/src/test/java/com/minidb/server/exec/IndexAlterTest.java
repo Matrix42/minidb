@@ -1,17 +1,10 @@
 package com.minidb.server.exec;
 
-import static org.junit.jupiter.api.Assertions.assertDoesNotThrow;
-import static org.junit.jupiter.api.Assertions.assertEquals;
-import static org.junit.jupiter.api.Assertions.assertNotNull;
-import static org.junit.jupiter.api.Assertions.assertThrows;
-
 import com.minidb.server.catalog.MiniDbCatalog;
 import com.minidb.server.stats.StatsManager;
 import com.minidb.server.storage.StorageManager;
-import com.minidb.storage.common.TableHandle;
 import com.minidb.storage.common.TableSchema;
-import java.nio.file.Path;
-import java.util.List;
+
 import org.apache.arrow.memory.BufferAllocator;
 import org.apache.arrow.memory.RootAllocator;
 import org.apache.arrow.vector.BigIntVector;
@@ -20,10 +13,15 @@ import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
 
+import java.nio.file.Path;
+import java.util.List;
+
+import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertThrows;
+
 class IndexAlterTest {
 
-    @TempDir
-    Path dataDir;
+    @TempDir Path dataDir;
 
     BufferAllocator allocator;
     MiniDbCatalog catalog;
@@ -60,7 +58,8 @@ class IndexAlterTest {
     void dropIndexedColumnFails() {
         executor.execute("CREATE TABLE t (id INTEGER PRIMARY KEY, a INTEGER)");
         executor.execute("CREATE INDEX idx_a ON t (a)");
-        assertThrows(IllegalArgumentException.class,
+        assertThrows(
+                IllegalArgumentException.class,
                 () -> executor.execute("ALTER TABLE t DROP COLUMN a"),
                 "DROP 索引列应报错");
     }
@@ -105,7 +104,8 @@ class IndexAlterTest {
     }
 
     long countRows(String table) {
-        QueryResult.Rows rows = (QueryResult.Rows) executor.execute("SELECT count(*) FROM " + table);
+        QueryResult.Rows rows =
+                (QueryResult.Rows) executor.execute("SELECT count(*) FROM " + table);
         long count = ((BigIntVector) rows.data().getVector(0)).get(0);
         rows.data().close();
         return count;

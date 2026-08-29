@@ -1,6 +1,5 @@
 package com.minidb.parser.ddl;
 
-import java.util.List;
 import org.apache.calcite.sql.SqlCall;
 import org.apache.calcite.sql.SqlIdentifier;
 import org.apache.calcite.sql.SqlKind;
@@ -12,24 +11,28 @@ import org.apache.calcite.sql.SqlWriter;
 import org.apache.calcite.sql.parser.SqlParserPos;
 import org.apache.calcite.util.ImmutableNullableList;
 
+import java.util.List;
+
 /**
- * Parse tree for {@code FOREIGN KEY (col, ...) REFERENCES refTable(refCol, ...)}
- * 或列级 {@code col TYPE REFERENCES refTable(refCol)} 约束。Calcite 无外键 DDL
- * SqlNode,故自定义之。
+ * Parse tree for {@code FOREIGN KEY (col, ...) REFERENCES refTable(refCol, ...)} 或列级 {@code col
+ * TYPE REFERENCES refTable(refCol)} 约束。Calcite 无外键 DDL SqlNode,故自定义之。
  */
 public class SqlForeignKeyConstraint extends SqlCall {
 
     private static final SqlOperator OPERATOR =
             new SqlSpecialOperator("FOREIGN KEY", SqlKind.OTHER);
 
-    private final SqlIdentifier name;        // 可为 null
-    private final SqlNodeList columnList;    // 本表列
-    private final SqlIdentifier refTable;    // 引用表名(可为 schema.table)
-    private final SqlNodeList refColumns;    // 引用表列,可为 null(引用主键)
+    private final SqlIdentifier name; // 可为 null
+    private final SqlNodeList columnList; // 本表列
+    private final SqlIdentifier refTable; // 引用表名(可为 schema.table)
+    private final SqlNodeList refColumns; // 引用表列,可为 null(引用主键)
 
-    public SqlForeignKeyConstraint(SqlParserPos pos, SqlIdentifier name,
-                                   SqlNodeList columnList, SqlIdentifier refTable,
-                                   SqlNodeList refColumns) {
+    public SqlForeignKeyConstraint(
+            SqlParserPos pos,
+            SqlIdentifier name,
+            SqlNodeList columnList,
+            SqlIdentifier refTable,
+            SqlNodeList refColumns) {
         super(pos);
         this.name = name;
         this.columnList = columnList;

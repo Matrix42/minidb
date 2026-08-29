@@ -64,8 +64,9 @@ class CodecTest {
 
     @Test
     void executeResponseErrorRoundTrip() {
-        Message.ExecuteResponse out = (Message.ExecuteResponse)
-                roundTrip(new Message.ExecuteResponse(7L, false, "table not found"));
+        Message.ExecuteResponse out =
+                (Message.ExecuteResponse)
+                        roundTrip(new Message.ExecuteResponse(7L, false, "table not found"));
         assertEquals(7L, out.requestId());
         assertEquals(false, out.ok());
         assertEquals("table not found", out.error());
@@ -86,8 +87,9 @@ class CodecTest {
     @Test
     void arrowContinuationRoundTrip() {
         ByteBuf payload = Unpooled.wrappedBuffer(new byte[] {9, 8, 7});
-        Message.ArrowContinuation out = (Message.ArrowContinuation) roundTrip(
-                new Message.ArrowContinuation(5L, 9L, false, payload));
+        Message.ArrowContinuation out =
+                (Message.ArrowContinuation)
+                        roundTrip(new Message.ArrowContinuation(5L, 9L, false, payload));
         assertEquals(5L, out.requestId());
         assertEquals(9L, out.cursorId());
         assertEquals(3, out.data().readableBytes());

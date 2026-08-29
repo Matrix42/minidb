@@ -1,15 +1,12 @@
 package com.minidb.server.storage;
-import com.minidb.storage.common.SimpleTable;
 
+import com.minidb.server.catalog.MiniDbCatalog;
+import com.minidb.storage.common.BatchIterator;
 import com.minidb.storage.common.ColumnMeta;
 import com.minidb.storage.common.ColumnType;
-import com.minidb.server.catalog.MiniDbCatalog;
+import com.minidb.storage.common.SimpleTable;
 import com.minidb.storage.common.TableSchema;
-import com.minidb.storage.common.BatchIterator;
-import java.nio.file.Files;
-import java.nio.file.Path;
-import java.util.ArrayList;
-import java.util.List;
+
 import org.apache.arrow.memory.BufferAllocator;
 import org.apache.arrow.memory.RootAllocator;
 import org.apache.arrow.vector.IntVector;
@@ -18,6 +15,11 @@ import org.apache.arrow.vector.VectorSchemaRoot;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
 
+import java.nio.file.Files;
+import java.nio.file.Path;
+import java.util.ArrayList;
+import java.util.List;
+
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertTrue;
@@ -25,9 +27,11 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
 class StorageManagerTest {
 
     private TableSchema schema() {
-        return new TableSchema("t", List.of(
-                new ColumnMeta("id", ColumnType.INTEGER),
-                new ColumnMeta("name", ColumnType.VARCHAR)));
+        return new TableSchema(
+                "t",
+                List.of(
+                        new ColumnMeta("id", ColumnType.INTEGER),
+                        new ColumnMeta("name", ColumnType.VARCHAR)));
     }
 
     private void writeRow(SimpleTable table, int id, String name) {
@@ -143,9 +147,12 @@ class StorageManagerTest {
         MiniDbCatalog catalog = new MiniDbCatalog();
         try (BufferAllocator allocator = new RootAllocator()) {
             StorageManager storage = new StorageManager(catalog, allocator, dir);
-            storage.createTable(new TableSchema("t", List.of(
-                    new ColumnMeta("id", ColumnType.INTEGER),
-                    new ColumnMeta("price", ColumnType.DECIMAL, 10, 2))));
+            storage.createTable(
+                    new TableSchema(
+                            "t",
+                            List.of(
+                                    new ColumnMeta("id", ColumnType.INTEGER),
+                                    new ColumnMeta("price", ColumnType.DECIMAL, 10, 2))));
             // 不插任何行 → 无 part 文件,但 catalog.json 应已落盘
             storage.close();
         }
@@ -167,12 +174,15 @@ class StorageManagerTest {
 
     @Test
     void reloadPreservesNewColumnTypesAndDecimalScale(@TempDir Path dir) {
-        TableSchema schema = new TableSchema("t", List.of(
-                new ColumnMeta("s", ColumnType.SMALLINT),
-                new ColumnMeta("r", ColumnType.REAL),
-                new ColumnMeta("p", ColumnType.DECIMAL, 10, 2),
-                new ColumnMeta("c", ColumnType.CHAR),
-                new ColumnMeta("b", ColumnType.VARBINARY)));
+        TableSchema schema =
+                new TableSchema(
+                        "t",
+                        List.of(
+                                new ColumnMeta("s", ColumnType.SMALLINT),
+                                new ColumnMeta("r", ColumnType.REAL),
+                                new ColumnMeta("p", ColumnType.DECIMAL, 10, 2),
+                                new ColumnMeta("c", ColumnType.CHAR),
+                                new ColumnMeta("b", ColumnType.VARBINARY)));
         MiniDbCatalog catalog = new MiniDbCatalog();
         try (BufferAllocator allocator = new RootAllocator()) {
             StorageManager storage = new StorageManager(catalog, allocator, dir);
@@ -202,10 +212,13 @@ class StorageManagerTest {
             StorageManager storage = new StorageManager(catalog, allocator, dir);
             SimpleTable table = (SimpleTable) storage.createTable(schema());
             writeRow(table, 7, "hello");
-            TableSchema newSchema = new TableSchema("t", List.of(
-                    new ColumnMeta("id", ColumnType.INTEGER),
-                    new ColumnMeta("name", ColumnType.VARCHAR),
-                    new ColumnMeta("extra", ColumnType.INTEGER)));
+            TableSchema newSchema =
+                    new TableSchema(
+                            "t",
+                            List.of(
+                                    new ColumnMeta("id", ColumnType.INTEGER),
+                                    new ColumnMeta("name", ColumnType.VARCHAR),
+                                    new ColumnMeta("extra", ColumnType.INTEGER)));
             storage.alterTable("public", "t", newSchema);
             SimpleTable rebuilt = (SimpleTable) storage.getTable("public", "t");
             assertEquals(3, rebuilt.schema().columns().size());

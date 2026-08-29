@@ -1,6 +1,9 @@
 package com.minidb.jdbc;
 
 import com.minidb.server.MiniDbServer;
+
+import org.junit.jupiter.api.Test;
+
 import java.nio.file.Files;
 import java.sql.Connection;
 import java.sql.DriverManager;
@@ -12,7 +15,6 @@ import java.util.List;
 import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicInteger;
-import org.junit.jupiter.api.Test;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
@@ -32,14 +34,14 @@ class ClientLifecycleTest {
         server.close(); // kill the server; the socket goes away
 
         long start = System.nanoTime();
-        SQLException ex = assertThrows(SQLException.class,
-                () -> s.execute("CREATE TABLE gone (id INTEGER)"));
+        SQLException ex =
+                assertThrows(SQLException.class, () -> s.execute("CREATE TABLE gone (id INTEGER)"));
         long elapsedMs = (System.nanoTime() - start) / 1_000_000;
 
         // Fast-fail must beat the 30s timeout by a wide margin.
-        assertTrue(elapsedMs < 5_000,
-                "expected fast-fail < 5000ms, got " + elapsedMs);
-        assertTrue(ex.getMessage() != null && !ex.getMessage().contains("timeout"),
+        assertTrue(elapsedMs < 5_000, "expected fast-fail < 5000ms, got " + elapsedMs);
+        assertTrue(
+                ex.getMessage() != null && !ex.getMessage().contains("timeout"),
                 "should report connection closed, not timeout: " + ex.getMessage());
 
         c.close(); // client close must be safe even on a dead connection
@@ -94,24 +96,27 @@ class ClientLifecycleTest {
 
         for (int i = 0; i < threads; i++) {
             int which = i % 2;
-            Thread t = new Thread(() -> {
-                try (Statement s = c.createStatement();
-                     java.sql.ResultSet rs = s.executeQuery(
-                             which == 0
-                                     ? "SELECT id FROM a ORDER BY id"
-                                     : "SELECT id FROM b ORDER BY id")) {
-                    start.await();
-                    int sum = 0;
-                    while (rs.next()) {
-                        sum += rs.getInt(1);
-                    }
-                    (which == 0 ? aSums : bSums).add(sum);
-                } catch (Exception e) {
-                    errors.incrementAndGet();
-                } finally {
-                    done.countDown();
-                }
-            });
+            Thread t =
+                    new Thread(
+                            () -> {
+                                try (Statement s = c.createStatement();
+                                        java.sql.ResultSet rs =
+                                                s.executeQuery(
+                                                        which == 0
+                                                                ? "SELECT id FROM a ORDER BY id"
+                                                                : "SELECT id FROM b ORDER BY id")) {
+                                    start.await();
+                                    int sum = 0;
+                                    while (rs.next()) {
+                                        sum += rs.getInt(1);
+                                    }
+                                    (which == 0 ? aSums : bSums).add(sum);
+                                } catch (Exception e) {
+                                    errors.incrementAndGet();
+                                } finally {
+                                    done.countDown();
+                                }
+                            });
             t.start();
         }
 
@@ -133,4 +138,3 @@ class ClientLifecycleTest {
         server.close();
     }
 }
-

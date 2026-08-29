@@ -1,48 +1,55 @@
 package com.minidb.server.stats;
 
 import com.minidb.storage.common.ColumnType;
-import java.util.List;
+
+import org.apache.calcite.rel.type.RelDataTypeSystem;
 import org.apache.calcite.rex.RexBuilder;
 import org.apache.calcite.rex.RexNode;
-import org.apache.calcite.sql.SqlKind;
 import org.apache.calcite.sql.fun.SqlStdOperatorTable;
 import org.apache.calcite.sql.type.SqlTypeFactoryImpl;
 import org.apache.calcite.sql.type.SqlTypeName;
-import org.apache.calcite.rel.type.RelDataTypeSystem;
 import org.junit.jupiter.api.Test;
+
+import java.util.List;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 class HistogramTest {
 
-    private final RexBuilder rex = new RexBuilder(
-            new SqlTypeFactoryImpl(RelDataTypeSystem.DEFAULT));
+    private final RexBuilder rex =
+            new RexBuilder(new SqlTypeFactoryImpl(RelDataTypeSystem.DEFAULT));
 
     // Column "x" type INTEGER, index 0. 100 rows, distinct=4 (values 1,2,3,4
     // each 25x). Build by hand to keep the test independent of HistogramBuilder.
     private Histogram hist() {
-        List<Histogram.Bucket> buckets = List.of(
-                new Histogram.Bucket("1", "1", 25),
-                new Histogram.Bucket("2", "2", 25),
-                new Histogram.Bucket("3", "3", 25),
-                new Histogram.Bucket("4", "4", 25));
-        List<Histogram.McValue> mcv = List.of(
-                new Histogram.McValue("1", 25), new Histogram.McValue("2", 25),
-                new Histogram.McValue("3", 25), new Histogram.McValue("4", 25));
+        List<Histogram.Bucket> buckets =
+                List.of(
+                        new Histogram.Bucket("1", "1", 25),
+                        new Histogram.Bucket("2", "2", 25),
+                        new Histogram.Bucket("3", "3", 25),
+                        new Histogram.Bucket("4", "4", 25));
+        List<Histogram.McValue> mcv =
+                List.of(
+                        new Histogram.McValue("1", 25), new Histogram.McValue("2", 25),
+                        new Histogram.McValue("3", 25), new Histogram.McValue("4", 25));
         return new Histogram(ColumnType.INTEGER, buckets, mcv, 4, 0, 100);
     }
 
     private RexNode eq(int colIndex, int literal) {
-        return rex.makeCall(SqlStdOperatorTable.EQUALS,
+        return rex.makeCall(
+                SqlStdOperatorTable.EQUALS,
                 rex.makeInputRef(rex.getTypeFactory().createSqlType(SqlTypeName.INTEGER), colIndex),
-                rex.makeLiteral(literal, rex.getTypeFactory().createSqlType(SqlTypeName.INTEGER), true));
+                rex.makeLiteral(
+                        literal, rex.getTypeFactory().createSqlType(SqlTypeName.INTEGER), true));
     }
 
     private RexNode lt(int colIndex, int literal) {
-        return rex.makeCall(SqlStdOperatorTable.LESS_THAN,
+        return rex.makeCall(
+                SqlStdOperatorTable.LESS_THAN,
                 rex.makeInputRef(rex.getTypeFactory().createSqlType(SqlTypeName.INTEGER), colIndex),
-                rex.makeLiteral(literal, rex.getTypeFactory().createSqlType(SqlTypeName.INTEGER), true));
+                rex.makeLiteral(
+                        literal, rex.getTypeFactory().createSqlType(SqlTypeName.INTEGER), true));
     }
 
     @Test
@@ -94,9 +101,13 @@ class HistogramTest {
     void unsupportedRexFallsBackToDefault() {
         Histogram h = hist();
         // a RexNode kind we don't model (e.g. a function call) -> default 0.33
-        RexNode other = rex.makeCall(SqlStdOperatorTable.PLUS,
-                rex.makeInputRef(rex.getTypeFactory().createSqlType(SqlTypeName.INTEGER), 0),
-                rex.makeLiteral(1, rex.getTypeFactory().createSqlType(SqlTypeName.INTEGER), true));
+        RexNode other =
+                rex.makeCall(
+                        SqlStdOperatorTable.PLUS,
+                        rex.makeInputRef(
+                                rex.getTypeFactory().createSqlType(SqlTypeName.INTEGER), 0),
+                        rex.makeLiteral(
+                                1, rex.getTypeFactory().createSqlType(SqlTypeName.INTEGER), true));
         assertEquals(Histogram.DEFAULT_SELECTIVITY, h.selectivity(other, 100), 1e-9);
     }
 
@@ -115,8 +126,7 @@ class HistogramTest {
         // to half the bucket -> 5 rows -> 0.5. This exercises the boundary
         // interpolation branch (lower < literal < upper), not the "whole bucket
         // below" path, catching the compareTo-vs-numericDelta regression.
-        List<Histogram.Bucket> buckets = List.of(
-                new Histogram.Bucket("0", "10", 10));
+        List<Histogram.Bucket> buckets = List.of(new Histogram.Bucket("0", "10", 10));
         Histogram h = new Histogram(ColumnType.INTEGER, buckets, List.of(), 10, 0, 10);
         // frac = literal - lower = 5 - 0 = 5; span = 10 - 0 = 10; 5/10 * 10 rows = 5 rows -> 0.5
         assertEquals(0.5, h.selectivity(lt(0, 5), 10), 1e-9);

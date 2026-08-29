@@ -3,7 +3,7 @@ package com.minidb.server.exec;
 import com.minidb.server.catalog.MiniDbCatalog;
 import com.minidb.server.stats.StatsManager;
 import com.minidb.server.storage.StorageManager;
-import java.nio.file.Path;
+
 import org.apache.arrow.memory.BufferAllocator;
 import org.apache.arrow.memory.RootAllocator;
 import org.apache.arrow.vector.IntVector;
@@ -13,12 +13,13 @@ import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
 
+import java.nio.file.Path;
+
 import static org.junit.jupiter.api.Assertions.assertEquals;
 
 class LikeTest {
 
-    @TempDir
-    Path dataDir;
+    @TempDir Path dataDir;
     BufferAllocator allocator;
     MiniDbCatalog catalog;
     StorageManager storage;
@@ -33,8 +34,9 @@ class LikeTest {
         stats = new StatsManager(storage);
         executor = new QueryExecutor(catalog, storage, allocator, stats);
         executor.execute("CREATE TABLE t (id INTEGER, name VARCHAR)");
-        executor.execute("INSERT INTO t VALUES "
-                + "(1, 'Alice'), (2, 'Bob'), (3, 'Carol'), (4, 'a.b'), (5, NULL)");
+        executor.execute(
+                "INSERT INTO t VALUES "
+                        + "(1, 'Alice'), (2, 'Bob'), (3, 'Carol'), (4, 'a.b'), (5, NULL)");
     }
 
     @AfterEach

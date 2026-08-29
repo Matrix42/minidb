@@ -1,17 +1,19 @@
 package com.minidb.storage.lsm;
 
 import com.minidb.storage.common.*;
-import java.util.*;
-import java.util.concurrent.ConcurrentHashMap;
+
 import org.apache.arrow.memory.BufferAllocator;
 import org.apache.arrow.vector.VectorSchemaRoot;
 
+import java.util.*;
+import java.util.concurrent.ConcurrentHashMap;
+
 /**
- * 合并 MemTable + 所有 level 的 SSTable，返回去重后的 BatchIterator。
- * 按 key 排序，同 key 取最新版本（MemTable > L0 > L1 > ...），DELETE tombstone 跳过。
+ * 合并 MemTable + 所有 level 的 SSTable，返回去重后的 BatchIterator。 按 key 排序，同 key 取最新版本（MemTable > L0 > L1 >
+ * ...），DELETE tombstone 跳过。
  *
- * <p>MemTable 和 SSTable 使用统一的 {@link SSTable#KEY_COMPARATOR}（raw Comparable），
- * key 类型一致（Integer/Long/String），无需边界转换。
+ * <p>MemTable 和 SSTable 使用统一的 {@link SSTable#KEY_COMPARATOR}（raw Comparable）， key
+ * 类型一致（Integer/Long/String），无需边界转换。
  */
 public class MergeIterator {
     // 按优先级排序的 MemTable 列表:[0]=当前表(最新),越靠后越旧(swap 早的表)。
@@ -26,16 +28,23 @@ public class MergeIterator {
     private final List<Object> rangeLo;
     private final List<Object> rangeHi;
 
-    public MergeIterator(List<MemTable> memTables, SSTableManager sstManager,
-                         TableSchema schema, PartFormat format,
-                         BufferAllocator allocator) {
+    public MergeIterator(
+            List<MemTable> memTables,
+            SSTableManager sstManager,
+            TableSchema schema,
+            PartFormat format,
+            BufferAllocator allocator) {
         this(memTables, sstManager, schema, format, allocator, null, null);
     }
 
-    public MergeIterator(List<MemTable> memTables, SSTableManager sstManager,
-                         TableSchema schema, PartFormat format,
-                         BufferAllocator allocator,
-                         List<Object> rangeLo, List<Object> rangeHi) {
+    public MergeIterator(
+            List<MemTable> memTables,
+            SSTableManager sstManager,
+            TableSchema schema,
+            PartFormat format,
+            BufferAllocator allocator,
+            List<Object> rangeLo,
+            List<Object> rangeHi) {
         this.memTables = memTables;
         this.sstManager = sstManager;
         this.schema = schema;
@@ -46,16 +55,19 @@ public class MergeIterator {
     }
 
     /**
-     * 事务快照读构造器:合并 shared MemTable 和已提交的 tx-private MemTable。
-     * 已提交的 tx-private 数据已通过 {@link LSMTable#commitTx} 合并到 shared MemTable,
-     * 故此处直接使用 shared MemTable;未提交的 tx-private 不在 snapshot 可见范围内。
-     * txMemTables 和 snapshotTxId 参数保留供后续扩展。
+     * 事务快照读构造器:合并 shared MemTable 和已提交的 tx-private MemTable。 已提交的 tx-private 数据已通过 {@link
+     * LSMTable#commitTx} 合并到 shared MemTable, 故此处直接使用 shared MemTable;未提交的 tx-private 不在 snapshot
+     * 可见范围内。 txMemTables 和 snapshotTxId 参数保留供后续扩展。
      */
-    public MergeIterator(List<MemTable> memTables,
-                         ConcurrentHashMap<Long, MemTable> txMemTables,
-                         SSTableManager sstManager, TableSchema schema,
-                         PartFormat format, BufferAllocator allocator,
-                         List<Object> rangeLo, List<Object> rangeHi) {
+    public MergeIterator(
+            List<MemTable> memTables,
+            ConcurrentHashMap<Long, MemTable> txMemTables,
+            SSTableManager sstManager,
+            TableSchema schema,
+            PartFormat format,
+            BufferAllocator allocator,
+            List<Object> rangeLo,
+            List<Object> rangeHi) {
         this.memTables = memTables;
         this.sstManager = sstManager;
         this.schema = schema;
@@ -117,8 +129,10 @@ public class MergeIterator {
                 readers.add(reader);
                 // 流式源:不物化整个文件,按需从 reader 拉批——每源常驻当前一批,
                 // 内存 O(批大小 × 文件数) 而非 O(文件总行数)。
-                BatchIterator it = rangeLo == null && rangeHi == null
-                        ? reader.scan() : reader.scan(rangeLo, rangeHi);
+                BatchIterator it =
+                        rangeLo == null && rangeHi == null
+                                ? reader.scan()
+                                : reader.scan(rangeLo, rangeHi);
                 sources[idx++] = new SstSource(it, schema, idx + sst.level(), sst.seq());
             }
 
@@ -201,10 +215,11 @@ public class MergeIterator {
 
         /**
          * 消费源 src 的当前行后推进到下一行：
+         *
          * <ul>
-         *   <li>还有下一行：读入同一 slot（复用对象），从堆根下滤恢复堆序——一次
-         *       O(log N) 下滤，替代 PriorityQueue 的 poll 下滤 + offer 上滤各一次；</li>
-         *   <li>源耗尽：根与末元素交换（堆缩小），再下滤。</li>
+         *   <li>还有下一行：读入同一 slot（复用对象），从堆根下滤恢复堆序——一次 O(log N) 下滤，替代 PriorityQueue 的 poll 下滤 + offer
+         *       上滤各一次；
+         *   <li>源耗尽：根与末元素交换（堆缩小），再下滤。
          * </ul>
          */
         private void advanceSource(int src) {
@@ -264,8 +279,7 @@ public class MergeIterator {
     }
 
     private VectorSchemaRoot rowsToRoot(List<Object[]> rows) {
-        VectorSchemaRoot root = VectorSchemaRoot.create(
-                ArrowTypes.arrowSchema(schema), allocator);
+        VectorSchemaRoot root = VectorSchemaRoot.create(ArrowTypes.arrowSchema(schema), allocator);
         root.allocateNew();
         if (!rows.isEmpty()) {
             // allocateNew 后 vector valueCount=0，setRowCount 确保有效性缓冲区已分配
@@ -279,13 +293,12 @@ public class MergeIterator {
     }
 
     /**
-     * 合并源(1 个 MemTable + 每 SSTable 文件 1 个)的「当前行槽」抽象。
-     * nextRow 推进到下一行,之后 key()/values()/kind() 返回新当前行(借用,
-     * 下轮 nextRow 后失效)。对象在构造时一次性分配、跨行复用。
+     * 合并源(1 个 MemTable + 每 SSTable 文件 1 个)的「当前行槽」抽象。 nextRow 推进到下一行,之后 key()/values()/kind()
+     * 返回新当前行(借用, 下轮 nextRow 后失效)。对象在构造时一次性分配、跨行复用。
      */
     private abstract static class Source {
         final int priority; // MemTable=0, L0=1, L1=2...
-        final long seq;     // SSTable 全局序号，同优先级内越大越新
+        final long seq; // SSTable 全局序号，同优先级内越大越新
 
         Source(int priority, long seq) {
             this.priority = priority;
@@ -349,9 +362,8 @@ public class MergeIterator {
     }
 
     /**
-     * SSTable 源:流式按批从 reader 拉取,每源常驻当前一批(内存 O(批大小) 而非
-     * O(文件行数))。换批时 reader 释放旧批,故当前行必须拷进独立 key 槽与
-     * 独立 values 数组(batchRows 消费的是 values 引用,独立数组保证跨行稳定)。
+     * SSTable 源:流式按批从 reader 拉取,每源常驻当前一批(内存 O(批大小) 而非 O(文件行数))。换批时 reader 释放旧批,故当前行必须拷进独立 key 槽与 独立
+     * values 数组(batchRows 消费的是 values 引用,独立数组保证跨行稳定)。
      */
     private static final class SstSource extends Source {
         private final BatchIterator it;

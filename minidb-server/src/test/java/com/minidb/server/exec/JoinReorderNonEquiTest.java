@@ -4,9 +4,7 @@ import com.minidb.server.catalog.MiniDbCatalog;
 import com.minidb.server.plan.Planner;
 import com.minidb.server.stats.StatsManager;
 import com.minidb.server.storage.StorageManager;
-import java.nio.file.Path;
-import java.util.ArrayList;
-import java.util.List;
+
 import org.apache.arrow.memory.BufferAllocator;
 import org.apache.arrow.memory.RootAllocator;
 import org.apache.calcite.rel.RelNode;
@@ -17,21 +15,22 @@ import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
 
+import java.nio.file.Path;
+import java.util.ArrayList;
+import java.util.List;
+
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 /**
  * 回归:大事实表 + 小维度表 + 小表的非等值连接(query8 形态)。
  *
- * <p>连接图:fact --(equi)-- dim_a, fact --(equi)-- dim_b, dim_a --(non-equi substr)-- sub。
- * 三表与 fact/事实表都有等值边,连接度上 fact、dim_a 均为 2(平手)。若贪心平手取下标
- * 最小,fact(下标0,行数最多)当选种子,非等值条件落到最后加入的 sub 所在 join,接在
- * (fact⨝dim_a⨝dim_b) 大表结果上。修后按行数破平手,dim_a(小)当选种子,非等值
- * NestedLoop 接在 dim_a×sub 之间(几百行),不再卷入大表。</p>
+ * <p>连接图:fact --(equi)-- dim_a, fact --(equi)-- dim_b, dim_a --(non-equi substr)-- sub。 三表与
+ * fact/事实表都有等值边,连接度上 fact、dim_a 均为 2(平手)。若贪心平手取下标 最小,fact(下标0,行数最多)当选种子,非等值条件落到最后加入的 sub 所在 join,接在
+ * (fact⨝dim_a⨝dim_b) 大表结果上。修后按行数破平手,dim_a(小)当选种子,非等值 NestedLoop 接在 dim_a×sub 之间(几百行),不再卷入大表。
  */
 class JoinReorderNonEquiTest {
 
-    @TempDir
-    Path dataDir;
+    @TempDir Path dataDir;
     BufferAllocator allocator;
     MiniDbCatalog catalog;
     StorageManager storage;
@@ -69,9 +68,10 @@ class JoinReorderNonEquiTest {
     void nonEquiJoinNotOnTopOfLargeFactTable() {
         // fact(sk1=dim_a.pk 等值, sk2=dim_b.pk 等值, dim_a.zip 与 sub.zip 非等值 substr)。
         // FROM 顺序按 fact,dim_a,dim_b,sub 书写(模拟 TPC-DS query8)。
-        String sql = "SELECT fact.sk1 FROM fact, dim_a, dim_b, sub"
-                + " WHERE fact.sk1 = dim_a.pk AND fact.sk2 = dim_b.pk"
-                + " AND substr(dim_a.zip,1,2) = substr(sub.zip,1,2)";
+        String sql =
+                "SELECT fact.sk1 FROM fact, dim_a, dim_b, sub"
+                        + " WHERE fact.sk1 = dim_a.pk AND fact.sk2 = dim_b.pk"
+                        + " AND substr(dim_a.zip,1,2) = substr(sub.zip,1,2)";
 
         RelNode plan = new Planner(catalog).plan(sql);
         List<Join> joins = new ArrayList<>();
@@ -89,9 +89,12 @@ class JoinReorderNonEquiTest {
         assertTrue(nonEquiJoin != null, "应有含 substr 的非等值 join,实际 joins=" + joinConds(joins));
         // 非等值 join 的左子树不应含 fact:若含 fact,说明大表被卷进 NestedLoop 左侧。
         String leftLeaf = leftmostScanName(nonEquiJoin.getLeft());
-        assertTrue(!"fact".equals(leftLeaf),
+        assertTrue(
+                !"fact".equals(leftLeaf),
                 "非等值 NestedLoop 的左输入不应是大表 fact(应是小表 dim_a),实际左叶子="
-                        + leftLeaf + ",joins=" + joinConds(joins));
+                        + leftLeaf
+                        + ",joins="
+                        + joinConds(joins));
     }
 
     private static void collectJoins(RelNode node, List<Join> out) {

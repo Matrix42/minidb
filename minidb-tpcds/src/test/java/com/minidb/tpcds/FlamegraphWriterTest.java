@@ -1,10 +1,11 @@
 package com.minidb.tpcds;
 
+import org.junit.jupiter.api.Test;
+import org.junit.jupiter.api.io.TempDir;
+
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.util.Map;
-import org.junit.jupiter.api.Test;
-import org.junit.jupiter.api.io.TempDir;
 
 import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertTrue;
@@ -25,7 +26,8 @@ class FlamegraphWriterTest {
         assertFalse(html.isBlank(), "HTML 不应为空");
         assertTrue(html.contains("<!DOCTYPE html>"), "应为 HTML 文档");
         assertTrue(html.contains("d3-flame-graph"), "应包含火焰图库引用");
-        assertTrue(html.contains("FlamegraphWriterTest") || html.contains("doWork"),
+        assertTrue(
+                html.contains("FlamegraphWriterTest") || html.contains("doWork"),
                 "应包含测试类名或 doWork 栈帧");
     }
 
@@ -39,7 +41,8 @@ class FlamegraphWriterTest {
         new FlamegraphWriter().write(jfrFile, htmlFile);
 
         String html = Files.readString(htmlFile);
-        assertTrue(html.contains("cdn.jsdelivr.net") || html.contains("d3-flame-graph"),
+        assertTrue(
+                html.contains("cdn.jsdelivr.net") || html.contains("d3-flame-graph"),
                 "应通过 CDN 引用火焰图库");
         assertFalse(html.contains("file://"), "不应有本地文件引用");
     }
@@ -54,17 +57,16 @@ class FlamegraphWriterTest {
         new FlamegraphWriter().write(jfrFile, htmlFile);
 
         String html = Files.readString(htmlFile);
-        assertTrue(html.contains("FlamegraphWriterTest") || html.contains("doWork"),
-                "应包含测试方法名");
+        assertTrue(html.contains("FlamegraphWriterTest") || html.contains("doWork"), "应包含测试方法名");
     }
 
     private static void recordJfr(Path jfrFile) throws Exception {
         jdk.jfr.Recording recording = new jdk.jfr.Recording();
         recording.setDestination(jfrFile);
-        recording.setSettings(Map.of(
-                "jdk.ExecutionSample#enabled", "true",
-                "jdk.ExecutionSample#period", "1 ms"
-        ));
+        recording.setSettings(
+                Map.of(
+                        "jdk.ExecutionSample#enabled", "true",
+                        "jdk.ExecutionSample#period", "1 ms"));
         recording.start();
         doWork();
         recording.stop();

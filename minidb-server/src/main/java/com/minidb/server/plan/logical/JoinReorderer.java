@@ -1,34 +1,33 @@
 package com.minidb.server.plan.logical;
 
-import java.util.ArrayList;
-import java.util.List;
-import java.util.Set;
 import org.apache.calcite.plan.RelOptCluster;
 import org.apache.calcite.rel.RelNode;
-import org.apache.calcite.rel.metadata.RelMetadataQuery;
 import org.apache.calcite.rel.core.JoinRelType;
 import org.apache.calcite.rel.logical.LogicalFilter;
 import org.apache.calcite.rel.logical.LogicalJoin;
 import org.apache.calcite.rel.logical.LogicalProject;
+import org.apache.calcite.rel.metadata.RelMetadataQuery;
 import org.apache.calcite.rex.RexBuilder;
 import org.apache.calcite.rex.RexInputRef;
 import org.apache.calcite.rex.RexNode;
 import org.apache.calcite.rex.RexShuttle;
 import org.apache.calcite.rex.RexUtil;
 
+import java.util.ArrayList;
+import java.util.List;
+import java.util.Set;
+
 /**
  * 贪心重排 INNER join 链,消除「FROM 顺序导致的交叉连接」。
  *
  * <p>SqlToRelConverter 按 FROM 顺序生成左深 join 树;若某表(如 query18 的 cd2)排在它的等值
- * 连接伙伴(customer)之前,该表先被交叉连接(cond=true),再把等值条件推迟到后续 join。这会让
- * NestedLoopJoin 物化笛卡尔积(344 亿对)而 OOM。Calcite 的 JoinAssociateRule/JoinCommuteRule
- * 在去相关树上会丢条件、也变交叉连接(故已禁用),所以这里用「等值连接图贪心」:先选连接度最高的
- * 表做种子,每步加入「与当前集合有等值连接」的表,保证不产生本可避免的交叉连接。</p>
+ * 连接伙伴(customer)之前,该表先被交叉连接(cond=true),再把等值条件推迟到后续 join。这会让 NestedLoopJoin 物化笛卡尔积(344 亿对)而
+ * OOM。Calcite 的 JoinAssociateRule/JoinCommuteRule 在去相关树上会丢条件、也变交叉连接(故已禁用),所以这里用「等值连接图贪心」:先选连接度最高的
+ * 表做种子,每步加入「与当前集合有等值连接」的表,保证不产生本可避免的交叉连接。
  */
 public final class JoinReorderer {
 
-    private JoinReorderer() {
-    }
+    private JoinReorderer() {}
 
     public static RelNode reorder(RelNode node) {
         if (node instanceof LogicalJoin join && join.getJoinType() == JoinRelType.INNER) {
@@ -70,7 +69,8 @@ public final class JoinReorderer {
     }
 
     /** 收集 INNER join 链:所有非 INNER-join 的输入是叶子,INNER join 的条件进 conditions。 */
-    private static void collectInnerChain(RelNode node, List<RelNode> leaves, List<RexNode> conditions) {
+    private static void collectInnerChain(
+            RelNode node, List<RelNode> leaves, List<RexNode> conditions) {
         if (node instanceof LogicalJoin join && join.getJoinType() == JoinRelType.INNER) {
             collectInnerChain(join.getLeft(), leaves, conditions);
             collectInnerChain(join.getRight(), leaves, conditions);
@@ -82,16 +82,23 @@ public final class JoinReorderer {
         }
     }
 
-    private static RelNode rebuildTwoOrOne(LogicalJoin root, List<RelNode> leaves, List<RexNode> conditions) {
+    private static RelNode rebuildTwoOrOne(
+            LogicalJoin root, List<RelNode> leaves, List<RexNode> conditions) {
         if (leaves.size() == 1) {
             return leaves.get(0);
         }
         RexNode cond = RexUtil.composeConjunction(root.getCluster().getRexBuilder(), conditions);
-        return root.copy(root.getTraitSet(), cond, leaves.get(0), leaves.get(1),
-                root.getJoinType(), root.isSemiJoinDone());
+        return root.copy(
+                root.getTraitSet(),
+                cond,
+                leaves.get(0),
+                leaves.get(1),
+                root.getJoinType(),
+                root.isSemiJoinDone());
     }
 
-    private static RelNode greedyRebuild(LogicalJoin root, List<RelNode> leaves, List<RexNode> conditions) {
+    private static RelNode greedyRebuild(
+            LogicalJoin root, List<RelNode> leaves, List<RexNode> conditions) {
         int n = leaves.size();
         int[] fieldStart = new int[n];
         int[] fieldCount = new int[n];
@@ -163,8 +170,7 @@ public final class JoinReorderer {
                     }
                 }
                 double rows = rowCount(leaves.get(i), mq);
-                if (score > bestScore
-                        || (score == bestScore && rows < bestRows)) {
+                if (score > bestScore || (score == bestScore && rows < bestRows)) {
                     bestScore = score;
                     bestRows = rows;
                     best = i;
@@ -204,13 +210,19 @@ public final class JoinReorderer {
                     }
                 }
                 if (otherInCurrent) {
-                    joinConjuncts.add(remap(conjuncts.get(c), currentOrder, leafId,
-                            fieldStart, fieldCount));
+                    joinConjuncts.add(
+                            remap(conjuncts.get(c), currentOrder, leafId, fieldStart, fieldCount));
                 }
             }
             RexNode joinCond = RexUtil.composeConjunction(rexBuilder, joinConjuncts);
-            current = LogicalJoin.create(current, leaves.get(leafId), List.of(),
-                    joinCond, root.getVariablesSet(), JoinRelType.INNER);
+            current =
+                    LogicalJoin.create(
+                            current,
+                            leaves.get(leafId),
+                            List.of(),
+                            joinCond,
+                            root.getVariablesSet(),
+                            JoinRelType.INNER);
             currentOrder.add(leafId);
         }
         // 收集所有引用 >2 个叶子的合取项(原扁平偏移,稍后经 Project 还原字段顺序后引用)。
@@ -248,8 +260,9 @@ public final class JoinReorderer {
                     projects.add(rexBuilder.makeInputRef(current, reorderedOffset[l] + f));
                 }
             }
-            result = LogicalProject.create(current, List.of(), projects,
-                    root.getRowType().getFieldNames());
+            result =
+                    LogicalProject.create(
+                            current, List.of(), projects, root.getRowType().getFieldNames());
         }
         if (!unassignedConjuncts.isEmpty()) {
             RexNode filterCond = RexUtil.composeConjunction(rexBuilder, unassignedConjuncts);
@@ -261,26 +274,31 @@ public final class JoinReorderer {
     /** 合取项引用的叶子下标集合(按字段偏移范围归到叶子)。 */
     private static Set<Integer> referencedLeaves(RexNode node, int[] fieldStart, int[] fieldCount) {
         Set<Integer> refs = new java.util.LinkedHashSet<>();
-        RexShuttle shuttle = new RexShuttle() {
-            @Override
-            public RexNode visitInputRef(RexInputRef inputRef) {
-                int index = inputRef.getIndex();
-                for (int i = 0; i < fieldStart.length; i++) {
-                    if (index >= fieldStart[i] && index < fieldStart[i] + fieldCount[i]) {
-                        refs.add(i);
-                        break;
+        RexShuttle shuttle =
+                new RexShuttle() {
+                    @Override
+                    public RexNode visitInputRef(RexInputRef inputRef) {
+                        int index = inputRef.getIndex();
+                        for (int i = 0; i < fieldStart.length; i++) {
+                            if (index >= fieldStart[i] && index < fieldStart[i] + fieldCount[i]) {
+                                refs.add(i);
+                                break;
+                            }
+                        }
+                        return inputRef;
                     }
-                }
-                return inputRef;
-            }
-        };
+                };
         shuttle.apply(node);
         return refs;
     }
 
     /** 把合取项从「原扁平字段偏移」重映射到「(currentOrder 叶子 + leafId)」的左右输入空间。 */
-    private static RexNode remap(RexNode node, List<Integer> currentOrder, int leafId,
-                                 int[] fieldStart, int[] fieldCount) {
+    private static RexNode remap(
+            RexNode node,
+            List<Integer> currentOrder,
+            int leafId,
+            int[] fieldStart,
+            int[] fieldCount) {
         int leftFieldCount = 0;
         for (int id : currentOrder) {
             leftFieldCount += fieldCount[id];
@@ -297,27 +315,27 @@ public final class JoinReorderer {
         for (int f = fieldStart[leafId]; f < fieldStart[leafId] + fieldCount[leafId]; f++) {
             mapping[f] = rightOffset++;
         }
-        RexShuttle shuttle = new RexShuttle() {
-            @Override
-            public RexNode visitInputRef(RexInputRef inputRef) {
-                int mapped = mapping[inputRef.getIndex()];
-                if (mapped < 0) {
-                    throw new IllegalStateException(
-                            "unmapped field " + inputRef.getIndex() + " in remap");
-                }
-                return new RexInputRef(mapped, inputRef.getType());
-            }
-        };
+        RexShuttle shuttle =
+                new RexShuttle() {
+                    @Override
+                    public RexNode visitInputRef(RexInputRef inputRef) {
+                        int mapped = mapping[inputRef.getIndex()];
+                        if (mapped < 0) {
+                            throw new IllegalStateException(
+                                    "unmapped field " + inputRef.getIndex() + " in remap");
+                        }
+                        return new RexInputRef(mapped, inputRef.getType());
+                    }
+                };
         return shuttle.apply(node);
     }
 
     /**
      * 叶子行数估算,用于连接度平手时按「小表优先」破平手。
      *
-     * <p>无统计时(Calcite 对无 ANALYZE 的表返回 null rowCount,且 1.42 的
-     * {@code RelMdUtil.estimateFilteredRows} 对 null selectivity 直接 unboxing 抛 NPE)
-     * 回退 1e8:所有叶子取相同值,行数破平手退化为不生效,贪心回到纯连接度决策——
-     * 与修复前行为一致,保证无统计场景不回退已有交叉连接消除(query10/18)。</p>
+     * <p>无统计时(Calcite 对无 ANALYZE 的表返回 null rowCount,且 1.42 的 {@code RelMdUtil.estimateFilteredRows}
+     * 对 null selectivity 直接 unboxing 抛 NPE) 回退 1e8:所有叶子取相同值,行数破平手退化为不生效,贪心回到纯连接度决策——
+     * 与修复前行为一致,保证无统计场景不回退已有交叉连接消除(query10/18)。
      */
     private static double rowCount(RelNode leaf, RelMetadataQuery mq) {
         try {

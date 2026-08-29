@@ -1,7 +1,22 @@
 package com.minidb.storage.common;
 
 public enum ColumnType {
-    SMALLINT, INTEGER, BIGINT, REAL, FLOAT, DOUBLE, DECIMAL, NUMERIC,
-    VARCHAR, CHAR, NCHAR, NVARCHAR, BOOLEAN, DATE, TIME, TIMESTAMP,
-    BINARY, VARBINARY
+    SMALLINT,
+    INTEGER,
+    BIGINT,
+    REAL,
+    FLOAT,
+    DOUBLE,
+    DECIMAL,
+    NUMERIC,
+    VARCHAR,
+    CHAR,
+    NCHAR,
+    NVARCHAR,
+    BOOLEAN,
+    DATE,
+    TIME,
+    TIMESTAMP,
+    BINARY,
+    VARBINARY
 }

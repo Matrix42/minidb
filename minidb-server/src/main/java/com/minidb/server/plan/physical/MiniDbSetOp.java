@@ -1,13 +1,10 @@
 package com.minidb.server.plan.physical;
 
-import com.minidb.storage.common.ArrowTypes;
-import com.minidb.storage.common.BatchIterator;
 import com.minidb.server.exec.ExecContext;
 import com.minidb.server.exec.RowCopier;
-import java.util.ArrayList;
-import java.util.LinkedHashMap;
-import java.util.List;
-import java.util.Map;
+import com.minidb.storage.common.ArrowTypes;
+import com.minidb.storage.common.BatchIterator;
+
 import org.apache.arrow.vector.FieldVector;
 import org.apache.arrow.vector.VectorSchemaRoot;
 import org.apache.calcite.plan.RelOptCluster;
@@ -17,18 +14,26 @@ import org.apache.calcite.rel.core.SetOp;
 import org.apache.calcite.rel.type.RelDataTypeField;
 import org.apache.calcite.sql.SqlKind;
 
+import java.util.ArrayList;
+import java.util.LinkedHashMap;
+import java.util.List;
+import java.util.Map;
+
 /**
- * INTERSECT / EXCEPT. Multiset semantics: each input is materialized into a
- * single columnar root, then counted with {@link ColumnKey} (no per-cell
- * boxing). INTERSECT keeps min(count) across inputs, EXCEPT keeps
- * max(0, count(first) - sum(rest)); with all=false each surviving key is
- * emitted once, with all=true it is emitted that many times. Output order
- * follows first-seen order of the first input.
+ * INTERSECT / EXCEPT. Multiset semantics: each input is materialized into a single columnar root,
+ * then counted with {@link ColumnKey} (no per-cell boxing). INTERSECT keeps min(count) across
+ * inputs, EXCEPT keeps max(0, count(first) - sum(rest)); with all=false each surviving key is
+ * emitted once, with all=true it is emitted that many times. Output order follows first-seen order
+ * of the first input.
  */
 public class MiniDbSetOp extends SetOp implements MiniDbRel {
 
-    public MiniDbSetOp(RelOptCluster cluster, RelTraitSet traitSet,
-                       List<RelNode> inputs, SqlKind kind, boolean all) {
+    public MiniDbSetOp(
+            RelOptCluster cluster,
+            RelTraitSet traitSet,
+            List<RelNode> inputs,
+            SqlKind kind,
+            boolean all) {
         super(cluster, traitSet, inputs, kind, all);
     }
 
@@ -85,23 +90,24 @@ public class MiniDbSetOp extends SetOp implements MiniDbRel {
                 root.close();
             }
             boolean[] done = {false};
-            return BatchIterator.interruptible(new BatchIterator() {
-                @Override
-                public boolean hasNext() {
-                    return !done[0];
-                }
+            return BatchIterator.interruptible(
+                    new BatchIterator() {
+                        @Override
+                        public boolean hasNext() {
+                            return !done[0];
+                        }
 
-                @Override
-                public VectorSchemaRoot next() {
-                    done[0] = true;
-                    return out;
-                }
+                        @Override
+                        public VectorSchemaRoot next() {
+                            done[0] = true;
+                            return out;
+                        }
 
-                @Override
-                public void close() {
-                    out.close();
-                }
-            });
+                        @Override
+                        public void close() {
+                            out.close();
+                        }
+                    });
         } catch (RuntimeException e) {
             for (VectorSchemaRoot root : roots) {
                 root.close();
@@ -110,8 +116,8 @@ public class MiniDbSetOp extends SetOp implements MiniDbRel {
         }
     }
 
-    private VectorSchemaRoot buildOutput(List<ColumnKey> keys, List<Long> times,
-                                         int[] allCols, ExecContext ctx) {
+    private VectorSchemaRoot buildOutput(
+            List<ColumnKey> keys, List<Long> times, int[] allCols, ExecContext ctx) {
         long total = 0;
         for (long t : times) {
             total += t;

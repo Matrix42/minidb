@@ -1,12 +1,14 @@
 package com.minidb.jdbc;
 
 import com.minidb.server.MiniDbServer;
+
+import org.junit.jupiter.api.Test;
+
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.sql.Connection;
 import java.sql.DriverManager;
 import java.sql.Statement;
-import org.junit.jupiter.api.Test;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertThrows;
@@ -21,7 +23,7 @@ class SchemaSwitchTest {
         server.start(0, dataDir);
         String url = "jdbc:minidb://127.0.0.1:" + server.port();
         try (Connection c = DriverManager.getConnection(url);
-             Statement s = c.createStatement()) {
+                Statement s = c.createStatement()) {
             assertEquals("public", c.getSchema(), "默认 schema 应为 public");
 
             s.execute("CREATE SCHEMA other");

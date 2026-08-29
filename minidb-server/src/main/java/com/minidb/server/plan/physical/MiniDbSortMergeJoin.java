@@ -1,8 +1,7 @@
 package com.minidb.server.plan.physical;
 
 import com.minidb.server.exec.ExecContext;
-import java.util.ArrayList;
-import java.util.List;
+
 import org.apache.arrow.vector.VectorSchemaRoot;
 import org.apache.calcite.plan.RelOptCluster;
 import org.apache.calcite.plan.RelOptCost;
@@ -15,22 +14,27 @@ import org.apache.calcite.rel.core.JoinRelType;
 import org.apache.calcite.rel.metadata.RelMetadataQuery;
 import org.apache.calcite.rex.RexNode;
 
+import java.util.List;
+
 /**
- * Sort-merge join: both inputs are ordered by the equi key columns (nulls
- * last) and merged, emitting the cross product of equal-key groups. If an
- * input's declared collation already covers the join keys it is consumed
- * as-is (no internal sort); otherwise that side is sorted internally.
- * Null keys never match in an equi-join, so for outer joins they are emitted
- * as preserved rows instead.
+ * Sort-merge join: both inputs are ordered by the equi key columns (nulls last) and merged,
+ * emitting the cross product of equal-key groups. If an input's declared collation already covers
+ * the join keys it is consumed as-is (no internal sort); otherwise that side is sorted internally.
+ * Null keys never match in an equi-join, so for outer joins they are emitted as preserved rows
+ * instead.
  */
 public class MiniDbSortMergeJoin extends MiniDbJoin {
 
     private final boolean leftSorted;
     private final boolean rightSorted;
 
-    public MiniDbSortMergeJoin(RelOptCluster cluster, RelTraitSet traitSet,
-                               RelNode left, RelNode right, RexNode condition,
-                               JoinRelType joinType) {
+    public MiniDbSortMergeJoin(
+            RelOptCluster cluster,
+            RelTraitSet traitSet,
+            RelNode left,
+            RelNode right,
+            RexNode condition,
+            JoinRelType joinType) {
         super(cluster, traitSet, left, right, condition, joinType);
         JoinInfo info = JoinInfo.of(left, right, condition);
         RelMetadataQuery mq = RelMetadataQuery.instance();
@@ -42,8 +46,9 @@ public class MiniDbSortMergeJoin extends MiniDbJoin {
     public RelOptCost computeSelfCost(RelOptPlanner planner, RelMetadataQuery mq) {
         double leftRows = mq.getRowCount(getLeft());
         double rightRows = mq.getRowCount(getRight());
-        double sort = (leftSorted ? 0 : leftRows * Math.log(leftRows + 1))
-                    + (rightSorted ? 0 : rightRows * Math.log(rightRows + 1));
+        double sort =
+                (leftSorted ? 0 : leftRows * Math.log(leftRows + 1))
+                        + (rightSorted ? 0 : rightRows * Math.log(rightRows + 1));
         // Calcite 1.42's VolcanoCost.isLt compares ONLY the rowCount component
         // (cpu/io are ignored — see VolcanoCost.isLt). Encode the estimated
         // work there: the merge pass is linear, and any side not already sorted
@@ -64,34 +69,40 @@ public class MiniDbSortMergeJoin extends MiniDbJoin {
     }
 
     @Override
-    public Join copy(RelTraitSet traitSet, RexNode conditionExpr,
-                     RelNode left, RelNode right, JoinRelType joinType,
-                     boolean semiJoinDone) {
-        MiniDbSortMergeJoin newJoin = new MiniDbSortMergeJoin(getCluster(), traitSet, left, right,
-                conditionExpr, joinType);
+    public Join copy(
+            RelTraitSet traitSet,
+            RexNode conditionExpr,
+            RelNode left,
+            RelNode right,
+            JoinRelType joinType,
+            boolean semiJoinDone) {
+        MiniDbSortMergeJoin newJoin =
+                new MiniDbSortMergeJoin(
+                        getCluster(), traitSet, left, right, conditionExpr, joinType);
         copyProjectionTo(newJoin);
         return newJoin;
     }
 
     @Override
-    protected PairSource joinPairs(VectorSchemaRoot left, VectorSchemaRoot right,
-                                   JoinInfo info, JoinRelType type, ExecContext ctx) {
+    protected PairSource joinPairs(
+            VectorSchemaRoot left,
+            VectorSchemaRoot right,
+            JoinInfo info,
+            JoinRelType type,
+            ExecContext ctx) {
         List<Integer> leftKeyCols = info.leftKeys;
         List<Integer> rightKeyCols = info.rightKeys;
         // Row indices in merge order: a pre-sorted input can be consumed in
         // its natural order (identity), otherwise sort internally by the keys.
-        List<Integer> leftScanOrder = leftSorted ? identity(left.getRowCount())
-                : sortedIndices(left, leftKeyCols);
-        List<Integer> rightScanOrder = rightSorted ? identity(right.getRowCount())
-                : sortedIndices(right, rightKeyCols);
-        return new MergePairSource(left, right, type, ctx, leftKeyCols, rightKeyCols,
-                leftScanOrder, rightScanOrder);
+        List<Integer> leftScanOrder =
+                leftSorted ? identity(left.getRowCount()) : sortedIndices(left, leftKeyCols);
+        List<Integer> rightScanOrder =
+                rightSorted ? identity(right.getRowCount()) : sortedIndices(right, rightKeyCols);
+        return new MergePairSource(
+                left, right, type, ctx, leftKeyCols, rightKeyCols, leftScanOrder, rightScanOrder);
     }
 
-    /**
-     * 流式双指针 merge:游标推进产出匹配/保留行,相等键组的 cross product 按内层
-     * 游标逐对产出——不物化输出行对,内存 O(批大小)。
-     */
+    /** 流式双指针 merge:游标推进产出匹配/保留行,相等键组的 cross product 按内层 游标逐对产出——不物化输出行对,内存 O(批大小)。 */
     private static final class MergePairSource implements PairSource {
         private final VectorSchemaRoot left;
         private final VectorSchemaRoot right;
@@ -113,9 +124,15 @@ public class MiniDbSortMergeJoin extends MiniDbJoin {
         private int crossRightEnd;
         private int crossRightStart;
 
-        MergePairSource(VectorSchemaRoot left, VectorSchemaRoot right, JoinRelType type,
-                        ExecContext ctx, List<Integer> leftKeyCols, List<Integer> rightKeyCols,
-                        List<Integer> leftScanOrder, List<Integer> rightScanOrder) {
+        MergePairSource(
+                VectorSchemaRoot left,
+                VectorSchemaRoot right,
+                JoinRelType type,
+                ExecContext ctx,
+                List<Integer> leftKeyCols,
+                List<Integer> rightKeyCols,
+                List<Integer> leftScanOrder,
+                List<Integer> rightScanOrder) {
             this.left = left;
             this.right = right;
             this.leftKeyCols = leftKeyCols;
@@ -209,8 +226,9 @@ public class MiniDbSortMergeJoin extends MiniDbJoin {
                     }
                     continue;
                 }
-                int cmp = compareKeys(left, leftRowIdx, leftKeyCols,
-                        right, rightRowIdx, rightKeyCols);
+                int cmp =
+                        compareKeys(
+                                left, leftRowIdx, leftKeyCols, right, rightRowIdx, rightKeyCols);
                 if (cmp < 0) {
                     if (keepUnmatchedLeft) {
                         leftRows[out] = leftRowIdx;
@@ -230,15 +248,27 @@ public class MiniDbSortMergeJoin extends MiniDbJoin {
                     int leftGroupEnd = leftPos;
                     while (leftGroupEnd < leftScanOrder.size()
                             && !hasNullKey(left, leftScanOrder.get(leftGroupEnd), leftKeyCols)
-                            && compareKeys(left, leftScanOrder.get(leftGroupEnd), leftKeyCols,
-                            right, rightRowIdx, rightKeyCols) == 0) {
+                            && compareKeys(
+                                            left,
+                                            leftScanOrder.get(leftGroupEnd),
+                                            leftKeyCols,
+                                            right,
+                                            rightRowIdx,
+                                            rightKeyCols)
+                                    == 0) {
                         leftGroupEnd++;
                     }
                     int rightGroupEnd = rightPos;
                     while (rightGroupEnd < rightScanOrder.size()
                             && !hasNullKey(right, rightScanOrder.get(rightGroupEnd), rightKeyCols)
-                            && compareKeys(right, rightScanOrder.get(rightGroupEnd), rightKeyCols,
-                            left, leftRowIdx, leftKeyCols) == 0) {
+                            && compareKeys(
+                                            right,
+                                            rightScanOrder.get(rightGroupEnd),
+                                            rightKeyCols,
+                                            left,
+                                            leftRowIdx,
+                                            leftKeyCols)
+                                    == 0) {
                         rightGroupEnd++;
                     }
                     inCross = true;

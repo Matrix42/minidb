@@ -1,26 +1,33 @@
 package com.minidb.storage.common;
 
 import com.minidb.storage.arrow.ArrowPartFormat;
-import java.nio.file.Path;
-import java.util.ArrayList;
-import java.util.List;
+
 import org.apache.arrow.memory.RootAllocator;
 import org.apache.arrow.vector.VectorSchemaRoot;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
 
+import java.nio.file.Path;
+import java.util.ArrayList;
+import java.util.List;
+
 import static org.junit.jupiter.api.Assertions.assertEquals;
 
 /**
- * SimpleTable 事务语义(置于 lsm 模块内,因它依赖 minidb-arrow 提供 ArrowPartFormat):
- * ① 事务内读自己的写入(增量 INSERT 与整表 rewrite 快照);其他事务仍读 base(隔离);
- * ② 未提交 rewrite 回滚后 base 不变(DELETE/UPDATE 不再让其他事务看到空表)。
+ * SimpleTable 事务语义(置于 lsm 模块内,因它依赖 minidb-arrow 提供 ArrowPartFormat): ① 事务内读自己的写入(增量 INSERT 与整表
+ * rewrite 快照);其他事务仍读 base(隔离); ② 未提交 rewrite 回滚后 base 不变(DELETE/UPDATE 不再让其他事务看到空表)。
  */
 class SimpleTableTransactionTest {
-    private final TableSchema schema = new TableSchema("public", "t",
-            List.of(new ColumnMeta("id", ColumnType.INTEGER),
-                    new ColumnMeta("v", ColumnType.INTEGER)),
-            List.of("id"), List.of(), List.of());
+    private final TableSchema schema =
+            new TableSchema(
+                    "public",
+                    "t",
+                    List.of(
+                            new ColumnMeta("id", ColumnType.INTEGER),
+                            new ColumnMeta("v", ColumnType.INTEGER)),
+                    List.of("id"),
+                    List.of(),
+                    List.of());
     private final RootAllocator allocator = new RootAllocator();
 
     private static void insert(SimpleTable t, int... vs) {

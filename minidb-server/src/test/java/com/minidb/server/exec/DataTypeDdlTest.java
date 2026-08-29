@@ -1,12 +1,11 @@
 package com.minidb.server.exec;
 
+import com.minidb.server.catalog.MiniDbCatalog;
+import com.minidb.server.stats.StatsManager;
+import com.minidb.server.storage.StorageManager;
 import com.minidb.storage.common.ColumnMeta;
 import com.minidb.storage.common.ColumnType;
-import com.minidb.server.catalog.MiniDbCatalog;
-import com.minidb.server.storage.StorageManager;
-import com.minidb.server.stats.StatsManager;
-import java.nio.file.Path;
-import java.util.List;
+
 import org.apache.arrow.memory.BufferAllocator;
 import org.apache.arrow.memory.RootAllocator;
 import org.junit.jupiter.api.AfterEach;
@@ -14,12 +13,14 @@ import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
 
+import java.nio.file.Path;
+import java.util.List;
+
 import static org.junit.jupiter.api.Assertions.assertEquals;
 
 class DataTypeDdlTest {
 
-    @TempDir
-    Path dataDir;
+    @TempDir Path dataDir;
     BufferAllocator allocator;
     MiniDbCatalog catalog;
     StorageManager storage;

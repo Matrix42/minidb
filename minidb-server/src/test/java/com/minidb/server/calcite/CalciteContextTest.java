@@ -1,12 +1,14 @@
 package com.minidb.server.calcite;
 
+import com.minidb.server.catalog.MiniDbCatalog;
 import com.minidb.storage.common.ColumnMeta;
 import com.minidb.storage.common.ColumnType;
-import com.minidb.server.catalog.MiniDbCatalog;
 import com.minidb.storage.common.TableSchema;
-import java.util.List;
+
 import org.apache.calcite.rel.RelRoot;
 import org.junit.jupiter.api.Test;
+
+import java.util.List;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertNotNull;
@@ -17,9 +19,12 @@ class CalciteContextTest {
 
     private MiniDbCatalog catalogWithT() {
         MiniDbCatalog catalog = new MiniDbCatalog();
-        catalog.createTable(new TableSchema("t", List.of(
-                new ColumnMeta("id", ColumnType.INTEGER),
-                new ColumnMeta("name", ColumnType.VARCHAR))));
+        catalog.createTable(
+                new TableSchema(
+                        "t",
+                        List.of(
+                                new ColumnMeta("id", ColumnType.INTEGER),
+                                new ColumnMeta("name", ColumnType.VARCHAR))));
         return catalog;
     }
 
@@ -74,8 +79,7 @@ class CalciteContextTest {
         MiniDbCatalog catalog = catalogWithT();
         CalciteContext ctx = new CalciteContext(catalog);
         ctx.plan("SELECT id FROM t");
-        catalog.createTable(new TableSchema("t2", List.of(
-                new ColumnMeta("x", ColumnType.BIGINT))));
+        catalog.createTable(new TableSchema("t2", List.of(new ColumnMeta("x", ColumnType.BIGINT))));
         RelRoot root = ctx.plan("SELECT x FROM t2");
         assertNotNull(root.rel);
     }
@@ -84,10 +88,10 @@ class CalciteContextTest {
     void qualifiedNameResolvesAcrossSchemas() {
         MiniDbCatalog catalog = new MiniDbCatalog();
         catalog.createSchema("other");
-        catalog.createTable(new TableSchema("public", "t", List.of(
-                new ColumnMeta("id", ColumnType.INTEGER))));
-        catalog.createTable(new TableSchema("other", "t", List.of(
-                new ColumnMeta("id", ColumnType.INTEGER))));
+        catalog.createTable(
+                new TableSchema("public", "t", List.of(new ColumnMeta("id", ColumnType.INTEGER))));
+        catalog.createTable(
+                new TableSchema("other", "t", List.of(new ColumnMeta("id", ColumnType.INTEGER))));
         CalciteContext ctx = new CalciteContext(catalog);
         RelRoot r1 = ctx.plan("SELECT id FROM t");
         assertNotNull(r1.rel);
@@ -100,11 +104,15 @@ class CalciteContextTest {
     void currentSchemaSwitchesUnqualifiedResolution() {
         MiniDbCatalog catalog = new MiniDbCatalog();
         catalog.createSchema("other");
-        catalog.createTable(new TableSchema("public", "t", List.of(
-                new ColumnMeta("id", ColumnType.INTEGER))));
-        catalog.createTable(new TableSchema("other", "t", List.of(
-                new ColumnMeta("id", ColumnType.INTEGER),
-                new ColumnMeta("x", ColumnType.VARCHAR))));
+        catalog.createTable(
+                new TableSchema("public", "t", List.of(new ColumnMeta("id", ColumnType.INTEGER))));
+        catalog.createTable(
+                new TableSchema(
+                        "other",
+                        "t",
+                        List.of(
+                                new ColumnMeta("id", ColumnType.INTEGER),
+                                new ColumnMeta("x", ColumnType.VARCHAR))));
         CalciteContext ctx = new CalciteContext(catalog);
         RelRoot r = ctx.plan("SELECT x FROM t", "other");
         assertNotNull(r.rel);

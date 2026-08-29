@@ -18,6 +18,5 @@ public record MVDefinition(
     }
 
     /** 依赖表引用 */
-    public record TableRef(String schemaName, String tableName) {
-    }
+    public record TableRef(String schemaName, String tableName) {}
 }

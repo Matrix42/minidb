@@ -1,14 +1,11 @@
 package com.minidb.server.plan.physical;
+
 import com.minidb.server.exec.ExecContext;
 import com.minidb.server.exec.RowCopier;
 import com.minidb.server.exec.ValueComparators;
 import com.minidb.storage.common.ArrowTypes;
 import com.minidb.storage.common.BatchIterator;
-import java.util.ArrayList;
-import java.util.Comparator;
-import java.util.List;
-import java.util.NoSuchElementException;
-import java.util.Set;
+
 import org.apache.arrow.vector.FieldVector;
 import org.apache.arrow.vector.ValueVector;
 import org.apache.arrow.vector.VectorSchemaRoot;
@@ -25,15 +22,18 @@ import org.apache.calcite.rel.type.RelDataTypeFactory;
 import org.apache.calcite.rel.type.RelDataTypeField;
 import org.apache.calcite.rex.RexNode;
 
+import java.util.ArrayList;
+import java.util.Comparator;
+import java.util.List;
+import java.util.NoSuchElementException;
+import java.util.Set;
 
 /**
- * Join base class. Subclasses implement one strategy (MiniDbHashJoin,
- * MiniDbSortMergeJoin, MiniDbNestedLoopJoin); this class owns columnar
- * materialization of both inputs (into a single {@link VectorSchemaRoot} each,
- * no per-cell boxing), streaming output (pairs are produced lazily and the
- * output is emitted in batches — memory O(batch size) instead of O(result)),
- * and output building. Join strategies work on row indices and columnar keys,
- * never on Object[].
+ * Join base class. Subclasses implement one strategy (MiniDbHashJoin, MiniDbSortMergeJoin,
+ * MiniDbNestedLoopJoin); this class owns columnar materialization of both inputs (into a single
+ * {@link VectorSchemaRoot} each, no per-cell boxing), streaming output (pairs are produced lazily
+ * and the output is emitted in batches — memory O(batch size) instead of O(result)), and output
+ * building. Join strategies work on row indices and columnar keys, never on Object[].
  */
 public abstract class MiniDbJoin extends Join implements MiniDbRel {
 
@@ -47,20 +47,25 @@ public abstract class MiniDbJoin extends Join implements MiniDbRel {
     private List<Integer> projectionRowTypeCols; // rowType 收窄用的原输出列索引
     private RelDataType fullRowType; // 投影前的完整 rowType(copy 重建投影 rowType 用)
 
-    protected MiniDbJoin(RelOptCluster cluster, RelTraitSet traitSet,
-                         RelNode left, RelNode right, RexNode condition,
-                         JoinRelType joinType) {
+    protected MiniDbJoin(
+            RelOptCluster cluster,
+            RelTraitSet traitSet,
+            RelNode left,
+            RelNode right,
+            RexNode condition,
+            JoinRelType joinType) {
         super(cluster, traitSet, left, right, condition, Set.of(), joinType);
     }
 
     /**
-     * 设置输出列投影(Planner 列裁剪用);同时把 rowType 收窄为投影列子集,上层引用一致。
-     * projectedCols 是 buildOutput 用的 newJoin 输出索引;rowTypeCols 是 rowType 用的
-     * 原输出索引(两者不同:buildOutput 在裁剪后的左右向量上定位,rowType 在原始 rowType
-     * 上取字段)。
+     * 设置输出列投影(Planner 列裁剪用);同时把 rowType 收窄为投影列子集,上层引用一致。 projectedCols 是 buildOutput 用的 newJoin
+     * 输出索引;rowTypeCols 是 rowType 用的 原输出索引(两者不同:buildOutput 在裁剪后的左右向量上定位,rowType 在原始 rowType 上取字段)。
      */
-    public void setOutputProjection(int[] projectedCols, List<Integer> rowTypeCols,
-                                    RelDataTypeFactory typeFactory, RelDataType fullRowType) {
+    public void setOutputProjection(
+            int[] projectedCols,
+            List<Integer> rowTypeCols,
+            RelDataTypeFactory typeFactory,
+            RelDataType fullRowType) {
         this.outputProjection = projectedCols;
         this.projectionRowTypeCols = rowTypeCols;
         this.fullRowType = fullRowType;
@@ -80,8 +85,11 @@ public abstract class MiniDbJoin extends Join implements MiniDbRel {
     /** copy 时保留投影(copy 重建后恢复 rowType 收窄)。 */
     protected void copyProjectionTo(MiniDbJoin target) {
         if (outputProjection != null) {
-            target.setOutputProjection(outputProjection, projectionRowTypeCols,
-                    getCluster().getTypeFactory(), fullRowType);
+            target.setOutputProjection(
+                    outputProjection,
+                    projectionRowTypeCols,
+                    getCluster().getTypeFactory(),
+                    fullRowType);
         }
     }
 
@@ -105,21 +113,19 @@ public abstract class MiniDbJoin extends Join implements MiniDbRel {
     }
 
     /**
-     * 流式行对源:join 策略按需产出 {@code {leftIdx, rightIdx}} 行对
-     * (rightIdx = -1 表示左侧 null-pad,leftIdx = -1 表示右侧 null-pad)。
-     * 替代原来的全量 {@code List<int[]>} 物化——大结果集内存从 O(输出行数) 降到
-     * O(批大小),outer join 的 null-pad 行在两阶段产出(probe 完才知未匹配)。
+     * 流式行对源:join 策略按需产出 {@code {leftIdx, rightIdx}} 行对 (rightIdx = -1 表示左侧 null-pad,leftIdx = -1
+     * 表示右侧 null-pad)。 替代原来的全量 {@code List<int[]>} 物化——大结果集内存从 O(输出行数) 降到 O(批大小),outer join 的
+     * null-pad 行在两阶段产出(probe 完才知未匹配)。
      */
     protected interface PairSource {
         /**
-         * 向 {@code leftRows/rightRows} 的 {@code [outPos, outPos+len)} 填行对;
-         * 返回实际填充的终点下标(小于 outPos+len 即源耗尽)。
+         * 向 {@code leftRows/rightRows} 的 {@code [outPos, outPos+len)} 填行对; 返回实际填充的终点下标(小于
+         * outPos+len 即源耗尽)。
          */
         int fill(int[] leftRows, int[] rightRows, int outPos, int len);
 
         /** 释放源持有的资源(如逐对求值的 probe root);迭代器 close 时调用。 */
-        default void close() {
-        }
+        default void close() {}
     }
 
     /** 拉模式多批迭代器:每批从 PairSource 填 OUTPUT_BATCH 行对,建一个输出 root。 */
@@ -136,8 +142,8 @@ public abstract class MiniDbJoin extends Join implements MiniDbRel {
         // materializeColumns 一致:靠迭代器 close 统一释放),故累积在此,close 时全关。
         private final List<VectorSchemaRoot> emitted = new ArrayList<>();
 
-        StreamingIterator(VectorSchemaRoot left, VectorSchemaRoot right,
-                          PairSource pairs, ExecContext ctx) {
+        StreamingIterator(
+                VectorSchemaRoot left, VectorSchemaRoot right, PairSource pairs, ExecContext ctx) {
             this.left = left;
             this.right = right;
             this.pairs = pairs;
@@ -189,12 +195,15 @@ public abstract class MiniDbJoin extends Join implements MiniDbRel {
     }
 
     /**
-     * Strategy-specific join. Returns a lazy pair source; strategies own their
-     * internal cursors and outer-join phases, and must not materialize the
-     * whole result.
+     * Strategy-specific join. Returns a lazy pair source; strategies own their internal cursors and
+     * outer-join phases, and must not materialize the whole result.
      */
-    protected abstract PairSource joinPairs(VectorSchemaRoot left, VectorSchemaRoot right,
-                                            JoinInfo info, JoinRelType type, ExecContext ctx);
+    protected abstract PairSource joinPairs(
+            VectorSchemaRoot left,
+            VectorSchemaRoot right,
+            JoinInfo info,
+            JoinRelType type,
+            ExecContext ctx);
 
     /** Column count of the left input (from its row type, not the data). */
     protected final int leftColumnCount() {
@@ -271,8 +280,13 @@ public abstract class MiniDbJoin extends Join implements MiniDbRel {
     }
 
     /** Writes join output pairs into a columnar root (null side = setNull). */
-    private VectorSchemaRoot buildOutput(VectorSchemaRoot left, VectorSchemaRoot right,
-                                         int[] leftRows, int[] rightRows, int n, ExecContext ctx) {
+    private VectorSchemaRoot buildOutput(
+            VectorSchemaRoot left,
+            VectorSchemaRoot right,
+            int[] leftRows,
+            int[] rightRows,
+            int n,
+            ExecContext ctx) {
         List<FieldVector> vectors = new ArrayList<>();
         int leftCols = leftColumnCount();
         int total = n;
@@ -280,12 +294,14 @@ public abstract class MiniDbJoin extends Join implements MiniDbRel {
         // 用实际物化向量 schema(而非 plan rowType):子节点(Aggregate)可能在 buildOutput
         // 里提升了 DECIMAL scale,plan rowType 仍是原 scale,会导致输出截断。
         int[] outCols = outputProjection;
-        int outCount = outCols == null ? left.getFieldVectors().size() + right.getFieldVectors().size()
-                : outCols.length;
+        int outCount =
+                outCols == null
+                        ? left.getFieldVectors().size() + right.getFieldVectors().size()
+                        : outCols.length;
         for (int i = 0; i < outCount; i++) {
             int orig = outCols == null ? i : outCols[i];
-            FieldVector src = orig < leftCols ? left.getVector(orig)
-                    : right.getVector(orig - leftCols);
+            FieldVector src =
+                    orig < leftCols ? left.getVector(orig) : right.getVector(orig - leftCols);
             vectors.add(src.getField().createVector(ctx.allocator()));
         }
         for (FieldVector v : vectors) {
@@ -295,10 +311,11 @@ public abstract class MiniDbJoin extends Join implements MiniDbRel {
         for (int i = 0; i < outCount; i++) {
             int orig = outCols == null ? i : outCols[i];
             if (orig < leftCols) {
-                RowCopier.copyRowsByIndex(left.getVector(orig), leftRows, 0, vectors.get(i), 0, total);
+                RowCopier.copyRowsByIndex(
+                        left.getVector(orig), leftRows, 0, vectors.get(i), 0, total);
             } else {
-                RowCopier.copyRowsByIndex(right.getVector(orig - leftCols), rightRows, 0,
-                        vectors.get(i), 0, total);
+                RowCopier.copyRowsByIndex(
+                        right.getVector(orig - leftCols), rightRows, 0, vectors.get(i), 0, total);
             }
         }
         for (FieldVector v : vectors) {
@@ -319,8 +336,8 @@ public abstract class MiniDbJoin extends Join implements MiniDbRel {
     }
 
     /** 建一个 1 行 probe root,列结构 = join 输出的行类型(左列 + 右列),供评估残留条件。 */
-    protected final VectorSchemaRoot buildProbeRoot(ExecContext ctx, VectorSchemaRoot left,
-                                                        VectorSchemaRoot right) {
+    protected final VectorSchemaRoot buildProbeRoot(
+            ExecContext ctx, VectorSchemaRoot left, VectorSchemaRoot right) {
         List<FieldVector> vectors = new ArrayList<>();
         // 用实际物化向量 schema(而非 plan rowType)建 probeRoot:子节点(Aggregate)可能
         // 在 buildOutput 里提升了 DECIMAL scale,plan rowType 仍是原 scale,若用 plan
@@ -339,15 +356,22 @@ public abstract class MiniDbJoin extends Join implements MiniDbRel {
     }
 
     /** 把 left/right 的某行拷进 1 行 probe root(左列在前、右列在后)。 */
-    protected static void writeProbeRow(VectorSchemaRoot probeRoot, VectorSchemaRoot left,
-                                        int leftIdx, VectorSchemaRoot right, int rightIdx) {
+    protected static void writeProbeRow(
+            VectorSchemaRoot probeRoot,
+            VectorSchemaRoot left,
+            int leftIdx,
+            VectorSchemaRoot right,
+            int rightIdx) {
         List<FieldVector> vectors = probeRoot.getFieldVectors();
         for (int c = 0; c < left.getFieldVectors().size(); c++) {
             RowCopier.copyRow(left.getVector(c), leftIdx, vectors.get(c), 0);
         }
         for (int c = 0; c < right.getFieldVectors().size(); c++) {
-            RowCopier.copyRow(right.getVector(c), rightIdx,
-                    vectors.get(left.getFieldVectors().size() + c), 0);
+            RowCopier.copyRow(
+                    right.getVector(c),
+                    rightIdx,
+                    vectors.get(left.getFieldVectors().size() + c),
+                    0);
         }
         probeRoot.setRowCount(1);
     }
@@ -358,9 +382,11 @@ public abstract class MiniDbJoin extends Join implements MiniDbRel {
         for (int rowIdx = 0; rowIdx < root.getRowCount(); rowIdx++) {
             order.add(rowIdx);
         }
-        order.sort(Comparator.comparingInt((Integer rowIdx) -> nullKeyFlag(root, rowIdx, keyCols))
-                .thenComparing((Integer a, Integer b) ->
-                        compareKeys(root, a, keyCols, root, b, keyCols)));
+        order.sort(
+                Comparator.comparingInt((Integer rowIdx) -> nullKeyFlag(root, rowIdx, keyCols))
+                        .thenComparing(
+                                (Integer a, Integer b) ->
+                                        compareKeys(root, a, keyCols, root, b, keyCols)));
         return order;
     }
 
@@ -369,8 +395,13 @@ public abstract class MiniDbJoin extends Join implements MiniDbRel {
         return hasNullKey(root, row, keyCols) ? 1 : 0;
     }
 
-    protected static int compareKeys(VectorSchemaRoot left, int leftRow, List<Integer> leftKeyCols,
-                                     VectorSchemaRoot right, int rightRow, List<Integer> rightKeyCols) {
+    protected static int compareKeys(
+            VectorSchemaRoot left,
+            int leftRow,
+            List<Integer> leftKeyCols,
+            VectorSchemaRoot right,
+            int rightRow,
+            List<Integer> rightKeyCols) {
         for (int k = 0; k < leftKeyCols.size(); k++) {
             ValueVector lv = left.getVector(leftKeyCols.get(k));
             ValueVector rv = right.getVector(rightKeyCols.get(k));
@@ -406,9 +437,10 @@ public abstract class MiniDbJoin extends Join implements MiniDbRel {
         return arr;
     }
 
-    /** True if any collation covers {@code keys} as an ascending prefix.
-     *  Null collations (e.g. a table with no declared ordering) are treated
-     *  as covering nothing. */
+    /**
+     * True if any collation covers {@code keys} as an ascending prefix. Null collations (e.g. a
+     * table with no declared ordering) are treated as covering nothing.
+     */
     public static boolean coversKeys(List<RelCollation> collations, List<Integer> keys) {
         if (collations == null || keys == null) {
             return false;
@@ -424,7 +456,7 @@ public abstract class MiniDbJoin extends Join implements MiniDbRel {
                 RelFieldCollation.Direction direction = fieldCollation.getDirection();
                 if (fieldCollation.getFieldIndex() != keys.get(i)
                         || (direction != RelFieldCollation.Direction.ASCENDING
-                            && direction != RelFieldCollation.Direction.STRICTLY_ASCENDING)) {
+                                && direction != RelFieldCollation.Direction.STRICTLY_ASCENDING)) {
                     covers = false;
                     break;
                 }

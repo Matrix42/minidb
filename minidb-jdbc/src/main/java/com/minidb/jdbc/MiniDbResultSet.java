@@ -1,5 +1,20 @@
 package com.minidb.jdbc;
 
+import org.apache.arrow.vector.BigIntVector;
+import org.apache.arrow.vector.BitVector;
+import org.apache.arrow.vector.DateDayVector;
+import org.apache.arrow.vector.DecimalVector;
+import org.apache.arrow.vector.Float4Vector;
+import org.apache.arrow.vector.Float8Vector;
+import org.apache.arrow.vector.IntVector;
+import org.apache.arrow.vector.SmallIntVector;
+import org.apache.arrow.vector.TimeMilliVector;
+import org.apache.arrow.vector.TimeStampMilliVector;
+import org.apache.arrow.vector.ValueVector;
+import org.apache.arrow.vector.VarBinaryVector;
+import org.apache.arrow.vector.VarCharVector;
+import org.apache.arrow.vector.VectorSchemaRoot;
+
 import java.io.InputStream;
 import java.io.Reader;
 import java.math.BigDecimal;
@@ -23,20 +38,6 @@ import java.sql.Timestamp;
 import java.util.Calendar;
 import java.util.Map;
 import java.util.concurrent.TimeUnit;
-import org.apache.arrow.vector.BigIntVector;
-import org.apache.arrow.vector.BitVector;
-import org.apache.arrow.vector.DateDayVector;
-import org.apache.arrow.vector.DecimalVector;
-import org.apache.arrow.vector.Float4Vector;
-import org.apache.arrow.vector.Float8Vector;
-import org.apache.arrow.vector.IntVector;
-import org.apache.arrow.vector.SmallIntVector;
-import org.apache.arrow.vector.TimeMilliVector;
-import org.apache.arrow.vector.TimeStampMilliVector;
-import org.apache.arrow.vector.ValueVector;
-import org.apache.arrow.vector.VarBinaryVector;
-import org.apache.arrow.vector.VarCharVector;
-import org.apache.arrow.vector.VectorSchemaRoot;
 
 public class MiniDbResultSet implements ResultSet {
 
@@ -60,8 +61,8 @@ public class MiniDbResultSet implements ResultSet {
         this(statement, root, false);
     }
 
-    public MiniDbResultSet(MiniDbStatement statement, VectorSchemaRoot root,
-                           boolean closeStatementOnClose) {
+    public MiniDbResultSet(
+            MiniDbStatement statement, VectorSchemaRoot root, boolean closeStatementOnClose) {
         this.statement = statement;
         this.client = null;
         this.root = root;
@@ -70,8 +71,10 @@ public class MiniDbResultSet implements ResultSet {
         this.metaData = new MiniDbResultSetMetaData(root);
     }
 
-    public MiniDbResultSet(MiniDbStatement statement, MiniDbClient client,
-                           MiniDbClient.ClientResult.Cursor cursor) {
+    public MiniDbResultSet(
+            MiniDbStatement statement,
+            MiniDbClient client,
+            MiniDbClient.ClientResult.Cursor cursor) {
         this.statement = statement;
         this.client = client;
         this.root = cursor.firstPage();
@@ -372,8 +375,7 @@ public class MiniDbResultSet implements ResultSet {
     }
 
     @Override
-    public void clearWarnings() {
-    }
+    public void clearWarnings() {}
 
     @Override
     public int getType() {
@@ -398,8 +400,8 @@ public class MiniDbResultSet implements ResultSet {
         } catch (ClassCastException e) {
             // JDBC 规范:类型不匹配应抛 SQLException,而非运行时 ClassCastException,
             // 否则调用方 catch(SQLException) 会漏掉。
-            throw new SQLException("cannot convert column " + columnIndex
-                    + " to " + type.getName(), e);
+            throw new SQLException(
+                    "cannot convert column " + columnIndex + " to " + type.getName(), e);
         }
     }
 
@@ -409,8 +411,8 @@ public class MiniDbResultSet implements ResultSet {
             Object o = getObject(columnLabel);
             return type.cast(o);
         } catch (ClassCastException e) {
-            throw new SQLException("cannot convert column " + columnLabel
-                    + " to " + type.getName(), e);
+            throw new SQLException(
+                    "cannot convert column " + columnLabel + " to " + type.getName(), e);
         }
     }
 
@@ -776,8 +778,7 @@ public class MiniDbResultSet implements ResultSet {
     }
 
     @Override
-    public void setFetchDirection(int direction) {
-    }
+    public void setFetchDirection(int direction) {}
 
     @Override
     public int getFetchDirection() {
@@ -785,8 +786,7 @@ public class MiniDbResultSet implements ResultSet {
     }
 
     @Override
-    public void setFetchSize(int rows) {
-    }
+    public void setFetchSize(int rows) {}
 
     @Override
     public int getFetchSize() {
@@ -881,12 +881,14 @@ public class MiniDbResultSet implements ResultSet {
     }
 
     @Override
-    public void updateAsciiStream(int columnIndex, java.io.InputStream x, int length) throws SQLException {
+    public void updateAsciiStream(int columnIndex, java.io.InputStream x, int length)
+            throws SQLException {
         throw new SQLFeatureNotSupportedException();
     }
 
     @Override
-    public void updateBinaryStream(int columnIndex, java.io.InputStream x, int length) throws SQLException {
+    public void updateBinaryStream(int columnIndex, java.io.InputStream x, int length)
+            throws SQLException {
         throw new SQLFeatureNotSupportedException();
     }
 
@@ -976,17 +978,20 @@ public class MiniDbResultSet implements ResultSet {
     }
 
     @Override
-    public void updateAsciiStream(String columnLabel, java.io.InputStream x, int length) throws SQLException {
+    public void updateAsciiStream(String columnLabel, java.io.InputStream x, int length)
+            throws SQLException {
         throw new SQLFeatureNotSupportedException();
     }
 
     @Override
-    public void updateBinaryStream(String columnLabel, java.io.InputStream x, int length) throws SQLException {
+    public void updateBinaryStream(String columnLabel, java.io.InputStream x, int length)
+            throws SQLException {
         throw new SQLFeatureNotSupportedException();
     }
 
     @Override
-    public void updateCharacterStream(String columnLabel, Reader reader, int length) throws SQLException {
+    public void updateCharacterStream(String columnLabel, Reader reader, int length)
+            throws SQLException {
         throw new SQLFeatureNotSupportedException();
     }
 
@@ -1121,17 +1126,20 @@ public class MiniDbResultSet implements ResultSet {
     }
 
     @Override
-    public void updateNCharacterStream(String columnLabel, Reader reader, long length) throws SQLException {
+    public void updateNCharacterStream(String columnLabel, Reader reader, long length)
+            throws SQLException {
         throw new SQLFeatureNotSupportedException();
     }
 
     @Override
-    public void updateAsciiStream(int columnIndex, java.io.InputStream x, long length) throws SQLException {
+    public void updateAsciiStream(int columnIndex, java.io.InputStream x, long length)
+            throws SQLException {
         throw new SQLFeatureNotSupportedException();
     }
 
     @Override
-    public void updateBinaryStream(int columnIndex, java.io.InputStream x, long length) throws SQLException {
+    public void updateBinaryStream(int columnIndex, java.io.InputStream x, long length)
+            throws SQLException {
         throw new SQLFeatureNotSupportedException();
     }
 
@@ -1141,27 +1149,32 @@ public class MiniDbResultSet implements ResultSet {
     }
 
     @Override
-    public void updateAsciiStream(String columnLabel, java.io.InputStream x, long length) throws SQLException {
+    public void updateAsciiStream(String columnLabel, java.io.InputStream x, long length)
+            throws SQLException {
         throw new SQLFeatureNotSupportedException();
     }
 
     @Override
-    public void updateBinaryStream(String columnLabel, java.io.InputStream x, long length) throws SQLException {
+    public void updateBinaryStream(String columnLabel, java.io.InputStream x, long length)
+            throws SQLException {
         throw new SQLFeatureNotSupportedException();
     }
 
     @Override
-    public void updateCharacterStream(String columnLabel, Reader reader, long length) throws SQLException {
+    public void updateCharacterStream(String columnLabel, Reader reader, long length)
+            throws SQLException {
         throw new SQLFeatureNotSupportedException();
     }
 
     @Override
-    public void updateBlob(int columnIndex, java.io.InputStream inputStream, long length) throws SQLException {
+    public void updateBlob(int columnIndex, java.io.InputStream inputStream, long length)
+            throws SQLException {
         throw new SQLFeatureNotSupportedException();
     }
 
     @Override
-    public void updateBlob(String columnLabel, java.io.InputStream inputStream, long length) throws SQLException {
+    public void updateBlob(String columnLabel, java.io.InputStream inputStream, long length)
+            throws SQLException {
         throw new SQLFeatureNotSupportedException();
     }
 
@@ -1231,7 +1244,8 @@ public class MiniDbResultSet implements ResultSet {
     }
 
     @Override
-    public void updateBlob(String columnLabel, java.io.InputStream inputStream) throws SQLException {
+    public void updateBlob(String columnLabel, java.io.InputStream inputStream)
+            throws SQLException {
         throw new SQLFeatureNotSupportedException();
     }
 

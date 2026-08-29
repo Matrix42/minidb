@@ -9,21 +9,23 @@ import java.util.List;
 public interface MVStructure {
 
     /** SPJ：SELECT ... FROM 单表 WHERE ... */
-    record Spj(
-            String querySql,
-            List<String> outputColumns) implements MVStructure {
-    }
+    record Spj(String querySql, List<String> outputColumns) implements MVStructure {}
 
     /** 单表聚合：GROUP BY + SUM/COUNT/AVG/MIN/MAX */
     record Aggregate(
             String querySql,
             List<String> outputColumns,
             List<String> groupByColumns,
-            List<AggFunc> aggFuncs) implements MVStructure {
-    }
+            List<AggFunc> aggFuncs)
+            implements MVStructure {}
 
-    record AggFunc(String outputColumn, AggType type, String inputColumn) {
-    }
+    record AggFunc(String outputColumn, AggType type, String inputColumn) {}
 
-    enum AggType { SUM, COUNT, AVG, MIN, MAX }
+    enum AggType {
+        SUM,
+        COUNT,
+        AVG,
+        MIN,
+        MAX
+    }
 }

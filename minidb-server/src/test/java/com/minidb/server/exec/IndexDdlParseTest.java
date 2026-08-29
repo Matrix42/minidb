@@ -4,14 +4,13 @@ import com.minidb.parser.ddl.SqlCreateIndex;
 import com.minidb.parser.ddl.SqlDropIndex;
 import com.minidb.server.calcite.CalciteContext;
 import com.minidb.server.catalog.MiniDbCatalog;
+
 import org.apache.calcite.sql.SqlNode;
-import org.apache.calcite.sql.parser.SqlParseException;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
-import static org.junit.jupiter.api.Assertions.assertNotNull;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
@@ -29,7 +28,9 @@ class IndexDdlParseTest {
     @Test
     void createIndex() {
         SqlNode node = calcite.parse("CREATE INDEX idx_a ON t (a)");
-        assertTrue(node instanceof SqlCreateIndex, "expected SqlCreateIndex but got " + node.getClass().getSimpleName());
+        assertTrue(
+                node instanceof SqlCreateIndex,
+                "expected SqlCreateIndex but got " + node.getClass().getSimpleName());
         SqlCreateIndex c = (SqlCreateIndex) node;
         assertFalse(c.unique(), "expected non-unique index");
         assertEquals("idx_a", c.indexName().getSimple());
@@ -62,7 +63,9 @@ class IndexDdlParseTest {
     @Test
     void dropIndex() {
         SqlNode node = calcite.parse("DROP INDEX idx ON t");
-        assertTrue(node instanceof SqlDropIndex, "expected SqlDropIndex but got " + node.getClass().getSimpleName());
+        assertTrue(
+                node instanceof SqlDropIndex,
+                "expected SqlDropIndex but got " + node.getClass().getSimpleName());
         SqlDropIndex d = (SqlDropIndex) node;
         assertFalse(d.ifExists());
         assertEquals("idx", d.indexName().getSimple());

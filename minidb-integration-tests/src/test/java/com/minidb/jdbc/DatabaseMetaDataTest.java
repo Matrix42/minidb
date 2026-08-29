@@ -1,6 +1,9 @@
 package com.minidb.jdbc;
 
 import com.minidb.server.MiniDbServer;
+
+import org.junit.jupiter.api.Test;
+
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.sql.Connection;
@@ -10,7 +13,6 @@ import java.sql.ResultSet;
 import java.sql.Statement;
 import java.util.HashSet;
 import java.util.Set;
-import org.junit.jupiter.api.Test;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
@@ -25,7 +27,7 @@ class DatabaseMetaDataTest {
         server.start(0, dataDir);
         String url = "jdbc:minidb://127.0.0.1:" + server.port();
         try (Connection c = DriverManager.getConnection(url);
-             Statement s = c.createStatement()) {
+                Statement s = c.createStatement()) {
             s.execute("CREATE SCHEMA other");
             DatabaseMetaData md = c.getMetaData();
             Set<String> schemas = new HashSet<>();
@@ -48,7 +50,7 @@ class DatabaseMetaDataTest {
         server.start(0, dataDir);
         String url = "jdbc:minidb://127.0.0.1:" + server.port();
         try (Connection c = DriverManager.getConnection(url);
-             Statement s = c.createStatement()) {
+                Statement s = c.createStatement()) {
             s.execute("CREATE TABLE public.users (id INTEGER, name VARCHAR)");
             s.execute("CREATE SCHEMA other");
             s.execute("CREATE TABLE other.t (a BIGINT, b BOOLEAN)");
@@ -60,7 +62,8 @@ class DatabaseMetaDataTest {
                     tables.add(rs.getString("TABLE_SCHEM") + "." + rs.getString("TABLE_NAME"));
                     // 系统表为 SYSTEM TABLE,用户表为 TABLE
                     String type = rs.getString("TABLE_TYPE");
-                    assertTrue("TABLE".equals(type) || "SYSTEM TABLE".equals(type),
+                    assertTrue(
+                            "TABLE".equals(type) || "SYSTEM TABLE".equals(type),
                             "unexpected TABLE_TYPE: " + type);
                 }
             }
@@ -73,7 +76,7 @@ class DatabaseMetaDataTest {
                 assertFalse(rs.next());
             }
 
-            try (ResultSet rs = md.getTables(null, null, null, new String[]{"VIEW"})) {
+            try (ResultSet rs = md.getTables(null, null, null, new String[] {"VIEW"})) {
                 assertFalse(rs.next());
                 // empty result set still carries full getTables schema over the wire
                 assertEquals(10, rs.getMetaData().getColumnCount());
@@ -129,7 +132,7 @@ class DatabaseMetaDataTest {
         server.start(0, dataDir);
         String url = "jdbc:minidb://127.0.0.1:" + server.port();
         try (Connection c = DriverManager.getConnection(url);
-             Statement s = c.createStatement()) {
+                Statement s = c.createStatement()) {
             s.execute("CREATE TABLE public.users (id INTEGER, username VARCHAR)");
             DatabaseMetaData md = c.getMetaData();
             try (ResultSet rs = md.getColumns(null, null, null, "%name%")) {
@@ -149,7 +152,7 @@ class DatabaseMetaDataTest {
         server.start(0, dataDir);
         String url = "jdbc:minidb://127.0.0.1:" + server.port();
         try (Connection c = DriverManager.getConnection(url);
-             Statement s = c.createStatement()) {
+                Statement s = c.createStatement()) {
             DatabaseMetaData md = c.getMetaData();
             // 实际支持的能力必须报 true,否则 DataGrip/DBeaver 会据此禁用功能
             assertTrue(md.supportsGroupBy());

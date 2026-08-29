@@ -1,24 +1,23 @@
 package com.minidb.server.netty;
 
-import static org.junit.jupiter.api.Assertions.assertEquals;
-import static org.junit.jupiter.api.Assertions.assertFalse;
-import static org.junit.jupiter.api.Assertions.assertTrue;
-
 import com.minidb.jdbc.MiniDbClient;
 import com.minidb.server.MiniDbServer;
-import java.nio.file.Path;
-import java.util.ArrayList;
-import java.util.List;
-import org.apache.arrow.memory.RootAllocator;
+
 import org.apache.arrow.vector.IntVector;
 import org.apache.arrow.vector.VectorSchemaRoot;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
 
+import java.nio.file.Path;
+import java.util.ArrayList;
+import java.util.List;
+
+import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertTrue;
+
 /**
- * 端到端分页测试:真实 MiniDbServer + MiniDbClient,小 fetchSize 触发多页,
- * 验证首屏 ArrowBatch(完整 stream)与续页 ArrowContinuation(仅 record-batch,
- * 按 cursorId 复用 schema)的收发,以及客户端两套解码路径。
+ * 端到端分页测试:真实 MiniDbServer + MiniDbClient,小 fetchSize 触发多页, 验证首屏 ArrowBatch(完整 stream)与续页
+ * ArrowContinuation(仅 record-batch, 按 cursorId 复用 schema)的收发,以及客户端两套解码路径。
  */
 class PaginationEndToEndTest {
 
@@ -33,8 +32,8 @@ class PaginationEndToEndTest {
                 client.execute("INSERT INTO t VALUES (1),(2),(3),(4),(5),(6),(7),(8),(9),(10)", 0);
 
                 // fetchSize=4 → 10 行分 3 页:首屏 4 行 + 续页 4 行 + 续页 2 行
-                MiniDbClient.ClientResult result = client.execute(
-                        "SELECT id FROM t ORDER BY id", 4);
+                MiniDbClient.ClientResult result =
+                        client.execute("SELECT id FROM t ORDER BY id", 4);
                 assertTrue(result instanceof MiniDbClient.ClientResult.Cursor);
                 MiniDbClient.ClientResult.Cursor cursor = (MiniDbClient.ClientResult.Cursor) result;
 
@@ -67,8 +66,8 @@ class PaginationEndToEndTest {
                 client.execute("CREATE TABLE t (id INTEGER)", 0);
                 client.execute("INSERT INTO t VALUES (1),(2)", 0);
 
-                MiniDbClient.ClientResult result = client.execute(
-                        "SELECT id FROM t ORDER BY id", 100);
+                MiniDbClient.ClientResult result =
+                        client.execute("SELECT id FROM t ORDER BY id", 100);
                 assertTrue(result instanceof MiniDbClient.ClientResult.Cursor);
                 MiniDbClient.ClientResult.Cursor cursor = (MiniDbClient.ClientResult.Cursor) result;
                 assertTrue(cursor.lastBatch(), "单批结果应标记 lastBatch,无需 fetch");

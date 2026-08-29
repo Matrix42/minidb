@@ -1,24 +1,34 @@
 package com.minidb.storage.lsm;
 
-import static org.junit.jupiter.api.Assertions.*;
 import com.minidb.storage.common.*;
-import java.nio.file.Files;
-import java.nio.file.Path;
-import java.util.List;
+
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
 
+import java.nio.file.Files;
+import java.nio.file.Path;
+import java.util.List;
+
+import static org.junit.jupiter.api.Assertions.*;
+
 class WALTest {
-    private final TableSchema schema = new TableSchema("public", "t",
-            List.of(new ColumnMeta("id", ColumnType.INTEGER), new ColumnMeta("name", ColumnType.VARCHAR)),
-            List.of("id"), List.of(), List.of());
+    private final TableSchema schema =
+            new TableSchema(
+                    "public",
+                    "t",
+                    List.of(
+                            new ColumnMeta("id", ColumnType.INTEGER),
+                            new ColumnMeta("name", ColumnType.VARCHAR)),
+                    List.of("id"),
+                    List.of(),
+                    List.of());
 
     @Test
     void appendAndRecover(@TempDir Path dir) throws Exception {
         Path walFile = dir.resolve("wal.log");
         WAL wal = new WAL(walFile, schema);
-        wal.append(List.of(1), new RowValue(RowValue.INSERT, new Object[]{1, "a"}));
-        wal.append(List.of(2), new RowValue(RowValue.INSERT, new Object[]{2, "b"}));
+        wal.append(List.of(1), new RowValue(RowValue.INSERT, new Object[] {1, "a"}));
+        wal.append(List.of(2), new RowValue(RowValue.INSERT, new Object[] {2, "b"}));
         wal.close();
 
         WAL wal2 = new WAL(walFile, schema);
@@ -34,7 +44,7 @@ class WALTest {
     void truncateClearsFile(@TempDir Path dir) throws Exception {
         Path walFile = dir.resolve("wal.log");
         WAL wal = new WAL(walFile, schema);
-        wal.append(List.of(1), new RowValue(RowValue.INSERT, new Object[]{1, "a"}));
+        wal.append(List.of(1), new RowValue(RowValue.INSERT, new Object[] {1, "a"}));
         wal.truncate();
         wal.close();
 
@@ -71,11 +81,11 @@ class WALTest {
     void rotateSegmentsAndRecoverInOrder(@TempDir Path dir) throws Exception {
         Path walFile = dir.resolve("wal.log");
         WAL wal = new WAL(walFile, schema);
-        wal.append(List.of(1), new RowValue(RowValue.INSERT, new Object[]{1, "a"}));
+        wal.append(List.of(1), new RowValue(RowValue.INSERT, new Object[] {1, "a"}));
         int gen0 = wal.rotate(); // wal.log → wal-0.log,新当前段
-        wal.append(List.of(2), new RowValue(RowValue.INSERT, new Object[]{2, "b"}));
+        wal.append(List.of(2), new RowValue(RowValue.INSERT, new Object[] {2, "b"}));
         int gen1 = wal.rotate(); // → wal-1.log
-        wal.append(List.of(3), new RowValue(RowValue.INSERT, new Object[]{3, "c"}));
+        wal.append(List.of(3), new RowValue(RowValue.INSERT, new Object[] {3, "c"}));
         wal.close();
         assertTrue(Files.exists(dir.resolve("wal-0.log")));
         assertTrue(Files.exists(dir.resolve("wal-1.log")));
@@ -103,9 +113,9 @@ class WALTest {
     void truncateAllRemovesSegments(@TempDir Path dir) throws Exception {
         Path walFile = dir.resolve("wal.log");
         WAL wal = new WAL(walFile, schema);
-        wal.append(List.of(1), new RowValue(RowValue.INSERT, new Object[]{1, "a"}));
+        wal.append(List.of(1), new RowValue(RowValue.INSERT, new Object[] {1, "a"}));
         wal.rotate();
-        wal.append(List.of(2), new RowValue(RowValue.INSERT, new Object[]{2, "b"}));
+        wal.append(List.of(2), new RowValue(RowValue.INSERT, new Object[] {2, "b"}));
         wal.truncateAll();
         wal.close();
 

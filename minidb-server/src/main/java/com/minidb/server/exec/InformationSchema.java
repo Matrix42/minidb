@@ -1,31 +1,32 @@
 package com.minidb.server.exec;
 
+import com.minidb.server.catalog.MiniDbCatalog;
 import com.minidb.storage.common.ArrowTypes;
 import com.minidb.storage.common.ColumnMeta;
 import com.minidb.storage.common.ColumnType;
-import com.minidb.server.catalog.MiniDbCatalog;
 import com.minidb.storage.common.MVDefinition;
 import com.minidb.storage.common.TableSchema;
-import java.util.stream.Collectors;
-import java.nio.charset.StandardCharsets;
-import java.util.ArrayList;
-import java.util.List;
+
 import org.apache.arrow.memory.BufferAllocator;
 import org.apache.arrow.vector.IntVector;
 import org.apache.arrow.vector.VarCharVector;
 import org.apache.arrow.vector.VectorSchemaRoot;
 
+import java.nio.charset.StandardCharsets;
+import java.util.ArrayList;
+import java.util.List;
+import java.util.stream.Collectors;
+
 /**
- * 只读 information_schema 系统表的行物化:从内存 MiniDbCatalog 物化 schemata/tables/columns。
- * 表定义(schema 名 + 列)在 {@code catalog/InformationSchemaCatalog},这里只负责把行填进 Arrow 向量。
+ * 只读 information_schema 系统表的行物化:从内存 MiniDbCatalog 物化 schemata/tables/columns。 表定义(schema 名 + 列)在
+ * {@code catalog/InformationSchemaCatalog},这里只负责把行填进 Arrow 向量。
  */
 public final class InformationSchema {
 
-    private InformationSchema() {
-    }
+    private InformationSchema() {}
 
-    public static VectorSchemaRoot materialize(MiniDbCatalog catalog, String tableName,
-                                               BufferAllocator allocator) {
+    public static VectorSchemaRoot materialize(
+            MiniDbCatalog catalog, String tableName, BufferAllocator allocator) {
         if (tableName.equalsIgnoreCase("tables")) {
             return materializeTables(catalog, allocator);
         }
@@ -41,7 +42,8 @@ public final class InformationSchema {
         throw new IllegalArgumentException("unknown information_schema table: " + tableName);
     }
 
-    private static VectorSchemaRoot materializeSchemata(MiniDbCatalog catalog, BufferAllocator allocator) {
+    private static VectorSchemaRoot materializeSchemata(
+            MiniDbCatalog catalog, BufferAllocator allocator) {
         List<String> schemas = new ArrayList<>(catalog.schemaNames());
         schemas.sort(String::compareTo);
         int n = schemas.size();
@@ -56,15 +58,30 @@ public final class InformationSchema {
             schemaName.setSafe(i, schemas.get(i).getBytes(StandardCharsets.UTF_8));
         }
         // 其余列保持 null(不写值)
-        for (VarCharVector v : new VarCharVector[]{catalogName, schemaName, schemaOwner,
-                charsetCatalog, charsetSchema, charsetName, sqlPath}) {
+        for (VarCharVector v :
+                new VarCharVector[] {
+                    catalogName,
+                    schemaName,
+                    schemaOwner,
+                    charsetCatalog,
+                    charsetSchema,
+                    charsetName,
+                    sqlPath
+                }) {
             v.setValueCount(n);
         }
-        return VectorSchemaRoot.of(catalogName, schemaName, schemaOwner,
-                charsetCatalog, charsetSchema, charsetName, sqlPath);
+        return VectorSchemaRoot.of(
+                catalogName,
+                schemaName,
+                schemaOwner,
+                charsetCatalog,
+                charsetSchema,
+                charsetName,
+                sqlPath);
     }
 
-    private static VectorSchemaRoot materializeTables(MiniDbCatalog catalog, BufferAllocator allocator) {
+    private static VectorSchemaRoot materializeTables(
+            MiniDbCatalog catalog, BufferAllocator allocator) {
         List<String[]> rows = new ArrayList<>(); // [schema, table]
         List<String> schemas = new ArrayList<>(catalog.schemaNames());
         schemas.sort(String::compareTo);
@@ -72,7 +89,7 @@ public final class InformationSchema {
             List<String> names = new ArrayList<>(catalog.tableNames(schema));
             names.sort(String::compareTo);
             for (String name : names) {
-                rows.add(new String[]{schema, name});
+                rows.add(new String[] {schema, name});
             }
         }
         int n = rows.size();
@@ -95,13 +112,15 @@ public final class InformationSchema {
             }
             tableType.setSafe(i, typeStr.getBytes(StandardCharsets.UTF_8));
         }
-        for (VarCharVector v : new VarCharVector[]{tableCatalog, tableSchema, tableName, tableType}) {
+        for (VarCharVector v :
+                new VarCharVector[] {tableCatalog, tableSchema, tableName, tableType}) {
             v.setValueCount(n);
         }
         return VectorSchemaRoot.of(tableCatalog, tableSchema, tableName, tableType);
     }
 
-    private static VectorSchemaRoot materializeMaterializedViews(MiniDbCatalog catalog, BufferAllocator allocator) {
+    private static VectorSchemaRoot materializeMaterializedViews(
+            MiniDbCatalog catalog, BufferAllocator allocator) {
         List<MVDefinition> allMVs = new ArrayList<>();
         List<String> schemas = new ArrayList<>(catalog.schemaNames());
         schemas.sort(String::compareTo);
@@ -120,19 +139,24 @@ public final class InformationSchema {
             mvSchema.setSafe(i, mv.schemaName().getBytes(StandardCharsets.UTF_8));
             mvName.setSafe(i, mv.name().getBytes(StandardCharsets.UTF_8));
             definition.setSafe(i, mv.querySql().getBytes(StandardCharsets.UTF_8));
-            String depStr = mv.dependencies().stream()
-                    .map(d -> d.schemaName() + "." + d.tableName())
-                    .collect(Collectors.joining(", "));
+            String depStr =
+                    mv.dependencies().stream()
+                            .map(d -> d.schemaName() + "." + d.tableName())
+                            .collect(Collectors.joining(", "));
             dependencies.setSafe(i, depStr.getBytes(StandardCharsets.UTF_8));
             isStale.setSafe(i, "FALSE".getBytes(StandardCharsets.UTF_8));
         }
-        for (VarCharVector v : new VarCharVector[]{mvCatalog, mvSchema, mvName, definition, dependencies, isStale}) {
+        for (VarCharVector v :
+                new VarCharVector[] {
+                    mvCatalog, mvSchema, mvName, definition, dependencies, isStale
+                }) {
             v.setValueCount(n);
         }
         return VectorSchemaRoot.of(mvCatalog, mvSchema, mvName, definition, dependencies, isStale);
     }
 
-    private static VectorSchemaRoot materializeColumns(MiniDbCatalog catalog, BufferAllocator allocator) {
+    private static VectorSchemaRoot materializeColumns(
+            MiniDbCatalog catalog, BufferAllocator allocator) {
         List<Object[]> rows = new ArrayList<>(); // [schema, table, col, ordinal, ColumnMeta]
         List<String> schemas = new ArrayList<>(catalog.schemaNames());
         schemas.sort(String::compareTo);
@@ -143,7 +167,7 @@ public final class InformationSchema {
                 TableSchema ts = catalog.getTable(schema, name);
                 int ordinal = 1;
                 for (ColumnMeta col : ts.columns()) {
-                    rows.add(new Object[]{schema, name, col.name(), ordinal, col});
+                    rows.add(new Object[] {schema, name, col.name(), ordinal, col});
                     ordinal++;
                 }
             }
@@ -170,22 +194,30 @@ public final class InformationSchema {
             tableName.setSafe(i, ((String) r[1]).getBytes(StandardCharsets.UTF_8));
             columnName.setSafe(i, col.name().getBytes(StandardCharsets.UTF_8));
             ordinal.setSafe(i, (Integer) r[3]);
-            dataType.setSafe(i, ArrowTypes.toSqlTypeName(col.type())
-                    .getBytes(StandardCharsets.UTF_8));
+            dataType.setSafe(
+                    i, ArrowTypes.toSqlTypeName(col.type()).getBytes(StandardCharsets.UTF_8));
             if (col.type() == ColumnType.DECIMAL || col.type() == ColumnType.NUMERIC) {
                 numericPrecision.setSafe(i, col.precision());
                 numericScale.setSafe(i, col.scale());
             }
             // 非 decimal 列 precision/scale 保持 null
         }
-        for (VarCharVector v : new VarCharVector[]{tableCatalog, tableSchema, tableName, columnName, dataType}) {
+        for (VarCharVector v :
+                new VarCharVector[] {tableCatalog, tableSchema, tableName, columnName, dataType}) {
             v.setValueCount(n);
         }
-        for (IntVector v : new IntVector[]{ordinal, numericPrecision, numericScale}) {
+        for (IntVector v : new IntVector[] {ordinal, numericPrecision, numericScale}) {
             v.setValueCount(n);
         }
-        return VectorSchemaRoot.of(tableCatalog, tableSchema, tableName, columnName,
-                ordinal, dataType, numericPrecision, numericScale);
+        return VectorSchemaRoot.of(
+                tableCatalog,
+                tableSchema,
+                tableName,
+                columnName,
+                ordinal,
+                dataType,
+                numericPrecision,
+                numericScale);
     }
 
     private static VarCharVector vc(String name, int capacity, BufferAllocator allocator) {

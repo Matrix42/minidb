@@ -1,16 +1,11 @@
 package com.minidb.server.plan.physical;
 
-import com.minidb.storage.common.ArrowTypes;
-import com.minidb.storage.common.BatchIterator;
 import com.minidb.server.exec.ExecContext;
 import com.minidb.server.exec.functions.Kernels;
+import com.minidb.storage.common.ArrowTypes;
+import com.minidb.storage.common.BatchIterator;
+
 import com.google.common.collect.ImmutableList;
-import java.math.BigDecimal;
-import java.nio.charset.StandardCharsets;
-import java.util.ArrayList;
-import java.util.Calendar;
-import java.util.List;
-import java.util.concurrent.TimeUnit;
 import org.apache.arrow.vector.BigIntVector;
 import org.apache.arrow.vector.BitVector;
 import org.apache.arrow.vector.DateDayVector;
@@ -36,11 +31,20 @@ import org.apache.calcite.rel.type.RelDataTypeField;
 import org.apache.calcite.rex.RexLiteral;
 import org.apache.calcite.util.BitString;
 
+import java.math.BigDecimal;
+import java.nio.charset.StandardCharsets;
+import java.util.ArrayList;
+import java.util.Calendar;
+import java.util.List;
+import java.util.concurrent.TimeUnit;
+
 public class MiniDbValues extends Values implements MiniDbRel {
 
-    public MiniDbValues(RelOptCluster cluster, RelTraitSet traitSet,
-                        RelDataType rowType,
-                        ImmutableList<ImmutableList<RexLiteral>> tuples) {
+    public MiniDbValues(
+            RelOptCluster cluster,
+            RelTraitSet traitSet,
+            RelDataType rowType,
+            ImmutableList<ImmutableList<RexLiteral>> tuples) {
         super(cluster, rowType, tuples, traitSet);
     }
 
@@ -67,23 +71,24 @@ public class MiniDbValues extends Values implements MiniDbRel {
         VectorSchemaRoot out = VectorSchemaRoot.of(vectors.toArray(new FieldVector[0]));
         out.setRowCount(rows);
         boolean[] emitted = {false};
-        return BatchIterator.interruptible(new BatchIterator() {
-            @Override
-            public boolean hasNext() {
-                return !emitted[0];
-            }
+        return BatchIterator.interruptible(
+                new BatchIterator() {
+                    @Override
+                    public boolean hasNext() {
+                        return !emitted[0];
+                    }
 
-            @Override
-            public VectorSchemaRoot next() {
-                emitted[0] = true;
-                return out;
-            }
+                    @Override
+                    public VectorSchemaRoot next() {
+                        emitted[0] = true;
+                        return out;
+                    }
 
-            @Override
-            public void close() {
-                out.close();
-            }
-        });
+                    @Override
+                    public void close() {
+                        out.close();
+                    }
+                });
     }
 
     private Field arrowField(RelDataTypeField dataTypeField) {
@@ -118,10 +123,12 @@ public class MiniDbValues extends Values implements MiniDbRel {
             dv.setSafe(row, (int) TimeUnit.MILLISECONDS.toDays(cal.getTimeInMillis()));
         } else if (vector instanceof TimeMilliVector tv) {
             Calendar cal = literal.getValueAs(Calendar.class);
-            int millis = (int) (cal.get(Calendar.HOUR_OF_DAY) * 3_600_000L
-                    + cal.get(Calendar.MINUTE) * 60_000L
-                    + cal.get(Calendar.SECOND) * 1_000L
-                    + cal.get(Calendar.MILLISECOND));
+            int millis =
+                    (int)
+                            (cal.get(Calendar.HOUR_OF_DAY) * 3_600_000L
+                                    + cal.get(Calendar.MINUTE) * 60_000L
+                                    + cal.get(Calendar.SECOND) * 1_000L
+                                    + cal.get(Calendar.MILLISECOND));
             tv.setSafe(row, millis);
         } else if (vector instanceof TimeStampMilliVector tv) {
             Calendar cal = literal.getValueAs(Calendar.class);
@@ -134,8 +141,10 @@ public class MiniDbValues extends Values implements MiniDbRel {
         }
     }
 
-    /** BINARY/VARBINARY 字面量的字节值:Calcite 1.42 把 `X'...'`/`B'...'` 存为 ByteString,
-     * 旧版本可能存 byte[] 或 BitString,三者都兼容。 */
+    /**
+     * BINARY/VARBINARY 字面量的字节值:Calcite 1.42 把 `X'...'`/`B'...'` 存为 ByteString, 旧版本可能存 byte[] 或
+     * BitString,三者都兼容。
+     */
     private static byte[] literalBytes(RexLiteral literal) {
         Object raw = literal.getValue();
         if (raw instanceof ByteString byteString) {

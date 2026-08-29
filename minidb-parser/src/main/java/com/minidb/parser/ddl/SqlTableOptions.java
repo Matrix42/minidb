@@ -1,8 +1,5 @@
 package com.minidb.parser.ddl;
 
-import java.util.LinkedHashMap;
-import java.util.List;
-import java.util.Map;
 import org.apache.calcite.sql.SqlCall;
 import org.apache.calcite.sql.SqlKind;
 import org.apache.calcite.sql.SqlLiteral;
@@ -12,9 +9,13 @@ import org.apache.calcite.sql.SqlSpecialOperator;
 import org.apache.calcite.sql.SqlWriter;
 import org.apache.calcite.sql.parser.SqlParserPos;
 
+import java.util.LinkedHashMap;
+import java.util.List;
+import java.util.Map;
+
 /**
- * CREATE TABLE 的 {@code WITH} 子句(Flink 风格表选项)。key 是字符串字面量,value 是
- * 字符串/布尔/数字字面量。SQL 层目前只消费 {@code format},其余 key 由执行器校验拒绝。
+ * CREATE TABLE 的 {@code WITH} 子句(Flink 风格表选项)。key 是字符串字面量,value 是 字符串/布尔/数字字面量。SQL 层目前只消费 {@code
+ * format},其余 key 由执行器校验拒绝。
  */
 public class SqlTableOptions extends SqlCall {
 

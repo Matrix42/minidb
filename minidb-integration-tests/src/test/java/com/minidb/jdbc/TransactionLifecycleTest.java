@@ -1,20 +1,21 @@
 package com.minidb.jdbc;
 
 import com.minidb.server.MiniDbServer;
+
+import org.junit.jupiter.api.Test;
+
 import java.nio.file.Files;
-import java.nio.file.Path;
 import java.sql.Connection;
 import java.sql.DriverManager;
 import java.sql.ResultSet;
 import java.sql.Statement;
-import org.junit.jupiter.api.Test;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 
 /**
- * 事务生命周期端到端:setAutoCommit(false) 隐式 BEGIN,commit 持久化、rollback 丢弃。
- * 每个场景用独立连接,避免依赖「commit 后再自动 BEGIN」这一未实现语义。
+ * 事务生命周期端到端:setAutoCommit(false) 隐式 BEGIN,commit 持久化、rollback 丢弃。 每个场景用独立连接,避免依赖「commit 后再自动
+ * BEGIN」这一未实现语义。
  */
 class TransactionLifecycleTest {
 
@@ -39,7 +40,7 @@ class TransactionLifecycleTest {
             Connection c = DriverManager.getConnection(url);
             Connection observer = DriverManager.getConnection(url);
             try (Statement s = c.createStatement();
-                 Statement o = observer.createStatement()) {
+                    Statement o = observer.createStatement()) {
                 s.execute("CREATE TABLE t (id INTEGER PRIMARY KEY)");
 
                 c.setAutoCommit(false);
@@ -89,14 +90,14 @@ class TransactionLifecycleTest {
                 s.execute("INSERT INTO t VALUES (1)");
 
                 c.setAutoCommit(false);
-                assertThrows(java.sql.SQLException.class,
+                assertThrows(
+                        java.sql.SQLException.class,
                         () -> s.executeUpdate("INSERT INTO t VALUES (1)"),
                         "主键重复插入应失败");
                 // 失败后仍可 rollback,不影响已提交数据
                 c.rollback();
                 c.setAutoCommit(true);
-                assertEquals(1, count(s, "SELECT COUNT(*) FROM t"),
-                        "失败的事务不影响已提交数据");
+                assertEquals(1, count(s, "SELECT COUNT(*) FROM t"), "失败的事务不影响已提交数据");
             }
             c.close();
         } finally {

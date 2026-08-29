@@ -1,16 +1,14 @@
 package com.minidb.server.exec;
-import com.minidb.storage.common.BatchIterator;
 
 import com.minidb.server.catalog.MiniDbCatalog;
+import com.minidb.server.plan.Planner;
 import com.minidb.server.plan.physical.MiniDbCalc;
 import com.minidb.server.plan.physical.MiniDbConvention;
 import com.minidb.server.plan.physical.MiniDbScan;
-import com.minidb.server.plan.Planner;
-import com.minidb.server.storage.StorageManager;
 import com.minidb.server.stats.StatsManager;
-import java.nio.file.Path;
-import java.util.ArrayList;
-import java.util.List;
+import com.minidb.server.storage.StorageManager;
+import com.minidb.storage.common.BatchIterator;
+
 import org.apache.arrow.memory.BufferAllocator;
 import org.apache.arrow.memory.RootAllocator;
 import org.apache.arrow.vector.IntVector;
@@ -22,23 +20,25 @@ import org.apache.calcite.rex.RexBuilder;
 import org.apache.calcite.rex.RexNode;
 import org.apache.calcite.rex.RexProgram;
 import org.apache.calcite.rex.RexProgramBuilder;
-
 import org.apache.calcite.sql.fun.SqlStdOperatorTable;
 import org.apache.calcite.sql.type.SqlTypeFactoryImpl;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
 
+import java.nio.file.Path;
+import java.util.ArrayList;
+import java.util.List;
+
 import static org.junit.jupiter.api.Assertions.assertEquals;
 
 /**
- * MiniDbCalc is defensive: regular SQL plans as Project/Filter, so LogicalCalc
- * never appears in practice. These tests drive the operator directly with a
- * hand-built RexProgram to prove projection + condition + renaming semantics.
+ * MiniDbCalc is defensive: regular SQL plans as Project/Filter, so LogicalCalc never appears in
+ * practice. These tests drive the operator directly with a hand-built RexProgram to prove
+ * projection + condition + renaming semantics.
  */
 class CalcTest {
 
-    @TempDir
-    Path dataDir;
+    @TempDir Path dataDir;
 
     @Test
     void calcProjectsAndFilters() {
@@ -57,21 +57,29 @@ class CalcTest {
                 RelDataType inputType = scan.getRowType();
                 RelDataType idType = inputType.getFieldList().get(0).getType();
 
-                RexBuilder rb = new RexBuilder(
-                        new SqlTypeFactoryImpl(RelDataTypeSystem.DEFAULT));
+                RexBuilder rb = new RexBuilder(new SqlTypeFactoryImpl(RelDataTypeSystem.DEFAULT));
                 RexProgramBuilder pb = new RexProgramBuilder(inputType, rb);
                 RexNode idRef = rb.makeInputRef(idType, 0);
-                RexNode twice = rb.makeCall(SqlStdOperatorTable.MULTIPLY,
-                        idRef, rb.makeExactLiteral(new java.math.BigDecimal(2), idType));
+                RexNode twice =
+                        rb.makeCall(
+                                SqlStdOperatorTable.MULTIPLY,
+                                idRef,
+                                rb.makeExactLiteral(new java.math.BigDecimal(2), idType));
                 pb.addProject(twice, "x");
-                RexNode gt = rb.makeCall(SqlStdOperatorTable.GREATER_THAN,
-                        idRef, rb.makeExactLiteral(new java.math.BigDecimal(1), idType));
+                RexNode gt =
+                        rb.makeCall(
+                                SqlStdOperatorTable.GREATER_THAN,
+                                idRef,
+                                rb.makeExactLiteral(new java.math.BigDecimal(1), idType));
                 pb.addCondition(gt);
                 RexProgram program = pb.getProgram();
 
-                MiniDbCalc calc = new MiniDbCalc(scan.getCluster(),
-                        scan.getTraitSet().replace(MiniDbConvention.INSTANCE),
-                        scan, program);
+                MiniDbCalc calc =
+                        new MiniDbCalc(
+                                scan.getCluster(),
+                                scan.getTraitSet().replace(MiniDbConvention.INSTANCE),
+                                scan,
+                                program);
                 List<Integer> xs = collect(calc, storage, allocator);
                 assertEquals(List.of(4, 6), xs);
             } finally {
@@ -95,16 +103,18 @@ class CalcTest {
                 RelDataType inputType = scan.getRowType();
                 RelDataType idType = inputType.getFieldList().get(0).getType();
 
-                RexBuilder rb = new RexBuilder(
-                        new SqlTypeFactoryImpl(RelDataTypeSystem.DEFAULT));
+                RexBuilder rb = new RexBuilder(new SqlTypeFactoryImpl(RelDataTypeSystem.DEFAULT));
                 RexProgramBuilder pb = new RexProgramBuilder(inputType, rb);
                 RexNode idRef = rb.makeInputRef(idType, 0);
                 pb.addProject(idRef, "x");
                 RexProgram program = pb.getProgram();
 
-                MiniDbCalc calc = new MiniDbCalc(scan.getCluster(),
-                        scan.getTraitSet().replace(MiniDbConvention.INSTANCE),
-                        scan, program);
+                MiniDbCalc calc =
+                        new MiniDbCalc(
+                                scan.getCluster(),
+                                scan.getTraitSet().replace(MiniDbConvention.INSTANCE),
+                                scan,
+                                program);
                 List<Integer> xs = collect(calc, storage, allocator);
                 assertEquals(List.of(1, 2, 3), xs);
             } finally {
@@ -128,19 +138,24 @@ class CalcTest {
                 RelDataType inputType = scan.getRowType();
                 RelDataType idType = inputType.getFieldList().get(0).getType();
 
-                RexBuilder rb = new RexBuilder(
-                        new SqlTypeFactoryImpl(RelDataTypeSystem.DEFAULT));
+                RexBuilder rb = new RexBuilder(new SqlTypeFactoryImpl(RelDataTypeSystem.DEFAULT));
                 RexProgramBuilder pb = new RexProgramBuilder(inputType, rb);
                 RexNode idRef = rb.makeInputRef(idType, 0);
                 pb.addProject(idRef, "x");
-                RexNode gt = rb.makeCall(SqlStdOperatorTable.GREATER_THAN,
-                        idRef, rb.makeExactLiteral(new java.math.BigDecimal(100), idType));
+                RexNode gt =
+                        rb.makeCall(
+                                SqlStdOperatorTable.GREATER_THAN,
+                                idRef,
+                                rb.makeExactLiteral(new java.math.BigDecimal(100), idType));
                 pb.addCondition(gt);
                 RexProgram program = pb.getProgram();
 
-                MiniDbCalc calc = new MiniDbCalc(scan.getCluster(),
-                        scan.getTraitSet().replace(MiniDbConvention.INSTANCE),
-                        scan, program);
+                MiniDbCalc calc =
+                        new MiniDbCalc(
+                                scan.getCluster(),
+                                scan.getTraitSet().replace(MiniDbConvention.INSTANCE),
+                                scan,
+                                program);
                 List<Integer> xs = collect(calc, storage, allocator);
                 assertEquals(List.of(), xs);
             } finally {
@@ -156,8 +171,8 @@ class CalcTest {
         return findScan(node.getInput(0));
     }
 
-    private static List<Integer> collect(MiniDbCalc calc, StorageManager storage,
-                                         BufferAllocator allocator) {
+    private static List<Integer> collect(
+            MiniDbCalc calc, StorageManager storage, BufferAllocator allocator) {
         ExecContext ctx = new ExecContext(storage, allocator);
         BatchIterator it = calc.execute(ctx);
         List<Integer> out = new ArrayList<>();

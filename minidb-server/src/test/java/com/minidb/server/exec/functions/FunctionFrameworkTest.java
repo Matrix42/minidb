@@ -1,6 +1,5 @@
 package com.minidb.server.exec.functions;
 
-import java.util.List;
 import org.apache.arrow.memory.BufferAllocator;
 import org.apache.arrow.memory.RootAllocator;
 import org.apache.arrow.vector.BigIntVector;
@@ -15,6 +14,8 @@ import org.apache.calcite.sql.type.SqlTypeName;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
+
+import java.util.List;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertThrows;
@@ -113,11 +114,26 @@ class FunctionFrameworkTest {
     /** Function.evaluate 应按输入向量类型选内核;输出向量已由 evaluate setValueCount,入参由 evaluate 关闭。 */
     @Test
     void functionDispatchPicksOverload() {
-        Function twiceOrInc = new Function("twiceOrInc", List.of(
-                new Overload(List.of(IntVector.class), IntVector.class,
-                        (args, out) -> Kernels.fillUnaryInt((IntVector) args.get(0), (IntVector) out, v -> v * 2)),
-                new Overload(List.of(BigIntVector.class), BigIntVector.class,
-                        (args, out) -> Kernels.fillUnaryLong((BigIntVector) args.get(0), (BigIntVector) out, v -> v + 1))));
+        Function twiceOrInc =
+                new Function(
+                        "twiceOrInc",
+                        List.of(
+                                new Overload(
+                                        List.of(IntVector.class),
+                                        IntVector.class,
+                                        (args, out) ->
+                                                Kernels.fillUnaryInt(
+                                                        (IntVector) args.get(0),
+                                                        (IntVector) out,
+                                                        v -> v * 2)),
+                                new Overload(
+                                        List.of(BigIntVector.class),
+                                        BigIntVector.class,
+                                        (args, out) ->
+                                                Kernels.fillUnaryLong(
+                                                        (BigIntVector) args.get(0),
+                                                        (BigIntVector) out,
+                                                        v -> v + 1))));
 
         IntVector intIn = new IntVector("intIn", allocator);
         intIn.allocateNew(3);
@@ -125,8 +141,12 @@ class FunctionFrameworkTest {
         intIn.setSafe(1, 2);
         intIn.setNull(2);
         intIn.setValueCount(3);
-        ValueVector intOut = twiceOrInc.evaluate(List.of(intIn),
-                typeFactory.createSqlType(SqlTypeName.INTEGER), intIn.getValueCount(), allocator);
+        ValueVector intOut =
+                twiceOrInc.evaluate(
+                        List.of(intIn),
+                        typeFactory.createSqlType(SqlTypeName.INTEGER),
+                        intIn.getValueCount(),
+                        allocator);
         assertEquals(IntVector.class, intOut.getClass(), "应命中 int 重载并分配 IntVector 输出");
         assertEquals(3, intOut.getValueCount(), "evaluate 应统一 setValueCount");
         assertEquals(-10, ((IntVector) intOut).get(0));
@@ -139,8 +159,12 @@ class FunctionFrameworkTest {
         longIn.setSafe(0, 41L);
         longIn.setSafe(1, 0L);
         longIn.setValueCount(2);
-        ValueVector longOut = twiceOrInc.evaluate(List.of(longIn),
-                typeFactory.createSqlType(SqlTypeName.BIGINT), longIn.getValueCount(), allocator);
+        ValueVector longOut =
+                twiceOrInc.evaluate(
+                        List.of(longIn),
+                        typeFactory.createSqlType(SqlTypeName.BIGINT),
+                        longIn.getValueCount(),
+                        allocator);
         assertEquals(BigIntVector.class, longOut.getClass(), "应命中 long 重载并分配 BigIntVector 输出");
         assertEquals(42L, ((BigIntVector) longOut).get(0));
         assertEquals(1L, ((BigIntVector) longOut).get(1));
@@ -150,21 +174,41 @@ class FunctionFrameworkTest {
     /** 无匹配重载时应抛 UnsupportedOperationException 且不产出向量。 */
     @Test
     void unknownOverloadThrows() {
-        Function twiceOrInc = new Function("twiceOrInc", List.of(
-                new Overload(List.of(IntVector.class), IntVector.class,
-                        (args, out) -> Kernels.fillUnaryInt((IntVector) args.get(0), (IntVector) out, v -> v * 2)),
-                new Overload(List.of(BigIntVector.class), BigIntVector.class,
-                        (args, out) -> Kernels.fillUnaryLong((BigIntVector) args.get(0), (BigIntVector) out, v -> v + 1))));
+        Function twiceOrInc =
+                new Function(
+                        "twiceOrInc",
+                        List.of(
+                                new Overload(
+                                        List.of(IntVector.class),
+                                        IntVector.class,
+                                        (args, out) ->
+                                                Kernels.fillUnaryInt(
+                                                        (IntVector) args.get(0),
+                                                        (IntVector) out,
+                                                        v -> v * 2)),
+                                new Overload(
+                                        List.of(BigIntVector.class),
+                                        BigIntVector.class,
+                                        (args, out) ->
+                                                Kernels.fillUnaryLong(
+                                                        (BigIntVector) args.get(0),
+                                                        (BigIntVector) out,
+                                                        v -> v + 1))));
 
         Float8Vector floatIn = new Float8Vector("floatIn", allocator);
         floatIn.allocateNew(1);
         floatIn.setValueCount(1);
         try {
-            UnsupportedOperationException ex = assertThrows(UnsupportedOperationException.class,
-                    () -> twiceOrInc.evaluate(List.of(floatIn),
-                            typeFactory.createSqlType(SqlTypeName.INTEGER), floatIn.getValueCount(), allocator));
-            assertTrue(ex.getMessage().contains("no overload of twiceOrInc"),
-                    "异常应指明函数名与参数类型");
+            UnsupportedOperationException ex =
+                    assertThrows(
+                            UnsupportedOperationException.class,
+                            () ->
+                                    twiceOrInc.evaluate(
+                                            List.of(floatIn),
+                                            typeFactory.createSqlType(SqlTypeName.INTEGER),
+                                            floatIn.getValueCount(),
+                                            allocator));
+            assertTrue(ex.getMessage().contains("no overload of twiceOrInc"), "异常应指明函数名与参数类型");
         } finally {
             // resolve 在 evaluate 的 try/finally 之前抛,入参不会被 evaluate 关闭。
             floatIn.close();

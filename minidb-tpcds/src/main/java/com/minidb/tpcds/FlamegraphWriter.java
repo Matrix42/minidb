@@ -1,22 +1,20 @@
 package com.minidb.tpcds;
 
-import java.io.IOException;
-import java.nio.file.Files;
-import java.nio.file.Path;
-import java.util.Comparator;
-import java.util.LinkedHashMap;
-import java.util.Map;
-import java.util.stream.Collectors;
-import java.util.List;
 import jdk.jfr.consumer.RecordedEvent;
 import jdk.jfr.consumer.RecordedFrame;
 import jdk.jfr.consumer.RecordedMethod;
 import jdk.jfr.consumer.RecordingFile;
 
-/**
- * 从 JFR 录制文件生成自包含火焰图 HTML。
- * 使用 d3-flame-graph 渲染(CDN 加载,与 TpcdsCompare 的 Chart.js CDN 模式一致)。
- */
+import java.io.IOException;
+import java.nio.file.Files;
+import java.nio.file.Path;
+import java.util.Comparator;
+import java.util.LinkedHashMap;
+import java.util.List;
+import java.util.Map;
+import java.util.stream.Collectors;
+
+/** 从 JFR 录制文件生成自包含火焰图 HTML。 使用 d3-flame-graph 渲染(CDN 加载,与 TpcdsCompare 的 Chart.js CDN 模式一致)。 */
 public class FlamegraphWriter {
 
     public void write(Path jfrFile, Path htmlFile) throws IOException {
@@ -32,8 +30,8 @@ public class FlamegraphWriter {
     }
 
     /**
-     * 从 JFR 录制文件提取 {@code jdk.ExecutionSample} 事件,
-     * 转为 folded stack 格式: {@code func1;func2;func3 count}。
+     * 从 JFR 录制文件提取 {@code jdk.ExecutionSample} 事件, 转为 folded stack 格式: {@code func1;func2;func3
+     * count}。
      */
     Map<String, Long> extractFoldedStacks(Path jfrFile) throws IOException {
         Map<String, Long> stacks = new LinkedHashMap<>();
@@ -89,10 +87,11 @@ public class FlamegraphWriter {
 
     private String buildHtml(Map<String, Long> foldedStacks) {
         // foldedStacks 按 count 降序排列
-        String data = foldedStacks.entrySet().stream()
-                .sorted(Map.Entry.comparingByValue(Comparator.reverseOrder()))
-                .map(e -> e.getKey() + " " + e.getValue())
-                .collect(Collectors.joining("\\n"));
+        String data =
+                foldedStacks.entrySet().stream()
+                        .sorted(Map.Entry.comparingByValue(Comparator.reverseOrder()))
+                        .map(e -> e.getKey() + " " + e.getValue())
+                        .collect(Collectors.joining("\\n"));
 
         return """
                 <!DOCTYPE html>
@@ -170,6 +169,7 @@ public class FlamegraphWriter {
                 </script>
                 </body>
                 </html>
-                """.formatted(data);
+                """
+                .formatted(data);
     }
 }

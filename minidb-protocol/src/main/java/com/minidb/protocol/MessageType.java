@@ -14,12 +14,11 @@ public final class MessageType {
     public static final byte COLUMNS_REQUEST = 0x14;
     public static final byte FETCH_REQUEST = 0x15;
     public static final byte CLOSE_CURSOR_REQUEST = 0x16;
-    public static final byte BEGIN_REQUEST      = 0x17;
-    public static final byte COMMIT_REQUEST     = 0x18;
-    public static final byte ROLLBACK_REQUEST   = 0x19;
-    public static final byte SET_AUTOCOMMIT     = 0x1A;
-    public static final byte COMMIT_RESPONSE    = 0x24;
+    public static final byte BEGIN_REQUEST = 0x17;
+    public static final byte COMMIT_REQUEST = 0x18;
+    public static final byte ROLLBACK_REQUEST = 0x19;
+    public static final byte SET_AUTOCOMMIT = 0x1A;
+    public static final byte COMMIT_RESPONSE = 0x24;
 
-    private MessageType() {
-    }
+    private MessageType() {}
 }

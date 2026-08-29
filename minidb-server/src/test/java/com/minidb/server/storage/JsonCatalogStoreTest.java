@@ -4,10 +4,12 @@ import com.minidb.server.catalog.CatalogSnapshot;
 import com.minidb.storage.common.ColumnMeta;
 import com.minidb.storage.common.ColumnType;
 import com.minidb.storage.common.TableSchema;
-import java.nio.file.Path;
-import java.util.List;
+
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
+
+import java.nio.file.Path;
+import java.util.List;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 
@@ -16,14 +18,21 @@ class JsonCatalogStoreTest {
     @Test
     void roundTripsSnapshot(@TempDir Path dir) throws Exception {
         JsonCatalogStore store = new JsonCatalogStore(dir.resolve("catalog.json"));
-        CatalogSnapshot original = new CatalogSnapshot(
-                List.of("public", "other"),
-                List.of(
-                        new TableSchema("public", "t", List.of(
-                                new ColumnMeta("id", ColumnType.INTEGER),
-                                new ColumnMeta("price", ColumnType.DECIMAL, 10, 2))),
-                        new TableSchema("other", "u", List.of(
-                                new ColumnMeta("name", ColumnType.VARCHAR)))));
+        CatalogSnapshot original =
+                new CatalogSnapshot(
+                        List.of("public", "other"),
+                        List.of(
+                                new TableSchema(
+                                        "public",
+                                        "t",
+                                        List.of(
+                                                new ColumnMeta("id", ColumnType.INTEGER),
+                                                new ColumnMeta(
+                                                        "price", ColumnType.DECIMAL, 10, 2))),
+                                new TableSchema(
+                                        "other",
+                                        "u",
+                                        List.of(new ColumnMeta("name", ColumnType.VARCHAR)))));
         store.save(original);
         CatalogSnapshot loaded = store.load();
         assertEquals(original, loaded);

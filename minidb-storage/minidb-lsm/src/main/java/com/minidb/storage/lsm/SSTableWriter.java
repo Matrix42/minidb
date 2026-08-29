@@ -1,20 +1,7 @@
 package com.minidb.storage.lsm;
+
 import com.minidb.storage.common.*;
-import java.io.*;
-import java.math.BigDecimal;
-import java.nio.ByteBuffer;
-import java.nio.channels.FileChannel;
-import java.nio.charset.StandardCharsets;
-import java.nio.file.Files;
-import java.nio.file.Path;
-import java.nio.file.StandardOpenOption;
-import java.time.LocalDate;
-import java.time.LocalDateTime;
-import java.time.ZoneOffset;
-import java.util.ArrayList;
-import java.util.Iterator;
-import java.util.List;
-import java.util.Map;
+
 import org.apache.arrow.memory.BufferAllocator;
 import org.apache.arrow.vector.BigIntVector;
 import org.apache.arrow.vector.BitVector;
@@ -31,6 +18,21 @@ import org.apache.arrow.vector.VarBinaryVector;
 import org.apache.arrow.vector.VarCharVector;
 import org.apache.arrow.vector.VectorSchemaRoot;
 
+import java.io.*;
+import java.math.BigDecimal;
+import java.nio.ByteBuffer;
+import java.nio.channels.FileChannel;
+import java.nio.charset.StandardCharsets;
+import java.nio.file.Files;
+import java.nio.file.Path;
+import java.nio.file.StandardOpenOption;
+import java.time.LocalDate;
+import java.time.LocalDateTime;
+import java.time.ZoneOffset;
+import java.util.ArrayList;
+import java.util.Iterator;
+import java.util.List;
+import java.util.Map;
 
 public class SSTableWriter {
     private static final int BLOCK_SIZE = 64 * 1024; // 64KB
@@ -45,8 +47,13 @@ public class SSTableWriter {
     private final BufferAllocator allocator;
     private final int bloomBitsPerKey;
 
-    public SSTableWriter(Path file, int level, TableSchema schema,
-                         PartFormat format, BufferAllocator allocator, int bloomBitsPerKey) {
+    public SSTableWriter(
+            Path file,
+            int level,
+            TableSchema schema,
+            PartFormat format,
+            BufferAllocator allocator,
+            int bloomBitsPerKey) {
         this.file = file;
         this.level = level;
         this.schema = schema;
@@ -69,9 +76,12 @@ public class SSTableWriter {
 
         try {
             Files.createDirectories(file.getParent());
-            try (FileChannel ch = FileChannel.open(file,
-                    StandardOpenOption.CREATE, StandardOpenOption.WRITE,
-                    StandardOpenOption.TRUNCATE_EXISTING)) {
+            try (FileChannel ch =
+                    FileChannel.open(
+                            file,
+                            StandardOpenOption.CREATE,
+                            StandardOpenOption.WRITE,
+                            StandardOpenOption.TRUNCATE_EXISTING)) {
 
                 List<Object[]> blockRows = new ArrayList<>();
                 List<Object> blockStartKey = null;
@@ -108,7 +118,11 @@ public class SSTableWriter {
                 int idxSize = 4; // entryCount int
                 for (BlockInfo bi : blockInfos) {
                     byte[] keyBytes = encodeKey(bi.startKey);
-                    idxSize += 2 + keyBytes.length + 8 + 4; // short keyLen + bytes + long offset + int size
+                    idxSize +=
+                            2
+                                    + keyBytes.length
+                                    + 8
+                                    + 4; // short keyLen + bytes + long offset + int size
                 }
                 ByteBuffer idxBuf = ByteBuffer.allocate(idxSize);
                 idxBuf.putInt(blockInfos.size());
@@ -129,8 +143,8 @@ public class SSTableWriter {
                 while (bloomBuf.hasRemaining()) ch.write(bloomBuf);
 
                 // Footer
-                writeFooter(ch, blockInfos.size(), rowCount,
-                        minKey, maxKey, indexOffset, bloomOffset);
+                writeFooter(
+                        ch, blockInfos.size(), rowCount, minKey, maxKey, indexOffset, bloomOffset);
             }
         } catch (IOException e) {
             throw new UncheckedIOException(e);
@@ -139,8 +153,8 @@ public class SSTableWriter {
         return rowCount;
     }
 
-    private BlockInfo writeBlock(FileChannel ch, List<Object> startKey,
-                                  List<Object[]> rows) throws IOException {
+    private BlockInfo writeBlock(FileChannel ch, List<Object> startKey, List<Object[]> rows)
+            throws IOException {
         long offset = ch.position();
         // 把 rows 转成 VectorSchemaRoot 然后用 PartFormat 编码为内存字节
         VectorSchemaRoot root = rowsToRoot(rows);
@@ -163,8 +177,7 @@ public class SSTableWriter {
     }
 
     private VectorSchemaRoot rowsToRoot(List<Object[]> rows) {
-        VectorSchemaRoot root = VectorSchemaRoot.create(
-                ArrowTypes.arrowSchema(schema), allocator);
+        VectorSchemaRoot root = VectorSchemaRoot.create(ArrowTypes.arrowSchema(schema), allocator);
         root.allocateNew();
         for (int i = 0; i < rows.size(); i++) {
             writeRow(root, i, rows.get(i));
@@ -178,7 +191,8 @@ public class SSTableWriter {
     }
 
     /** 将行值写入 VectorSchemaRoot 的指定行（供 MergeIterator 等外部使用） */
-    public static void writeRow(VectorSchemaRoot root, int row, Object[] values, TableSchema schema) {
+    public static void writeRow(
+            VectorSchemaRoot root, int row, Object[] values, TableSchema schema) {
         List<ColumnMeta> cols = schema.columns();
         for (int c = 0; c < cols.size(); c++) {
             var vector = root.getVector(c);
@@ -192,8 +206,7 @@ public class SSTableWriter {
     }
 
     @SuppressWarnings("unchecked")
-    public static void setVectorValue(
-            FieldVector vector, int row, Object val, ColumnType type) {
+    public static void setVectorValue(FieldVector vector, int row, Object val, ColumnType type) {
         switch (type) {
             case SMALLINT:
                 ((SmallIntVector) vector).setSafe(row, ((Number) val).shortValue());
@@ -217,11 +230,9 @@ public class SSTableWriter {
                 if (val instanceof BigDecimal bd) {
                     ((DecimalVector) vector).setSafe(row, bd);
                 } else if (val instanceof Number num) {
-                    ((DecimalVector) vector).setSafe(row,
-                            BigDecimal.valueOf(num.doubleValue()));
+                    ((DecimalVector) vector).setSafe(row, BigDecimal.valueOf(num.doubleValue()));
                 } else {
-                    ((DecimalVector) vector).setSafe(row,
-                            new BigDecimal(val.toString()));
+                    ((DecimalVector) vector).setSafe(row, new BigDecimal(val.toString()));
                 }
                 break;
             case VARCHAR:
@@ -237,8 +248,7 @@ public class SSTableWriter {
                 } else if (val instanceof Number num) {
                     ((BitVector) vector).setSafe(row, num.intValue() != 0 ? 1 : 0);
                 } else {
-                    ((BitVector) vector).setSafe(row,
-                            Boolean.parseBoolean(val.toString()) ? 1 : 0);
+                    ((BitVector) vector).setSafe(row, Boolean.parseBoolean(val.toString()) ? 1 : 0);
                 }
                 break;
             case DATE:
@@ -247,8 +257,7 @@ public class SSTableWriter {
                 } else if (val instanceof Number num) {
                     ((DateDayVector) vector).setSafe(row, num.intValue());
                 } else {
-                    ((DateDayVector) vector).setSafe(row,
-                            parseDate(val.toString()));
+                    ((DateDayVector) vector).setSafe(row, parseDate(val.toString()));
                 }
                 break;
             case TIME:
@@ -257,8 +266,7 @@ public class SSTableWriter {
                 } else if (val instanceof Number num) {
                     ((TimeMilliVector) vector).setSafe(row, num.intValue());
                 } else {
-                    ((TimeMilliVector) vector).setSafe(row,
-                            parseTime(val.toString()));
+                    ((TimeMilliVector) vector).setSafe(row, parseTime(val.toString()));
                 }
                 break;
             case TIMESTAMP:
@@ -267,8 +275,7 @@ public class SSTableWriter {
                 } else if (val instanceof Number num) {
                     ((TimeStampMilliVector) vector).setSafe(row, num.longValue());
                 } else {
-                    ((TimeStampMilliVector) vector).setSafe(row,
-                            parseTimestamp(val.toString()));
+                    ((TimeStampMilliVector) vector).setSafe(row, parseTimestamp(val.toString()));
                 }
                 break;
             case BINARY:
@@ -276,8 +283,8 @@ public class SSTableWriter {
                 if (val instanceof byte[] b) {
                     ((VarBinaryVector) vector).setSafe(row, b);
                 } else {
-                    ((VarBinaryVector) vector).setSafe(row,
-                            val.toString().getBytes(StandardCharsets.UTF_8));
+                    ((VarBinaryVector) vector)
+                            .setSafe(row, val.toString().getBytes(StandardCharsets.UTF_8));
                 }
                 break;
         }
@@ -293,9 +300,15 @@ public class SSTableWriter {
         return total;
     }
 
-    private void writeFooter(FileChannel ch, int blockCount, long rowCount,
-                              List<Object> minKey, List<Object> maxKey,
-                              long indexOffset, long bloomOffset) throws IOException {
+    private void writeFooter(
+            FileChannel ch,
+            int blockCount,
+            long rowCount,
+            List<Object> minKey,
+            List<Object> maxKey,
+            long indexOffset,
+            long bloomOffset)
+            throws IOException {
         byte[] minBytes = encodeKey(minKey);
         byte[] maxBytes = encodeKey(maxKey);
         // 页脚内容: magic(6) + level(1) + blockCount(4) + rowCount(8)
@@ -322,11 +335,8 @@ public class SSTableWriter {
     }
 
     /**
-     * 将 key 编码为字节数组(用于索引和 bloom filter)。
-     * 二进制定长/前缀编码,字节字典序 = 数值/字符串序:
-     * 整数符号位翻转后大端(负数 < 正数,整数间保序),字符串用 4 字节长度前缀 + UTF-8
-     * (长度前缀保证前缀关系下短串恒小,同长比字节)。decodeKey 按主键列类型逐列读回,
-     * 无类型 tag、无分隔符。
+     * 将 key 编码为字节数组(用于索引和 bloom filter)。 二进制定长/前缀编码,字节字典序 = 数值/字符串序: 整数符号位翻转后大端(负数 < 正数,整数间保序),字符串用
+     * 4 字节长度前缀 + UTF-8 (长度前缀保证前缀关系下短串恒小,同长比字节)。decodeKey 按主键列类型逐列读回, 无类型 tag、无分隔符。
      */
     static byte[] encodeKey(List<Object> key) {
         ByteArrayOutputStream bos = new ByteArrayOutputStream(key.size() * 8);
@@ -341,7 +351,8 @@ public class SSTableWriter {
                     dos.writeShort(s ^ 0x8000);
                 } else {
                     // null / String / Text 等:长度前缀 + UTF-8(主键非空,writePart 已把 null 替换为空串)
-                    byte[] bytes = k == null ? new byte[0] : k.toString().getBytes(StandardCharsets.UTF_8);
+                    byte[] bytes =
+                            k == null ? new byte[0] : k.toString().getBytes(StandardCharsets.UTF_8);
                     dos.writeInt(bytes.length);
                     dos.write(bytes);
                 }
@@ -384,8 +395,7 @@ public class SSTableWriter {
         try {
             return Long.parseLong(s);
         } catch (NumberFormatException e) {
-            return LocalDateTime.parse(s)
-                    .atZone(ZoneOffset.UTC).toInstant().toEpochMilli();
+            return LocalDateTime.parse(s).atZone(ZoneOffset.UTC).toInstant().toEpochMilli();
         }
     }
 }

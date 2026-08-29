@@ -1,31 +1,41 @@
 package com.minidb.storage.lsm;
+
 import com.minidb.storage.arrow.ArrowPartFormat;
 import com.minidb.storage.common.*;
-import java.nio.file.Path;
-import java.util.*;
+
 import org.apache.arrow.memory.RootAllocator;
 import org.apache.arrow.vector.VectorSchemaRoot;
 import org.apache.arrow.vector.util.Text;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
+
+import java.nio.file.Path;
+import java.util.*;
+
 import static org.junit.jupiter.api.Assertions.*;
 
-
 class MergeIteratorTest {
-    private final TableSchema schema = new TableSchema("public", "t",
-            List.of(new ColumnMeta("id", ColumnType.INTEGER), new ColumnMeta("name", ColumnType.VARCHAR)),
-            List.of("id"), List.of(), List.of());
+    private final TableSchema schema =
+            new TableSchema(
+                    "public",
+                    "t",
+                    List.of(
+                            new ColumnMeta("id", ColumnType.INTEGER),
+                            new ColumnMeta("name", ColumnType.VARCHAR)),
+                    List.of("id"),
+                    List.of(),
+                    List.of());
     private final RootAllocator allocator = new RootAllocator();
 
     @Test
     void memTableOnly(@TempDir Path dir) {
         MemTable mt = new MemTable(schema, 1024 * 1024);
-        mt.put(List.of(1), new RowValue(RowValue.INSERT, new Object[]{1, "a"}));
-        mt.put(List.of(2), new RowValue(RowValue.INSERT, new Object[]{2, "b"}));
+        mt.put(List.of(1), new RowValue(RowValue.INSERT, new Object[] {1, "a"}));
+        mt.put(List.of(2), new RowValue(RowValue.INSERT, new Object[] {2, "b"}));
 
         SSTableManager mgr = new SSTableManager();
-        MergeIterator mi = new MergeIterator(List.of(mt), mgr, schema,
-                new ArrowPartFormat(), allocator);
+        MergeIterator mi =
+                new MergeIterator(List.of(mt), mgr, schema, new ArrowPartFormat(), allocator);
         List<Object[]> rows = collect(mi);
         assertEquals(2, rows.size());
         assertEquals(1, rows.get(0)[0]);
@@ -36,26 +46,32 @@ class MergeIteratorTest {
     void memTableOverridesSSTable(@TempDir Path dir) throws Exception {
         // 先写一个 SSTable (key=1: "old")
         MemTable oldMt = new MemTable(schema, 1024 * 1024);
-        oldMt.put(List.of(1), new RowValue(RowValue.INSERT, new Object[]{1, "old"}));
+        oldMt.put(List.of(1), new RowValue(RowValue.INSERT, new Object[] {1, "old"}));
         Path sstFile = dir.resolve("sst-L0-000001.sst");
-        SSTableWriter writer = new SSTableWriter(sstFile, 0, schema,
-                new ArrowPartFormat(), allocator, 10);
+        SSTableWriter writer =
+                new SSTableWriter(sstFile, 0, schema, new ArrowPartFormat(), allocator, 10);
         writer.writeFromMemTable(oldMt);
 
         SSTableManager mgr = new SSTableManager();
-        SSTableReader reader = new SSTableReader(sstFile, schema,
-                new ArrowPartFormat(), allocator);
+        SSTableReader reader = new SSTableReader(sstFile, schema, new ArrowPartFormat(), allocator);
         SSTable sst = reader.metadata();
         reader.close();
-        mgr.addLevel0(new SSTable(sstFile, 0, sst.seq(), sst.minKey(), sst.maxKey(),
-                sst.rowCount(), sst.bloom()));
+        mgr.addLevel0(
+                new SSTable(
+                        sstFile,
+                        0,
+                        sst.seq(),
+                        sst.minKey(),
+                        sst.maxKey(),
+                        sst.rowCount(),
+                        sst.bloom()));
 
         // MemTable 更新 key=1
         MemTable mt = new MemTable(schema, 1024 * 1024);
-        mt.put(List.of(1), new RowValue(RowValue.UPDATE, new Object[]{1, "new"}));
+        mt.put(List.of(1), new RowValue(RowValue.UPDATE, new Object[] {1, "new"}));
 
-        MergeIterator mi = new MergeIterator(List.of(mt), mgr, schema,
-                new ArrowPartFormat(), allocator);
+        MergeIterator mi =
+                new MergeIterator(List.of(mt), mgr, schema, new ArrowPartFormat(), allocator);
         List<Object[]> rows = collect(mi);
         assertEquals(1, rows.size());
         assertEquals("new", rows.get(0)[1]);
@@ -65,26 +81,32 @@ class MergeIteratorTest {
     void deleteTombstoneRemovesRow(@TempDir Path dir) throws Exception {
         // SSTable 有 key=1
         MemTable oldMt = new MemTable(schema, 1024 * 1024);
-        oldMt.put(List.of(1), new RowValue(RowValue.INSERT, new Object[]{1, "a"}));
+        oldMt.put(List.of(1), new RowValue(RowValue.INSERT, new Object[] {1, "a"}));
         Path sstFile = dir.resolve("sst-L0-000001.sst");
-        SSTableWriter writer = new SSTableWriter(sstFile, 0, schema,
-                new ArrowPartFormat(), allocator, 10);
+        SSTableWriter writer =
+                new SSTableWriter(sstFile, 0, schema, new ArrowPartFormat(), allocator, 10);
         writer.writeFromMemTable(oldMt);
 
         SSTableManager mgr = new SSTableManager();
-        SSTableReader reader = new SSTableReader(sstFile, schema,
-                new ArrowPartFormat(), allocator);
+        SSTableReader reader = new SSTableReader(sstFile, schema, new ArrowPartFormat(), allocator);
         SSTable sst = reader.metadata();
         reader.close();
-        mgr.addLevel0(new SSTable(sstFile, 0, sst.seq(), sst.minKey(), sst.maxKey(),
-                sst.rowCount(), sst.bloom()));
+        mgr.addLevel0(
+                new SSTable(
+                        sstFile,
+                        0,
+                        sst.seq(),
+                        sst.minKey(),
+                        sst.maxKey(),
+                        sst.rowCount(),
+                        sst.bloom()));
 
         // MemTable 删除 key=1
         MemTable mt = new MemTable(schema, 1024 * 1024);
         mt.put(List.of(1), new RowValue(RowValue.DELETE, null));
 
-        MergeIterator mi = new MergeIterator(List.of(mt), mgr, schema,
-                new ArrowPartFormat(), allocator);
+        MergeIterator mi =
+                new MergeIterator(List.of(mt), mgr, schema, new ArrowPartFormat(), allocator);
         List<Object[]> rows = collect(mi);
         assertTrue(rows.isEmpty());
     }
@@ -96,27 +118,33 @@ class MergeIteratorTest {
         MemTable oldMt = new MemTable(schema, 1024 * 1024);
         int n = 10_000;
         for (int i = 0; i < n; i++) {
-            oldMt.put(List.of(i), new RowValue(RowValue.INSERT, new Object[]{i, "v" + i}));
+            oldMt.put(List.of(i), new RowValue(RowValue.INSERT, new Object[] {i, "v" + i}));
         }
         Path sstFile = dir.resolve("sst-L0-000001.sst");
-        SSTableWriter writer = new SSTableWriter(sstFile, 0, schema,
-                new ArrowPartFormat(), allocator, 10);
+        SSTableWriter writer =
+                new SSTableWriter(sstFile, 0, schema, new ArrowPartFormat(), allocator, 10);
         writer.writeFromMemTable(oldMt);
 
         SSTableManager mgr = new SSTableManager();
-        SSTableReader reader = new SSTableReader(sstFile, schema,
-                new ArrowPartFormat(), allocator);
+        SSTableReader reader = new SSTableReader(sstFile, schema, new ArrowPartFormat(), allocator);
         SSTable sst = reader.metadata();
         reader.close();
-        mgr.addLevel0(new SSTable(sstFile, 0, sst.seq(), sst.minKey(), sst.maxKey(),
-                sst.rowCount(), sst.bloom()));
+        mgr.addLevel0(
+                new SSTable(
+                        sstFile,
+                        0,
+                        sst.seq(),
+                        sst.minKey(),
+                        sst.maxKey(),
+                        sst.rowCount(),
+                        sst.bloom()));
 
         // MemTable 覆盖文件中间某 key,验证流式合并跨批正确
         MemTable mt = new MemTable(schema, 1024 * 1024);
-        mt.put(List.of(5000), new RowValue(RowValue.UPDATE, new Object[]{5000, "overridden"}));
+        mt.put(List.of(5000), new RowValue(RowValue.UPDATE, new Object[] {5000, "overridden"}));
 
-        MergeIterator mi = new MergeIterator(List.of(mt), mgr, schema,
-                new ArrowPartFormat(), allocator);
+        MergeIterator mi =
+                new MergeIterator(List.of(mt), mgr, schema, new ArrowPartFormat(), allocator);
         List<Object[]> rows = collect(mi);
         assertEquals(n, rows.size());
         assertEquals("v0", rows.get(0)[1]);

@@ -9,15 +9,10 @@ import com.minidb.storage.common.StorageFormat;
 import com.minidb.storage.common.TableHandle;
 import com.minidb.storage.common.TableSchema;
 import com.minidb.storage.common.TableType;
+
 import com.teradata.tpcds.Results;
 import com.teradata.tpcds.Session;
 import com.teradata.tpcds.Table;
-import java.math.BigDecimal;
-import java.nio.charset.StandardCharsets;
-import java.nio.file.Path;
-import java.util.ArrayList;
-import java.util.List;
-import java.util.Map;
 import org.apache.arrow.memory.BufferAllocator;
 import org.apache.arrow.memory.RootAllocator;
 import org.apache.arrow.vector.BigIntVector;
@@ -30,39 +25,46 @@ import org.apache.arrow.vector.VarCharVector;
 import org.apache.arrow.vector.VectorSchemaRoot;
 import org.apache.calcite.util.DateString;
 
+import java.math.BigDecimal;
+import java.nio.charset.StandardCharsets;
+import java.nio.file.Path;
+import java.util.ArrayList;
+import java.util.List;
+import java.util.Map;
+
 /**
- * TPC-DS 数据生成:用 teradata tpcds 库在 JVM 内生成行,按列类型解析成 Arrow
- * 向量,直接写 part 文件到表目录(绕过 SQL INSERT),并注册 catalog。
+ * TPC-DS 数据生成:用 teradata tpcds 库在 JVM 内生成行,按列类型解析成 Arrow 向量,直接写 part 文件到表目录(绕过 SQL INSERT),并注册
+ * catalog。
  */
 public class TpcdsDataGenerator {
 
     private static final int MAX_BATCH_ROWS = 4096;
 
     /**
-     * 维度表的单列主键(TPC-DS 标准)。给维度表建主键后,CBO 的
-     * RelMdDistinctRowCount 能算出 join 键的 distinct 值,否则 join 行数估算退化为
-     * 笛卡尔积(left×right),代价爆炸、plan 选错。事实表是复合主键,对估算帮助小,不设。
+     * 维度表的单列主键(TPC-DS 标准)。给维度表建主键后,CBO 的 RelMdDistinctRowCount 能算出 join 键的 distinct 值,否则 join
+     * 行数估算退化为 笛卡尔积(left×right),代价爆炸、plan 选错。事实表是复合主键,对估算帮助小,不设。
      */
     // TPC-DS 维度表标准主键。用于 CBO 的 RelMdDistinctRowCount 优化 join 估算。
     // 若 tableType 指定为 SIMPLE 则忽略主键（不传给 TableSchema）。
-    private static final Map<String, List<String>> PRIMARY_KEYS = Map.ofEntries(
-            Map.entry("call_center", List.of("cc_call_center_sk")),
-            Map.entry("catalog_page", List.of("cp_catalog_page_sk")),
-            Map.entry("customer", List.of("c_customer_sk")),
-            Map.entry("customer_address", List.of("ca_address_sk")),
-            Map.entry("customer_demographics", List.of("cd_demo_sk")),
-            Map.entry("date_dim", List.of("d_date_sk")),
-            Map.entry("household_demographics", List.of("hd_demo_sk")),
-            Map.entry("income_band", List.of("ib_income_band_sk")),
-            Map.entry("item", List.of("i_item_sk")),
-            Map.entry("promotion", List.of("p_promo_sk")),
-            Map.entry("reason", List.of("r_reason_sk")),
-            Map.entry("ship_mode", List.of("sm_ship_mode_sk")),
-            Map.entry("store", List.of("s_store_sk")),
-            Map.entry("time_dim", List.of("t_time_sk")),
-            Map.entry("warehouse", List.of("w_warehouse_sk")),
-            Map.entry("web_page", List.of("wp_web_page_sk")),
-            Map.entry("web_site", List.of("web_site_sk")));
+    private static final Map<String, List<String>> PRIMARY_KEYS =
+            Map.ofEntries(
+                    Map.entry("call_center", List.of("cc_call_center_sk")),
+                    Map.entry("catalog_page", List.of("cp_catalog_page_sk")),
+                    Map.entry("customer", List.of("c_customer_sk")),
+                    Map.entry("customer_address", List.of("ca_address_sk")),
+                    Map.entry("customer_demographics", List.of("cd_demo_sk")),
+                    Map.entry("date_dim", List.of("d_date_sk")),
+                    Map.entry("household_demographics", List.of("hd_demo_sk")),
+                    Map.entry("income_band", List.of("ib_income_band_sk")),
+                    Map.entry("item", List.of("i_item_sk")),
+                    Map.entry("promotion", List.of("p_promo_sk")),
+                    Map.entry("reason", List.of("r_reason_sk")),
+                    Map.entry("ship_mode", List.of("sm_ship_mode_sk")),
+                    Map.entry("store", List.of("s_store_sk")),
+                    Map.entry("time_dim", List.of("t_time_sk")),
+                    Map.entry("warehouse", List.of("w_warehouse_sk")),
+                    Map.entry("web_page", List.of("wp_web_page_sk")),
+                    Map.entry("web_site", List.of("web_site_sk")));
 
     public void generate(double scale, Path dataDir) {
         generate(scale, dataDir, StorageFormat.DEFAULT, null);
@@ -80,18 +82,33 @@ public class TpcdsDataGenerator {
         }
     }
 
-    private void generateTable(StorageManager storage, Session session, Table table,
-                                StorageFormat format, TableType tableType) {
+    private void generateTable(
+            StorageManager storage,
+            Session session,
+            Table table,
+            StorageFormat format,
+            TableType tableType) {
         List<ColumnMeta> columns = new ArrayList<>();
         for (com.teradata.tpcds.column.Column c : table.getColumns()) {
             columns.add(toColumnMeta(c));
         }
         // SIMPLE 类型不设主键（主键对 SimpleTable 无意义，且会触发 LSM 自动选择）
-        List<String> pk = tableType == TableType.SIMPLE
-                ? List.of()
-                : PRIMARY_KEYS.getOrDefault(table.getName().toLowerCase(), List.of());
-        TableSchema schema = new TableSchema("public", table.getName().toLowerCase(),
-                columns, pk, List.of(), List.of(), format, tableType, List.of(), null);
+        List<String> pk =
+                tableType == TableType.SIMPLE
+                        ? List.of()
+                        : PRIMARY_KEYS.getOrDefault(table.getName().toLowerCase(), List.of());
+        TableSchema schema =
+                new TableSchema(
+                        "public",
+                        table.getName().toLowerCase(),
+                        columns,
+                        pk,
+                        List.of(),
+                        List.of(),
+                        format,
+                        tableType,
+                        List.of(),
+                        null);
         TableHandle target = storage.createTable(schema);
 
         Results results = Results.constructResults(table, session);
@@ -123,14 +140,15 @@ public class TpcdsDataGenerator {
     /** tpcds 列类型 → MiniDB 列类型。IDENTIFIER 是 64 位代理键,落 BIGINT 防溢出。 */
     private static ColumnMeta toColumnMeta(com.teradata.tpcds.column.Column c) {
         com.teradata.tpcds.column.ColumnType.Base base = c.getType().getBase();
-        ColumnType type = switch (base) {
-            case INTEGER -> ColumnType.INTEGER;
-            case IDENTIFIER -> ColumnType.BIGINT;
-            case DECIMAL -> ColumnType.DECIMAL;
-            case VARCHAR, CHAR -> ColumnType.VARCHAR;
-            case DATE -> ColumnType.DATE;
-            case TIME -> ColumnType.TIME;
-        };
+        ColumnType type =
+                switch (base) {
+                    case INTEGER -> ColumnType.INTEGER;
+                    case IDENTIFIER -> ColumnType.BIGINT;
+                    case DECIMAL -> ColumnType.DECIMAL;
+                    case VARCHAR, CHAR -> ColumnType.VARCHAR;
+                    case DATE -> ColumnType.DATE;
+                    case TIME -> ColumnType.TIME;
+                };
         int precision = ColumnMeta.PRECISION_UNSET;
         int scale = ColumnMeta.SCALE_UNSET;
         if (base == com.teradata.tpcds.column.ColumnType.Base.DECIMAL) {
@@ -148,12 +166,14 @@ public class TpcdsDataGenerator {
         switch (column.type()) {
             case INTEGER -> ((IntVector) v).setSafe(row, Integer.parseInt(raw));
             case BIGINT -> ((BigIntVector) v).setSafe(row, Long.parseLong(raw));
-            case DECIMAL -> ((DecimalVector) v).setSafe(row,
-                    Kernels.scaleTo((DecimalVector) v, new BigDecimal(raw)));
+            case DECIMAL ->
+                    ((DecimalVector) v)
+                            .setSafe(row, Kernels.scaleTo((DecimalVector) v, new BigDecimal(raw)));
             case VARCHAR -> ((VarCharVector) v).setSafe(row, raw.getBytes(StandardCharsets.UTF_8));
             case DATE -> ((DateDayVector) v).setSafe(row, new DateString(raw).getDaysSinceEpoch());
             case TIME -> ((TimeMilliVector) v).setSafe(row, timeToMillis(raw));
-            default -> throw new IllegalArgumentException("unsupported tpcds type: " + column.type());
+            default ->
+                    throw new IllegalArgumentException("unsupported tpcds type: " + column.type());
         }
     }
 

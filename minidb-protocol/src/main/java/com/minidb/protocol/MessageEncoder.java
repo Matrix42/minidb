@@ -3,6 +3,7 @@ package com.minidb.protocol;
 import io.netty.buffer.ByteBuf;
 import io.netty.channel.ChannelHandlerContext;
 import io.netty.handler.codec.MessageToByteEncoder;
+
 import java.nio.charset.StandardCharsets;
 
 public class MessageEncoder extends MessageToByteEncoder<Message> {
@@ -40,8 +41,8 @@ public class MessageEncoder extends MessageToByteEncoder<Message> {
             out.writeInt(8);
             out.writeLong(r.cursorId());
         } else if (msg instanceof Message.ExecuteResponse r) {
-            byte[] err = r.error() == null
-                    ? new byte[0] : r.error().getBytes(StandardCharsets.UTF_8);
+            byte[] err =
+                    r.error() == null ? new byte[0] : r.error().getBytes(StandardCharsets.UTF_8);
             out.writeByte(MessageType.EXECUTE_RESPONSE);
             out.writeInt(8 + 1 + 4 + err.length);
             out.writeLong(r.requestId());
@@ -131,8 +132,8 @@ public class MessageEncoder extends MessageToByteEncoder<Message> {
             out.writeLong(r.requestId());
             out.writeByte(r.autoCommit() ? 1 : 0);
         } else if (msg instanceof Message.CommitResponse r) {
-            byte[] err = r.error() == null
-                    ? new byte[0] : r.error().getBytes(StandardCharsets.UTF_8);
+            byte[] err =
+                    r.error() == null ? new byte[0] : r.error().getBytes(StandardCharsets.UTF_8);
             out.writeByte(MessageType.COMMIT_RESPONSE);
             out.writeInt(8 + 1 + 4 + err.length);
             out.writeLong(r.requestId());

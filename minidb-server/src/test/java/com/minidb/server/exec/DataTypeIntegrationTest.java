@@ -1,16 +1,13 @@
 package com.minidb.server.exec;
-import com.minidb.storage.common.BatchIterator;
 
+import com.minidb.server.catalog.MiniDbCatalog;
+import com.minidb.server.stats.StatsManager;
+import com.minidb.server.storage.StorageManager;
+import com.minidb.storage.common.BatchIterator;
 import com.minidb.storage.common.ColumnMeta;
 import com.minidb.storage.common.ColumnType;
-import com.minidb.server.catalog.MiniDbCatalog;
 import com.minidb.storage.common.TableSchema;
-import com.minidb.server.storage.StorageManager;
-import com.minidb.server.stats.StatsManager;
-import java.math.BigDecimal;
-import java.nio.charset.StandardCharsets;
-import java.nio.file.Path;
-import java.util.List;
+
 import org.apache.arrow.memory.BufferAllocator;
 import org.apache.arrow.memory.RootAllocator;
 import org.apache.arrow.vector.DecimalVector;
@@ -27,23 +24,26 @@ import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
 
+import java.math.BigDecimal;
+import java.nio.charset.StandardCharsets;
+import java.nio.file.Path;
+import java.util.List;
+
 import static org.junit.jupiter.api.Assertions.assertArrayEquals;
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 /**
- * 端到端集成测试:证明 Task 1-9 引入的每个新标量类型都能走通 CREATE → INSERT(VALUES) →
- * SELECT round-trip,值语义正确、落正确的原生 Arrow 向量;并覆盖 DECIMAL 精确算术/聚合、
- * 比较过滤与重启持久化(precision/scale 不丢)。
+ * 端到端集成测试:证明 Task 1-9 引入的每个新标量类型都能走通 CREATE → INSERT(VALUES) → SELECT round-trip,值语义正确、落正确的原生 Arrow
+ * 向量;并覆盖 DECIMAL 精确算术/聚合、 比较过滤与重启持久化(precision/scale 不丢)。
  *
- * 各测试故意用单列表(每类型一表),避开 Calcite 对「含 CAST 的多行/多列 VALUES」生成
- * LogicalUnion 的历史坑(见 CLAUDE.md 坑 23);值断言直接读 VectorSchemaRoot 的向量取值。
+ * <p>各测试故意用单列表(每类型一表),避开 Calcite 对「含 CAST 的多行/多列 VALUES」生成 LogicalUnion 的历史坑(见 CLAUDE.md 坑
+ * 23);值断言直接读 VectorSchemaRoot 的向量取值。
  */
 class DataTypeIntegrationTest {
 
-    @TempDir
-    Path dataDir;
+    @TempDir Path dataDir;
     BufferAllocator allocator;
     MiniDbCatalog catalog;
     StorageManager storage;
@@ -78,7 +78,8 @@ class DataTypeIntegrationTest {
         QueryResult r = executor.execute("SELECT v FROM t ORDER BY v");
         VectorSchemaRoot root = rows(r);
         assertEquals(3, root.getRowCount());
-        assertTrue(root.getVector("v") instanceof SmallIntVector,
+        assertTrue(
+                root.getVector("v") instanceof SmallIntVector,
                 "expected SmallIntVector, got " + root.getVector("v").getClass().getSimpleName());
         SmallIntVector v = (SmallIntVector) root.getVector("v");
         assertEquals(-32768, v.get(0));
@@ -95,10 +96,12 @@ class DataTypeIntegrationTest {
         QueryResult r = executor.execute("SELECT r, f FROM t");
         VectorSchemaRoot root = rows(r);
         assertEquals(1, root.getRowCount());
-        assertTrue(root.getVector("r") instanceof Float4Vector,
+        assertTrue(
+                root.getVector("r") instanceof Float4Vector,
                 "expected Float4Vector for REAL, got "
                         + root.getVector("r").getClass().getSimpleName());
-        assertTrue(root.getVector("f") instanceof Float4Vector,
+        assertTrue(
+                root.getVector("f") instanceof Float4Vector,
                 "expected Float4Vector for FLOAT, got "
                         + root.getVector("f").getClass().getSimpleName());
         assertEquals(1.5f, ((Float4Vector) root.getVector("r")).get(0), 1e-6f);
@@ -119,7 +122,8 @@ class DataTypeIntegrationTest {
         QueryResult r = executor.execute("SELECT price FROM t ORDER BY price");
         VectorSchemaRoot root = rows(r);
         assertEquals(3, root.getRowCount());
-        assertTrue(root.getVector("price") instanceof DecimalVector,
+        assertTrue(
+                root.getVector("price") instanceof DecimalVector,
                 "expected DecimalVector, got "
                         + root.getVector("price").getClass().getSimpleName());
         DecimalVector v = (DecimalVector) root.getVector("price");
@@ -140,11 +144,14 @@ class DataTypeIntegrationTest {
         executor.execute("INSERT INTO t VALUES (42)");
         QueryResult r = executor.execute("SELECT qty FROM t");
         VectorSchemaRoot root = rows(r);
-        assertTrue(root.getVector("qty") instanceof DecimalVector,
+        assertTrue(
+                root.getVector("qty") instanceof DecimalVector,
                 "expected DecimalVector for NUMERIC, got "
                         + root.getVector("qty").getClass().getSimpleName());
-        assertEquals(0, new BigDecimal("42").compareTo(
-                ((DecimalVector) root.getVector("qty")).getObject(0)));
+        assertEquals(
+                0,
+                new BigDecimal("42")
+                        .compareTo(((DecimalVector) root.getVector("qty")).getObject(0)));
         root.close();
     }
 
@@ -156,11 +163,13 @@ class DataTypeIntegrationTest {
         QueryResult r = executor.execute("SELECT c FROM t");
         VectorSchemaRoot root = rows(r);
         assertEquals(1, root.getRowCount());
-        assertTrue(root.getVector("c") instanceof VarCharVector,
+        assertTrue(
+                root.getVector("c") instanceof VarCharVector,
                 "expected VarCharVector for CHAR, got "
                         + root.getVector("c").getClass().getSimpleName());
-        assertEquals("abc", new String(
-                ((VarCharVector) root.getVector("c")).get(0), StandardCharsets.UTF_8));
+        assertEquals(
+                "abc",
+                new String(((VarCharVector) root.getVector("c")).get(0), StandardCharsets.UTF_8));
         root.close();
     }
 
@@ -176,11 +185,13 @@ class DataTypeIntegrationTest {
         QueryResult r = executor.execute("SELECT nv FROM t");
         VectorSchemaRoot root = rows(r);
         assertEquals(1, root.getRowCount());
-        assertTrue(root.getVector("nv") instanceof VarCharVector,
+        assertTrue(
+                root.getVector("nv") instanceof VarCharVector,
                 "expected VarCharVector for NVARCHAR, got "
                         + root.getVector("nv").getClass().getSimpleName());
-        assertEquals("字符", new String(
-                ((VarCharVector) root.getVector("nv")).get(0), StandardCharsets.UTF_8));
+        assertEquals(
+                "字符",
+                new String(((VarCharVector) root.getVector("nv")).get(0), StandardCharsets.UTF_8));
         root.close();
     }
 
@@ -191,13 +202,16 @@ class DataTypeIntegrationTest {
         // ... NCHAR` 抛 ParseException。这是解析器上限,不是 MiniDB 存储/元数据层的问题:
         // 程序化建表 → 落盘 → 重载,ColumnType.NCHAR/NVARCHAR/BINARY 声明名经 Arrow
         // "minidb.type" 元数据仍端到端保真。
-        assertThrows(IllegalArgumentException.class,
-                () -> executor.execute("CREATE TABLE t (n NCHAR)"));
+        assertThrows(
+                IllegalArgumentException.class, () -> executor.execute("CREATE TABLE t (n NCHAR)"));
 
-        storage.createTable(new TableSchema("nt", List.of(
-                new ColumnMeta("n", ColumnType.NCHAR),
-                new ColumnMeta("nv", ColumnType.NVARCHAR),
-                new ColumnMeta("b", ColumnType.BINARY))));
+        storage.createTable(
+                new TableSchema(
+                        "nt",
+                        List.of(
+                                new ColumnMeta("n", ColumnType.NCHAR),
+                                new ColumnMeta("nv", ColumnType.NVARCHAR),
+                                new ColumnMeta("b", ColumnType.BINARY))));
         storage.close();
 
         MiniDbCatalog catalog2 = new MiniDbCatalog();
@@ -220,9 +234,9 @@ class DataTypeIntegrationTest {
         QueryResult r = executor.execute("SELECT tm FROM t");
         VectorSchemaRoot root = rows(r);
         assertEquals(1, root.getRowCount());
-        assertTrue(root.getVector("tm") instanceof TimeMilliVector,
-                "expected TimeMilliVector, got "
-                        + root.getVector("tm").getClass().getSimpleName());
+        assertTrue(
+                root.getVector("tm") instanceof TimeMilliVector,
+                "expected TimeMilliVector, got " + root.getVector("tm").getClass().getSimpleName());
         // 10:30:00 = 10*3600000 + 30*60000 = 37800000 毫秒(TimeMilliVector 存毫秒)。
         assertEquals(37_800_000, ((TimeMilliVector) root.getVector("tm")).get(0));
         root.close();
@@ -236,10 +250,11 @@ class DataTypeIntegrationTest {
         QueryResult r = executor.execute("SELECT b FROM t");
         VectorSchemaRoot root = rows(r);
         assertEquals(1, root.getRowCount());
-        assertTrue(root.getVector("b") instanceof VarBinaryVector,
-                "expected VarBinaryVector, got "
-                        + root.getVector("b").getClass().getSimpleName());
-        assertArrayEquals(new byte[]{(byte) 0xCA, (byte) 0xFE},
+        assertTrue(
+                root.getVector("b") instanceof VarBinaryVector,
+                "expected VarBinaryVector, got " + root.getVector("b").getClass().getSimpleName());
+        assertArrayEquals(
+                new byte[] {(byte) 0xCA, (byte) 0xFE},
                 ((VarBinaryVector) root.getVector("b")).get(0));
         root.close();
     }
@@ -253,12 +268,13 @@ class DataTypeIntegrationTest {
         QueryResult r = executor.execute("SELECT b FROM t");
         VectorSchemaRoot root = rows(r);
         assertEquals(1, root.getRowCount());
-        assertTrue(root.getVector("b") instanceof VarBinaryVector,
+        assertTrue(
+                root.getVector("b") instanceof VarBinaryVector,
                 "expected VarBinaryVector for BINARY, got "
                         + root.getVector("b").getClass().getSimpleName());
         byte[] value = ((VarBinaryVector) root.getVector("b")).get(0);
         assertEquals(2, value.length, "BINARY 不应补零到声明长度");
-        assertArrayEquals(new byte[]{(byte) 0xCA, (byte) 0xFE}, value);
+        assertArrayEquals(new byte[] {(byte) 0xCA, (byte) 0xFE}, value);
         root.close();
     }
 
@@ -269,7 +285,8 @@ class DataTypeIntegrationTest {
         QueryResult r = executor.execute("SELECT 0.1 + 0.2 AS x");
         VectorSchemaRoot root = rows(r);
         ValueVector x = root.getVector("x");
-        assertTrue(x instanceof DecimalVector,
+        assertTrue(
+                x instanceof DecimalVector,
                 "expected DecimalVector, got " + x.getClass().getSimpleName());
         // 0.1 + 0.2 在 DECIMAL 域必须精确为 0.3,而非 Float8 的 0.30000000000000004。
         assertEquals(0, new BigDecimal("0.3").compareTo((BigDecimal) x.getObject(0)));
@@ -282,24 +299,33 @@ class DataTypeIntegrationTest {
     void aggregateOverDecimalIncludesMinMax() {
         executor.execute("CREATE TABLE t (price DECIMAL(10,2))");
         executor.execute("INSERT INTO t VALUES (10.50), (20.50), (30.00)");
-        QueryResult r = executor.execute(
-                "SELECT SUM(price) AS s, AVG(price) AS a, MIN(price) AS mn, MAX(price) AS mx FROM t");
+        QueryResult r =
+                executor.execute(
+                        "SELECT SUM(price) AS s, AVG(price) AS a, MIN(price) AS mn, MAX(price) AS mx FROM t");
         VectorSchemaRoot root = rows(r);
-        for (String name : new String[]{"s", "a", "mn", "mx"}) {
-            assertTrue(root.getVector(name) instanceof DecimalVector,
-                    "expected DecimalVector for " + name + ", got "
+        for (String name : new String[] {"s", "a", "mn", "mx"}) {
+            assertTrue(
+                    root.getVector(name) instanceof DecimalVector,
+                    "expected DecimalVector for "
+                            + name
+                            + ", got "
                             + root.getVector(name).getClass().getSimpleName());
         }
-        assertEquals(0, new BigDecimal("61.00").compareTo(
-                (BigDecimal) root.getVector("s").getObject(0)));
+        assertEquals(
+                0,
+                new BigDecimal("61.00").compareTo((BigDecimal) root.getVector("s").getObject(0)));
         // AVG scale 提升为 6: 61.00 / 3 = 20.333333。
-        assertEquals(0, new BigDecimal("20.333333").compareTo(
-                (BigDecimal) root.getVector("a").getObject(0)));
+        assertEquals(
+                0,
+                new BigDecimal("20.333333")
+                        .compareTo((BigDecimal) root.getVector("a").getObject(0)));
         // MIN/MAX(DECIMAL) 早前评审标记为未测试:值经 Comparable 比较后落回 DecimalVector。
-        assertEquals(0, new BigDecimal("10.50").compareTo(
-                (BigDecimal) root.getVector("mn").getObject(0)));
-        assertEquals(0, new BigDecimal("30.00").compareTo(
-                (BigDecimal) root.getVector("mx").getObject(0)));
+        assertEquals(
+                0,
+                new BigDecimal("10.50").compareTo((BigDecimal) root.getVector("mn").getObject(0)));
+        assertEquals(
+                0,
+                new BigDecimal("30.00").compareTo((BigDecimal) root.getVector("mx").getObject(0)));
         root.close();
     }
 
@@ -307,18 +333,20 @@ class DataTypeIntegrationTest {
     void aggregateOverSmallInt() {
         executor.execute("CREATE TABLE t (x SMALLINT)");
         executor.execute("INSERT INTO t VALUES (1), (2), (3)");
-        QueryResult r = executor.execute(
-                "SELECT SUM(x) AS s, AVG(x) AS a, MIN(x) AS mn, MAX(x) AS mx FROM t");
+        QueryResult r =
+                executor.execute(
+                        "SELECT SUM(x) AS s, AVG(x) AS a, MIN(x) AS mn, MAX(x) AS mx FROM t");
         VectorSchemaRoot root = rows(r);
         // SUM/MIN/MAX(SMALLINT) -> SmallIntVector;AVG(SMALLINT) -> Float8Vector(精度提升)。
-        assertTrue(root.getVector("s") instanceof SmallIntVector,
-                "expected SmallIntVector for s");
-        assertTrue(root.getVector("a") instanceof Float8Vector,
-                "expected Float8Vector for a, got " + root.getVector("a").getClass().getSimpleName());
-        assertTrue(root.getVector("mn") instanceof SmallIntVector,
-                "expected SmallIntVector for mn");
-        assertTrue(root.getVector("mx") instanceof SmallIntVector,
-                "expected SmallIntVector for mx");
+        assertTrue(root.getVector("s") instanceof SmallIntVector, "expected SmallIntVector for s");
+        assertTrue(
+                root.getVector("a") instanceof Float8Vector,
+                "expected Float8Vector for a, got "
+                        + root.getVector("a").getClass().getSimpleName());
+        assertTrue(
+                root.getVector("mn") instanceof SmallIntVector, "expected SmallIntVector for mn");
+        assertTrue(
+                root.getVector("mx") instanceof SmallIntVector, "expected SmallIntVector for mx");
         assertEquals(6, ((SmallIntVector) root.getVector("s")).get(0));
         assertEquals(2.0, ((Float8Vector) root.getVector("a")).get(0), 0.001);
         assertEquals(1, ((SmallIntVector) root.getVector("mn")).get(0));
@@ -332,10 +360,12 @@ class DataTypeIntegrationTest {
         executor.execute("INSERT INTO t VALUES (1.5), (2.5)");
         QueryResult r = executor.execute("SELECT SUM(x) AS s, AVG(x) AS a FROM t");
         VectorSchemaRoot root = rows(r);
-        assertTrue(root.getVector("s") instanceof Float4Vector,
+        assertTrue(
+                root.getVector("s") instanceof Float4Vector,
                 "expected Float4Vector for SUM, got "
                         + root.getVector("s").getClass().getSimpleName());
-        assertTrue(root.getVector("a") instanceof Float4Vector,
+        assertTrue(
+                root.getVector("a") instanceof Float4Vector,
                 "expected Float4Vector for AVG, got "
                         + root.getVector("a").getClass().getSimpleName());
         assertEquals(4.0f, ((Float4Vector) root.getVector("s")).get(0), 1e-6f);
@@ -362,12 +392,15 @@ class DataTypeIntegrationTest {
         QueryResult rd = executor.execute("SELECT v FROM d WHERE v = 1.23");
         VectorSchemaRoot rootD = rows(rd);
         assertEquals(1, rootD.getRowCount());
-        assertEquals(0, new BigDecimal("1.23").compareTo(
-                ((DecimalVector) rootD.getVector("v")).getObject(0)));
+        assertEquals(
+                0,
+                new BigDecimal("1.23")
+                        .compareTo(((DecimalVector) rootD.getVector("v")).getObject(0)));
         rootD.close();
 
         executor.execute("CREATE TABLE tm (v TIME)");
-        executor.execute("INSERT INTO tm VALUES (TIME '09:00:00'), (TIME '10:30:00'), (TIME '11:00:00')");
+        executor.execute(
+                "INSERT INTO tm VALUES (TIME '09:00:00'), (TIME '10:30:00'), (TIME '11:00:00')");
         QueryResult rt = executor.execute("SELECT v FROM tm WHERE v >= TIME '10:30:00'");
         VectorSchemaRoot rootT = rows(rt);
         assertEquals(2, rootT.getRowCount());
@@ -381,8 +414,7 @@ class DataTypeIntegrationTest {
 
     @Test
     void restartPreservesColumnTypesAndDecimalScale() {
-        executor.execute("CREATE TABLE t "
-                + "(s SMALLINT, p DECIMAL(10,2), c CHAR, b BINARY)");
+        executor.execute("CREATE TABLE t " + "(s SMALLINT, p DECIMAL(10,2), c CHAR, b BINARY)");
         executor.execute("INSERT INTO t VALUES (1, 1.23, 'x', X'CAFE')");
         // close 触发 flushDirty,把表落盘到 data/<schema>/<table>.arrow。
         storage.close();
@@ -405,11 +437,17 @@ class DataTypeIntegrationTest {
                 VectorSchemaRoot batch = it.next();
                 assertEquals(1, batch.getRowCount());
                 assertEquals(1, ((SmallIntVector) batch.getVector("s")).get(0));
-                assertEquals(0, new BigDecimal("1.23").compareTo(
-                        ((DecimalVector) batch.getVector("p")).getObject(0)));
-                assertEquals("x", new String(
-                        ((VarCharVector) batch.getVector("c")).get(0), StandardCharsets.UTF_8));
-                assertArrayEquals(new byte[]{(byte) 0xCA, (byte) 0xFE},
+                assertEquals(
+                        0,
+                        new BigDecimal("1.23")
+                                .compareTo(((DecimalVector) batch.getVector("p")).getObject(0)));
+                assertEquals(
+                        "x",
+                        new String(
+                                ((VarCharVector) batch.getVector("c")).get(0),
+                                StandardCharsets.UTF_8));
+                assertArrayEquals(
+                        new byte[] {(byte) 0xCA, (byte) 0xFE},
                         ((VarBinaryVector) batch.getVector("b")).get(0));
             }
         } finally {
@@ -418,10 +456,10 @@ class DataTypeIntegrationTest {
     }
 
     /**
-     * Regression test for the window-function eager path: a SELECT with a window
-     * function (ROW_NUMBER) over a table containing SMALLINT and DECIMAL columns
-     * must not throw "cannot write value to <MinorType>" from MiniDbProject's
-     * writeObject, which previously only handled the 7 original types.
+     * Regression test for the window-function eager path: a SELECT with a window function
+     * (ROW_NUMBER) over a table containing SMALLINT and DECIMAL columns must not throw "cannot
+     * write value to <MinorType>" from MiniDbProject's writeObject, which previously only handled
+     * the 7 original types.
      */
     @Test
     void windowFunctionOverNewTypes() {
@@ -430,21 +468,26 @@ class DataTypeIntegrationTest {
         QueryResult r = executor.execute("SELECT s, price, ROW_NUMBER() OVER () FROM t");
         VectorSchemaRoot root = rows(r);
         assertEquals(1, root.getRowCount());
-        assertTrue(root.getVector("s") instanceof SmallIntVector,
+        assertTrue(
+                root.getVector("s") instanceof SmallIntVector,
                 "expected SmallIntVector, got " + root.getVector("s").getClass().getSimpleName());
         assertEquals(42, ((SmallIntVector) root.getVector("s")).get(0));
-        assertTrue(root.getVector("price") instanceof DecimalVector,
-                "expected DecimalVector, got " + root.getVector("price").getClass().getSimpleName());
-        assertEquals(0, new BigDecimal("123.45").compareTo(
-                (BigDecimal) root.getVector("price").getObject(0)));
+        assertTrue(
+                root.getVector("price") instanceof DecimalVector,
+                "expected DecimalVector, got "
+                        + root.getVector("price").getClass().getSimpleName());
+        assertEquals(
+                0,
+                new BigDecimal("123.45")
+                        .compareTo((BigDecimal) root.getVector("price").getObject(0)));
         // ROW_NUMBER over empty window with a single row must be 1
         assertEquals(1, ((Number) root.getVector(2).getObject(0)).intValue());
         root.close();
     }
 
     /**
-     * Window SUM over a DECIMAL column must accumulate as BigDecimal (exact),
-     * not via doubleValue() — 0.10+0.20 must be exactly 0.30, not a float.
+     * Window SUM over a DECIMAL column must accumulate as BigDecimal (exact), not via doubleValue()
+     * — 0.10+0.20 must be exactly 0.30, not a float.
      */
     @Test
     void windowSumDecimalIsExact() {
@@ -455,7 +498,8 @@ class DataTypeIntegrationTest {
         VectorSchemaRoot root = rows(r);
         assertEquals(2, root.getRowCount());
         ValueVector v = root.getVector(0);
-        assertTrue(v instanceof DecimalVector,
+        assertTrue(
+                v instanceof DecimalVector,
                 "expected DecimalVector, got " + v.getClass().getSimpleName());
         // Both rows share one window (no partition): SUM = 0.30 exactly.
         assertEquals(0, new BigDecimal("0.30").compareTo((BigDecimal) v.getObject(0)));

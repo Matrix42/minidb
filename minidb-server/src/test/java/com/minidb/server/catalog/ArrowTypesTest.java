@@ -1,7 +1,8 @@
 package com.minidb.server.catalog;
+
 import com.minidb.storage.common.ArrowTypes;
-import com.minidb.storage.common.ColumnType;
 import com.minidb.storage.common.ColumnMeta;
+import com.minidb.storage.common.ColumnType;
 
 import org.apache.arrow.memory.BufferAllocator;
 import org.apache.arrow.memory.RootAllocator;
@@ -42,24 +43,24 @@ class ArrowTypesTest {
 
     @Test
     void unknownTypeNameThrows() {
-        assertThrows(IllegalArgumentException.class,
-                () -> ArrowTypes.fromSqlTypeName("BLOB"));
+        assertThrows(IllegalArgumentException.class, () -> ArrowTypes.fromSqlTypeName("BLOB"));
     }
 
     @Test
     void arrowTypesMatchDesign() {
-        assertEquals(ArrowType.ArrowTypeID.Int,
-                ArrowTypes.arrowType(ColumnType.INTEGER, allocator).getTypeID());
-        assertEquals(ArrowType.ArrowTypeID.FloatingPoint,
-                ArrowTypes.arrowType(ColumnType.DOUBLE, allocator).getTypeID());
-        assertEquals(ArrowType.ArrowTypeID.Utf8,
-                ArrowTypes.arrowType(ColumnType.VARCHAR, allocator).getTypeID());
-        assertEquals(ArrowType.ArrowTypeID.Bool,
-                ArrowTypes.arrowType(ColumnType.BOOLEAN, allocator).getTypeID());
-        assertEquals(ArrowType.ArrowTypeID.Date,
-                ArrowTypes.arrowType(ColumnType.DATE, allocator).getTypeID());
-        assertEquals(ArrowType.ArrowTypeID.Timestamp,
-                ArrowTypes.arrowType(ColumnType.TIMESTAMP, allocator).getTypeID());
+        assertEquals(
+                ArrowType.ArrowTypeID.Int, ArrowTypes.arrowType(ColumnType.INTEGER).getTypeID());
+        assertEquals(
+                ArrowType.ArrowTypeID.FloatingPoint,
+                ArrowTypes.arrowType(ColumnType.DOUBLE).getTypeID());
+        assertEquals(
+                ArrowType.ArrowTypeID.Utf8, ArrowTypes.arrowType(ColumnType.VARCHAR).getTypeID());
+        assertEquals(
+                ArrowType.ArrowTypeID.Bool, ArrowTypes.arrowType(ColumnType.BOOLEAN).getTypeID());
+        assertEquals(ArrowType.ArrowTypeID.Date, ArrowTypes.arrowType(ColumnType.DATE).getTypeID());
+        assertEquals(
+                ArrowType.ArrowTypeID.Timestamp,
+                ArrowTypes.arrowType(ColumnType.TIMESTAMP).getTypeID());
     }
 
     @Test

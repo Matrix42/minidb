@@ -1,9 +1,8 @@
 package com.minidb.server.plan.physical;
 
-import com.minidb.storage.common.BatchIterator;
 import com.minidb.server.exec.ExecContext;
-import java.util.ArrayList;
-import java.util.List;
+import com.minidb.storage.common.BatchIterator;
+
 import org.apache.arrow.vector.VectorSchemaRoot;
 import org.apache.calcite.plan.RelOptCluster;
 import org.apache.calcite.plan.RelTraitSet;
@@ -11,12 +10,14 @@ import org.apache.calcite.rel.RelNode;
 import org.apache.calcite.rel.RelWriter;
 import org.apache.calcite.rel.SingleRel;
 
+import java.util.ArrayList;
+import java.util.List;
+
 /**
  * 公共子表达式消除(CSE):物化子树的执行结果,相同 key 的后续执行直接回放。
  *
- * <p>查询计划中相同子树(如 query65 的 ss⨝date_dim 出现两次)会被 Planner 的 CSE 遍历
- * 替换为共享的 MiniDbCse 节点。首次执行时物化全部批到 ExecContext 缓存,后续命中
- * 返回回放迭代器,避免重复执行昂贵的 Join/聚合。</p>
+ * <p>查询计划中相同子树(如 query65 的 ss⨝date_dim 出现两次)会被 Planner 的 CSE 遍历 替换为共享的 MiniDbCse 节点。首次执行时物化全部批到
+ * ExecContext 缓存,后续命中 返回回放迭代器,避免重复执行昂贵的 Join/聚合。
  */
 public final class MiniDbCse extends SingleRel implements MiniDbRel {
 
@@ -61,21 +62,25 @@ public final class MiniDbCse extends SingleRel implements MiniDbRel {
     }
 
     private BatchIterator replay(List<VectorSchemaRoot> batches) {
-        return BatchIterator.interruptible(new BatchIterator() {
-            int idx;
-            @Override
-            public boolean hasNext() {
-                return idx < batches.size();
-            }
-            @Override
-            public VectorSchemaRoot next() {
-                return batches.get(idx++);
-            }
-            @Override
-            public void close() {
-                // 批由 ExecContext 生命周期统一释放,不在此关
-            }
-        });
+        return BatchIterator.interruptible(
+                new BatchIterator() {
+                    int idx;
+
+                    @Override
+                    public boolean hasNext() {
+                        return idx < batches.size();
+                    }
+
+                    @Override
+                    public VectorSchemaRoot next() {
+                        return batches.get(idx++);
+                    }
+
+                    @Override
+                    public void close() {
+                        // 批由 ExecContext 生命周期统一释放,不在此关
+                    }
+                });
     }
 
     @Override

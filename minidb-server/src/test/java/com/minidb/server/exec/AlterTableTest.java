@@ -3,19 +3,20 @@ package com.minidb.server.exec;
 import com.minidb.server.catalog.MiniDbCatalog;
 import com.minidb.server.stats.StatsManager;
 import com.minidb.server.storage.StorageManager;
-import java.nio.file.Path;
-import java.util.ArrayList;
-import java.util.Arrays;
-import java.util.List;
+
 import org.apache.arrow.memory.BufferAllocator;
 import org.apache.arrow.memory.RootAllocator;
 import org.apache.arrow.vector.BigIntVector;
-import org.apache.arrow.vector.IntVector;
 import org.apache.arrow.vector.VectorSchemaRoot;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
+
+import java.nio.file.Path;
+import java.util.ArrayList;
+import java.util.Arrays;
+import java.util.List;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertNull;
@@ -24,8 +25,7 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
 
 class AlterTableTest {
 
-    @TempDir
-    Path dataDir;
+    @TempDir Path dataDir;
     BufferAllocator allocator;
     MiniDbCatalog catalog;
     StorageManager storage;
@@ -78,7 +78,8 @@ class AlterTableTest {
     void addNotNullColumnWithoutDefaultThrows() {
         executor.execute("CREATE TABLE t (id INTEGER)");
         executor.execute("INSERT INTO t VALUES (1)");
-        assertThrows(Exception.class, () -> executor.execute("ALTER TABLE t ADD c INTEGER NOT NULL"));
+        assertThrows(
+                Exception.class, () -> executor.execute("ALTER TABLE t ADD c INTEGER NOT NULL"));
     }
 
     @Test
@@ -87,7 +88,8 @@ class AlterTableTest {
         executor.execute("INSERT INTO t VALUES (1)");
         executor.execute("ALTER TABLE t ADD c INTEGER NOT NULL DEFAULT 7");
         assertEquals(List.of(7), column("SELECT c FROM t", "c"));
-        assertThrows(Exception.class, () -> executor.execute("INSERT INTO t (id, c) VALUES (2, NULL)"));
+        assertThrows(
+                Exception.class, () -> executor.execute("INSERT INTO t (id, c) VALUES (2, NULL)"));
     }
 
     @Test
@@ -126,7 +128,8 @@ class AlterTableTest {
         executor.execute("CREATE TABLE t (id INTEGER)");
         executor.execute("INSERT INTO t VALUES (1), (2)");
         executor.execute("ALTER TABLE t ALTER COLUMN id SET DATA TYPE BIGINT");
-        VectorSchemaRoot root = ((QueryResult.Rows) executor.execute("SELECT id FROM t ORDER BY id")).data();
+        VectorSchemaRoot root =
+                ((QueryResult.Rows) executor.execute("SELECT id FROM t ORDER BY id")).data();
         assertTrue(root.getVector("id") instanceof BigIntVector);
         assertEquals(1L, ((BigIntVector) root.getVector("id")).get(0));
         root.close();
@@ -136,7 +139,8 @@ class AlterTableTest {
     void alterTypeIncompatibleThrows() {
         executor.execute("CREATE TABLE t (s VARCHAR)");
         executor.execute("INSERT INTO t VALUES ('abc')");
-        assertThrows(Exception.class,
+        assertThrows(
+                Exception.class,
                 () -> executor.execute("ALTER TABLE t ALTER COLUMN s SET DATA TYPE INTEGER"));
     }
 
@@ -152,7 +156,8 @@ class AlterTableTest {
     void setNotNullWithExistingNullThrows() {
         executor.execute("CREATE TABLE t (id INTEGER)");
         executor.execute("INSERT INTO t VALUES (NULL)");
-        assertThrows(Exception.class, () -> executor.execute("ALTER TABLE t ALTER id SET NOT NULL"));
+        assertThrows(
+                Exception.class, () -> executor.execute("ALTER TABLE t ALTER id SET NOT NULL"));
     }
 
     @Test
@@ -186,8 +191,11 @@ class AlterTableTest {
         executor.execute("INSERT INTO parent VALUES (1)");
         executor.execute("CREATE TABLE child (pid INTEGER)");
         executor.execute("INSERT INTO child VALUES (99)");
-        assertThrows(Exception.class,
-                () -> executor.execute("ALTER TABLE child ADD FOREIGN KEY (pid) REFERENCES parent (id)"));
+        assertThrows(
+                Exception.class,
+                () ->
+                        executor.execute(
+                                "ALTER TABLE child ADD FOREIGN KEY (pid) REFERENCES parent (id)"));
     }
 
     @Test

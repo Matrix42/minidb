@@ -7,18 +7,7 @@ import com.minidb.server.stats.StatsManager;
 import com.minidb.server.storage.StorageManager;
 import com.minidb.storage.common.StorageFormat;
 import com.minidb.storage.common.TableType;
-import java.math.BigDecimal;
-import java.nio.file.Files;
-import java.nio.file.Path;
-import java.sql.Connection;
-import java.sql.DriverManager;
-import java.sql.ResultSet;
-import java.sql.Statement;
-import java.util.ArrayList;
-import java.util.Comparator;
-import java.util.List;
-import java.util.Map;
-import java.util.Objects;
+
 import org.apache.arrow.memory.BufferAllocator;
 import org.apache.arrow.memory.RootAllocator;
 import org.apache.arrow.vector.BigIntVector;
@@ -34,33 +23,46 @@ import org.apache.arrow.vector.VectorSchemaRoot;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
 
+import java.math.BigDecimal;
+import java.nio.file.Files;
+import java.nio.file.Path;
+import java.sql.Connection;
+import java.sql.DriverManager;
+import java.sql.ResultSet;
+import java.sql.Statement;
+import java.util.ArrayList;
+import java.util.Comparator;
+import java.util.List;
+import java.util.Map;
+import java.util.Objects;
+
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 /**
  * TPC-DS 查询正确性验证:用 DuckDB 作为参照数据库,对比 MiniDB 与 DuckDB 的查询结果。
  *
- * <p>数据生成后以 Parquet 格式落盘。DuckDB 通过 {@code read_parquet} 直接读取同一份
- * Parquet 文件,无需额外导入。同一个 SQL 字符串喂给两边,对比行数和排序后的内容。</p>
+ * <p>数据生成后以 Parquet 格式落盘。DuckDB 通过 {@code read_parquet} 直接读取同一份 Parquet 文件,无需额外导入。同一个 SQL
+ * 字符串喂给两边,对比行数和排序后的内容。
  *
- * <p>默认 0.01 scale(快测试,~10s)。0.01 scale 下 store 等维度表极稀疏(teradata 库
- * SF0.01 store=2),多数查询过滤条件命中 0 行,两边都 0 行仅作「空洞验证」(0==0,无数据可比)。
- * 不做空洞验证、要实质的行级对比,用 SF1 数据:</p>
+ * <p>默认 0.01 scale(快测试,~10s)。0.01 scale 下 store 等维度表极稀疏(teradata 库 SF0.01 store=2),多数查询过滤条件命中 0
+ * 行,两边都 0 行仅作「空洞验证」(0==0,无数据可比)。 不做空洞验证、要实质的行级对比,用 SF1 数据:
+ *
  * <pre>{@code
- *   # 前 10 条(默认):
- *   mvn test -pl minidb-tpcds -Dtest=TpcdsCorrectnessTest -Dtpcds.scale=1.0
- *   # 全 99 条(约 18 分钟):
- *   mvn test -pl minidb-tpcds -Dtest=TpcdsCorrectnessTest -Dtpcds.scale=1.0 -Dtpcds.full=true
- *   # 指定查询:
- *   mvn test -pl minidb-tpcds -Dtest=TpcdsCorrectnessTest -Dtpcds.scale=1.0 -Dtpcds.query=8,9,10
+ * # 前 10 条(默认):
+ * mvn test -pl minidb-tpcds -Dtest=TpcdsCorrectnessTest -Dtpcds.scale=1.0
+ * # 全 99 条(约 18 分钟):
+ * mvn test -pl minidb-tpcds -Dtest=TpcdsCorrectnessTest -Dtpcds.scale=1.0 -Dtpcds.full=true
+ * # 指定查询:
+ * mvn test -pl minidb-tpcds -Dtest=TpcdsCorrectnessTest -Dtpcds.scale=1.0 -Dtpcds.query=8,9,10
  * }</pre>
- * <p>SF1 下 store=12,customer=100000,查询条件命中率大幅提升,前 10 条中 9 条有实质数据
- * 可对比(0.01 下只有 2 条)。</p>
+ *
+ * <p>SF1 下 store=12,customer=100000,查询条件命中率大幅提升,前 10 条中 9 条有实质数据 可对比(0.01 下只有 2 条)。
  */
 class TpcdsCorrectnessTest {
 
     private static final int DEFAULT_LIMIT = 10;
-    /** 默认 0.01 scale(快测试)。更大 scale(1.0)数据更密集,更多查询返回非空,但生成慢,手动触发:
-     *  {@code -Dtpcds.scale=1.0}。 */
+
+    /** 默认 0.01 scale(快测试)。更大 scale(1.0)数据更密集,更多查询返回非空,但生成慢,手动触发: {@code -Dtpcds.scale=1.0}。 */
     private static final double SCALE =
             Double.parseDouble(System.getProperty("tpcds.scale", "0.01"));
 
@@ -76,7 +78,7 @@ class TpcdsCorrectnessTest {
             QueryExecutor miniDb = new QueryExecutor(catalog, storage, allocator, stats);
 
             try (Connection duckDb = DriverManager.getConnection("jdbc:duckdb:");
-                 Statement duckStmt = duckDb.createStatement()) {
+                    Statement duckStmt = duckDb.createStatement()) {
 
                 registerTables(duckStmt, catalog, dataDir);
 
@@ -114,7 +116,8 @@ class TpcdsCorrectnessTest {
                             continue;
                         }
                     }
-                    compareOne(e.getKey(), e.getValue(), miniDb, duckStmt, failures, skipped, vacuous);
+                    compareOne(
+                            e.getKey(), e.getValue(), miniDb, duckStmt, failures, skipped, vacuous);
                 }
 
                 int total = count;
@@ -129,7 +132,8 @@ class TpcdsCorrectnessTest {
                 if (!skipped.isEmpty()) {
                     System.out.println("  跳过查询: " + String.join(", ", skipped));
                 }
-                assertTrue(failures.isEmpty(),
+                assertTrue(
+                        failures.isEmpty(),
                         "结果不匹配(" + failures.size() + "条):\n" + String.join("\n", failures));
             }
             storage.close();
@@ -144,19 +148,30 @@ class TpcdsCorrectnessTest {
                 continue;
             }
             String path = tableDir.toAbsolutePath().toString().replace('\\', '/');
-            duckStmt.execute("CREATE VIEW \"" + tableName + "\" AS "
-                    + "SELECT * FROM read_parquet('" + path + "/*.parquet')");
+            duckStmt.execute(
+                    "CREATE VIEW \""
+                            + tableName
+                            + "\" AS "
+                            + "SELECT * FROM read_parquet('"
+                            + path
+                            + "/*.parquet')");
         }
     }
 
-    private void compareOne(String name, String sql, QueryExecutor miniDb, Statement duckStmt,
-                            List<String> failures, List<String> skipped, List<String> vacuous) {
+    private void compareOne(
+            String name,
+            String sql,
+            QueryExecutor miniDb,
+            Statement duckStmt,
+            List<String> failures,
+            List<String> skipped,
+            List<String> vacuous) {
         List<List<Object>> miniRows;
         try {
             miniRows = executeMiniDb(miniDb, sql);
         } catch (Exception ex) {
-            failures.add(name + ": MiniDB异常 " + ex.getClass().getSimpleName() + ": "
-                    + ex.getMessage());
+            failures.add(
+                    name + ": MiniDB异常 " + ex.getClass().getSimpleName() + ": " + ex.getMessage());
             return;
         }
 
@@ -180,8 +195,7 @@ class TpcdsCorrectnessTest {
         }
 
         if (miniRows.size() != duckRows.size()) {
-            failures.add(name + ": 行数不匹配 MiniDB=" + miniRows.size()
-                    + " DuckDB=" + duckRows.size());
+            failures.add(name + ": 行数不匹配 MiniDB=" + miniRows.size() + " DuckDB=" + duckRows.size());
             return;
         }
 
@@ -199,8 +213,18 @@ class TpcdsCorrectnessTest {
             if (!rowsEqual(miniRows.get(i), duckRows.get(i))) {
                 List<Object> ma = miniRows.get(i);
                 List<Object> da = duckRows.get(i);
-                failures.add(name + ": 第" + (i + 1) + "行不匹配 (sizes " + ma.size()
-                        + " vs " + da.size() + ") " + ma + " vs " + da);
+                failures.add(
+                        name
+                                + ": 第"
+                                + (i + 1)
+                                + "行不匹配 (sizes "
+                                + ma.size()
+                                + " vs "
+                                + da.size()
+                                + ") "
+                                + ma
+                                + " vs "
+                                + da);
                 return;
             }
         }
@@ -321,8 +345,11 @@ class TpcdsCorrectnessTest {
         if (isNumeric(a) && isNumeric(b)) {
             // 若任一方是浮点(DuckDB 对 AVG 等返回 Double),用相对容差比较,
             // 因为 MiniDB 的 DECIMAL 除法按 scale 舍入,DuckDB 用全精度 DOUBLE。
-            boolean anyFloating = a instanceof Double || a instanceof Float
-                    || b instanceof Double || b instanceof Float;
+            boolean anyFloating =
+                    a instanceof Double
+                            || a instanceof Float
+                            || b instanceof Double
+                            || b instanceof Float;
             if (anyFloating) {
                 double da = toBigDecimal(a).doubleValue();
                 double db = toBigDecimal(b).doubleValue();
@@ -358,10 +385,12 @@ class TpcdsCorrectnessTest {
             return ((Integer) b).intValue() == java.time.LocalDate.parse((String) a).toEpochDay();
         }
         if (a instanceof Integer && b instanceof java.sql.Time) {
-            return ((Integer) a).intValue() == (int) ((java.sql.Time) b).toLocalTime().toNanoOfDay() / 1_000_000;
+            return ((Integer) a).intValue()
+                    == (int) ((java.sql.Time) b).toLocalTime().toNanoOfDay() / 1_000_000;
         }
         if (b instanceof Integer && a instanceof java.sql.Time) {
-            return ((Integer) b).intValue() == (int) ((java.sql.Time) a).toLocalTime().toNanoOfDay() / 1_000_000;
+            return ((Integer) b).intValue()
+                    == (int) ((java.sql.Time) a).toLocalTime().toNanoOfDay() / 1_000_000;
         }
         if (a.getClass().equals(b.getClass())) {
             return Objects.equals(a, b);
@@ -396,8 +425,11 @@ class TpcdsCorrectnessTest {
     }
 
     private static boolean isNumeric(Object v) {
-        return v instanceof Integer || v instanceof Long || v instanceof Float
-                || v instanceof Double || v instanceof BigDecimal;
+        return v instanceof Integer
+                || v instanceof Long
+                || v instanceof Float
+                || v instanceof Double
+                || v instanceof BigDecimal;
     }
 
     private static BigDecimal toBigDecimal(Object v) {

@@ -2,8 +2,6 @@ package com.minidb.tpcds;
 
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
-import com.google.common.collect.Lists;
-
 
 import java.io.File;
 import java.io.IOException;
@@ -30,16 +28,16 @@ public class Main {
             JsonNode root = mapper.readTree(json);
             JsonNode queries = root.get("queries");
             AtomicLong total = new AtomicLong();
-            queries.elements().forEachRemaining(n -> {
-                total.addAndGet(n.get("elapsedMs").asLong());
-            });
+            queries.elements()
+                    .forEachRemaining(
+                            n -> {
+                                total.addAndGet(n.get("elapsedMs").asLong());
+                            });
             list.add(new Cmp(json.getName(), total.get() / 1000));
         }
         list.sort(Cmp::compareTo);
         for (Cmp cmp : list) {
             System.out.println(cmp.name + "->" + cmp.time);
         }
-
     }
-
 }

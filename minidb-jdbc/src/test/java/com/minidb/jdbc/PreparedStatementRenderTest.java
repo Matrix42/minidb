@@ -10,8 +10,7 @@ import java.util.TimeZone;
 import static org.junit.jupiter.api.Assertions.assertEquals;
 
 /**
- * PreparedStatement 参数渲染(bug #21):字符串字面量内的 ? 不得当占位符,注释里的 ? 同样,
- * SQL 转义引号 '' 必须正确保留(不得在第一个 ' 处截断)。
+ * PreparedStatement 参数渲染(bug #21):字符串字面量内的 ? 不得当占位符,注释里的 ? 同样, SQL 转义引号 '' 必须正确保留(不得在第一个 ' 处截断)。
  */
 class PreparedStatementRenderTest {
 

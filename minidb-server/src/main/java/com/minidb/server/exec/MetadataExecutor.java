@@ -1,16 +1,13 @@
 package com.minidb.server.exec;
 
-import com.minidb.storage.common.ArrowTypes;
-import com.minidb.storage.common.ColumnMeta;
-import com.minidb.storage.common.ColumnType;
 import com.minidb.server.catalog.InformationSchemaCatalog;
 import com.minidb.server.catalog.MiniDbCatalog;
 import com.minidb.server.catalog.ViewDefinition;
+import com.minidb.storage.common.ArrowTypes;
+import com.minidb.storage.common.ColumnMeta;
+import com.minidb.storage.common.ColumnType;
 import com.minidb.storage.common.TableSchema;
-import java.sql.Types;
-import java.util.ArrayList;
-import java.util.List;
-import java.util.regex.Pattern;
+
 import org.apache.arrow.memory.BufferAllocator;
 import org.apache.arrow.vector.IntVector;
 import org.apache.arrow.vector.SmallIntVector;
@@ -19,6 +16,11 @@ import org.apache.arrow.vector.VectorSchemaRoot;
 import org.apache.arrow.vector.types.pojo.ArrowType;
 import org.apache.arrow.vector.types.pojo.Field;
 import org.apache.arrow.vector.types.pojo.FieldType;
+
+import java.sql.Types;
+import java.util.ArrayList;
+import java.util.List;
+import java.util.regex.Pattern;
 
 public class MetadataExecutor {
 
@@ -74,7 +76,7 @@ public class MetadataExecutor {
                 tableNames.sort(String::compareTo);
                 for (String table : tableNames) {
                     if (tableLike != null && !tableLike.matcher(table).matches()) continue;
-                    rows.add(new String[]{schema, table, "TABLE"});
+                    rows.add(new String[] {schema, table, "TABLE"});
                 }
             }
 
@@ -83,7 +85,7 @@ public class MetadataExecutor {
                 tableNames.sort(String::compareTo);
                 for (String table : tableNames) {
                     if (tableLike != null && !tableLike.matcher(table).matches()) continue;
-                    rows.add(new String[]{schema, table, "SYSTEM TABLE"});
+                    rows.add(new String[] {schema, table, "SYSTEM TABLE"});
                 }
             }
 
@@ -96,7 +98,7 @@ public class MetadataExecutor {
                 viewNames.sort(String::compareTo);
                 for (String view : viewNames) {
                     if (tableLike != null && !tableLike.matcher(view).matches()) continue;
-                    rows.add(new String[]{schema, view, "VIEW"});
+                    rows.add(new String[] {schema, view, "VIEW"});
                 }
             }
         }
@@ -129,18 +131,28 @@ public class MetadataExecutor {
             name.setSafe(i, rows.get(i)[1].getBytes(java.nio.charset.StandardCharsets.UTF_8));
             type.setSafe(i, rows.get(i)[2].getBytes(java.nio.charset.StandardCharsets.UTF_8));
         }
-        for (VarCharVector v : new VarCharVector[]{cat, schem, name, type, remarks, typeCat, typeSchem, typeName, selfRef, refGen}) {
+        for (VarCharVector v :
+                new VarCharVector[] {
+                    cat, schem, name, type, remarks, typeCat, typeSchem, typeName, selfRef, refGen
+                }) {
             v.setValueCount(n);
         }
-        return VectorSchemaRoot.of(cat, schem, name, type, remarks, typeCat, typeSchem, typeName, selfRef, refGen);
+        return VectorSchemaRoot.of(
+                cat, schem, name, type, remarks, typeCat, typeSchem, typeName, selfRef, refGen);
     }
 
     private List<Field> tableFields() {
         return java.util.List.of(
-                field("TABLE_CAT"), field("TABLE_SCHEM"), field("TABLE_NAME"),
-                field("TABLE_TYPE"), field("REMARKS"), field("TYPE_CAT"),
-                field("TYPE_SCHEM"), field("TYPE_NAME"),
-                field("SELF_REFERENCING_COL_NAME"), field("REF_GENERATION"));
+                field("TABLE_CAT"),
+                field("TABLE_SCHEM"),
+                field("TABLE_NAME"),
+                field("TABLE_TYPE"),
+                field("REMARKS"),
+                field("TYPE_CAT"),
+                field("TYPE_SCHEM"),
+                field("TYPE_NAME"),
+                field("SELF_REFERENCING_COL_NAME"),
+                field("REF_GENERATION"));
     }
 
     private VarCharVector vc(String name, int capacity) {
@@ -154,7 +166,8 @@ public class MetadataExecutor {
         return new Field(name, FieldType.nullable(VARCHAR), java.util.List.of());
     }
 
-    public VectorSchemaRoot columns(String schemaPattern, String tableNamePattern, String columnNamePattern) {
+    public VectorSchemaRoot columns(
+            String schemaPattern, String tableNamePattern, String columnNamePattern) {
         Pattern schemaLike = compileLike(schemaPattern);
         Pattern tableLike = compileLike(tableNamePattern);
         Pattern colLike = compileLike(columnNamePattern);
@@ -213,7 +226,10 @@ public class MetadataExecutor {
             tableName.setSafe(i, r.table().getBytes(java.nio.charset.StandardCharsets.UTF_8));
             colName.setSafe(i, r.column().name().getBytes(java.nio.charset.StandardCharsets.UTF_8));
             dataType.setSafe(i, sqlType(r.column().type()));
-            typeName.setSafe(i, ArrowTypes.toSqlTypeName(r.column().type()).getBytes(java.nio.charset.StandardCharsets.UTF_8));
+            typeName.setSafe(
+                    i,
+                    ArrowTypes.toSqlTypeName(r.column().type())
+                            .getBytes(java.nio.charset.StandardCharsets.UTF_8));
             // DECIMAL/NUMERIC 报精度/小数位(JDBC COLUMN_SIZE/DECIMAL_DIGITS 语义),
             // 其余类型恒 0(ColumnMeta.precision/scale 对非 decimal 类型恒 UNSET=-1)。
             if (isDecimalType(r.column().type())) {
@@ -230,24 +246,71 @@ public class MetadataExecutor {
             boolean colNullable = Boolean.TRUE.equals(r.column().nullable());
             nullable.setSafe(i, colNullable ? 1 : 0);
             ordinal.setSafe(i, r.ordinal());
-            isNullable.setSafe(i, (colNullable ? "YES" : "NO")
-                    .getBytes(java.nio.charset.StandardCharsets.UTF_8));
+            isNullable.setSafe(
+                    i,
+                    (colNullable ? "YES" : "NO").getBytes(java.nio.charset.StandardCharsets.UTF_8));
             isAutoInc.setSafe(i, "NO".getBytes(java.nio.charset.StandardCharsets.UTF_8));
             isGenCol.setSafe(i, "NO".getBytes(java.nio.charset.StandardCharsets.UTF_8));
         }
-        for (VarCharVector v : new VarCharVector[]{tableCat, tableSchem, tableName, colName, typeName,
-                remarks, colDef, isNullable, scopeCat, scopeSchem, scopeTable, isAutoInc, isGenCol}) {
+        for (VarCharVector v :
+                new VarCharVector[] {
+                    tableCat,
+                    tableSchem,
+                    tableName,
+                    colName,
+                    typeName,
+                    remarks,
+                    colDef,
+                    isNullable,
+                    scopeCat,
+                    scopeSchem,
+                    scopeTable,
+                    isAutoInc,
+                    isGenCol
+                }) {
             v.setValueCount(n);
         }
-        for (IntVector v : new IntVector[]{dataType, colSize, bufLen, decDigits, numPrecRadix,
-                nullable, sqlDataType, sqlDateTimeSub, charOctetLen, ordinal}) {
+        for (IntVector v :
+                new IntVector[] {
+                    dataType,
+                    colSize,
+                    bufLen,
+                    decDigits,
+                    numPrecRadix,
+                    nullable,
+                    sqlDataType,
+                    sqlDateTimeSub,
+                    charOctetLen,
+                    ordinal
+                }) {
             v.setValueCount(n);
         }
         sourceDataType.setValueCount(n);
-        return VectorSchemaRoot.of(tableCat, tableSchem, tableName, colName, dataType, typeName,
-                colSize, bufLen, decDigits, numPrecRadix, nullable, remarks, colDef,
-                sqlDataType, sqlDateTimeSub, charOctetLen, ordinal, isNullable,
-                scopeCat, scopeSchem, scopeTable, sourceDataType, isAutoInc, isGenCol);
+        return VectorSchemaRoot.of(
+                tableCat,
+                tableSchem,
+                tableName,
+                colName,
+                dataType,
+                typeName,
+                colSize,
+                bufLen,
+                decDigits,
+                numPrecRadix,
+                nullable,
+                remarks,
+                colDef,
+                sqlDataType,
+                sqlDateTimeSub,
+                charOctetLen,
+                ordinal,
+                isNullable,
+                scopeCat,
+                scopeSchem,
+                scopeTable,
+                sourceDataType,
+                isAutoInc,
+                isGenCol);
     }
 
     private IntVector intVec(String name, int capacity) {

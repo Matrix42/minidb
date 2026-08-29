@@ -1,7 +1,5 @@
 package com.minidb.jdbc;
 
-import java.util.List;
-import java.util.Map;
 import org.apache.arrow.memory.RootAllocator;
 import org.apache.arrow.vector.IntVector;
 import org.apache.arrow.vector.VectorSchemaRoot;
@@ -11,14 +9,22 @@ import org.apache.arrow.vector.types.pojo.FieldType;
 import org.apache.arrow.vector.types.pojo.Schema;
 import org.junit.jupiter.api.Test;
 
+import java.util.List;
+import java.util.Map;
+
 import static org.junit.jupiter.api.Assertions.assertEquals;
 
 class SchemaMetadataTest {
 
     private VectorSchemaRoot rootWithSchema(String schemaName) {
-        Schema schema = new Schema(
-                List.of(new Field("id", FieldType.nullable(new ArrowType.Int(32, true)), List.of())),
-                schemaName == null ? null : Map.of("schema", schemaName));
+        Schema schema =
+                new Schema(
+                        List.of(
+                                new Field(
+                                        "id",
+                                        FieldType.nullable(new ArrowType.Int(32, true)),
+                                        List.of())),
+                        schemaName == null ? null : Map.of("schema", schemaName));
         VectorSchemaRoot root = VectorSchemaRoot.create(schema, new RootAllocator());
         root.allocateNew();
         ((IntVector) root.getVector(0)).setSafe(0, 1);

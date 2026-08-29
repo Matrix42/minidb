@@ -1,20 +1,7 @@
 package com.minidb.storage.parquet;
 
 import com.minidb.storage.common.PartFormat;
-import java.io.ByteArrayOutputStream;
-import java.io.EOFException;
-import java.io.IOException;
-import java.io.UncheckedIOException;
-import java.math.BigDecimal;
-import java.math.BigInteger;
-import java.nio.ByteBuffer;
-import java.nio.channels.FileChannel;
-import java.nio.charset.StandardCharsets;
-import java.nio.file.Files;
-import java.nio.file.Path;
-import java.nio.file.StandardOpenOption;
-import java.util.ArrayList;
-import java.util.List;
+
 import org.apache.arrow.memory.BufferAllocator;
 import org.apache.arrow.vector.BigIntVector;
 import org.apache.arrow.vector.BitVector;
@@ -56,16 +43,30 @@ import org.apache.parquet.schema.MessageType;
 import org.apache.parquet.schema.Type;
 import org.jspecify.annotations.NonNull;
 
+import java.io.ByteArrayOutputStream;
+import java.io.EOFException;
+import java.io.IOException;
+import java.io.UncheckedIOException;
+import java.math.BigDecimal;
+import java.math.BigInteger;
+import java.nio.ByteBuffer;
+import java.nio.channels.FileChannel;
+import java.nio.charset.StandardCharsets;
+import java.nio.file.Files;
+import java.nio.file.Path;
+import java.nio.file.StandardOpenOption;
+import java.util.ArrayList;
+import java.util.List;
+
 /**
  * Apache Parquet 格式的 part 读写。
  *
- * <p>parquet-arrow 1.18 只保留 Arrow↔Parquet 的 schema 映射({@link SchemaConverter}),
- * 数据转换的 {@code ArrowWriter}/{@code ArrowRecordConverter} 已移除,故此处手写
- * Arrow 向量 ↔ {@link Group} 的行级转换(逐类型 instanceof 分发)。
+ * <p>parquet-arrow 1.18 只保留 Arrow↔Parquet 的 schema 映射({@link SchemaConverter}), 数据转换的 {@code
+ * ArrowWriter}/{@code ArrowRecordConverter} 已移除,故此处手写 Arrow 向量 ↔ {@link Group} 的行级转换(逐类型 instanceof
+ * 分发)。
  *
- * <p>用 parquet-common 的 {@link InputFile}/{@link OutputFile} 走 Hadoop-free 路径
- * (parquet-hadoop 的 hadoop 依赖是 provided scope,运行时无 hadoop-common)。压缩用
- * UNCOMPRESSED,避免引入编解码器依赖;读写结果与 Arrow 格式逐值等价。
+ * <p>用 parquet-common 的 {@link InputFile}/{@link OutputFile} 走 Hadoop-free 路径 (parquet-hadoop 的
+ * hadoop 依赖是 provided scope,运行时无 hadoop-common)。压缩用 UNCOMPRESSED,避免引入编解码器依赖;读写结果与 Arrow 格式逐值等价。
  */
 public class ParquetPartFormat implements PartFormat {
 
@@ -96,12 +97,15 @@ public class ParquetPartFormat implements PartFormat {
     }
 
     /** 把 batch 编码为 parquet 写入给定 OutputFile(文件或内存,见 Nio/ByteArray 实现)。 */
-    private static void writeInto(OutputFile outputFile, VectorSchemaRoot batch) throws IOException {
-        MessageType parquetSchema = new SchemaConverter().fromArrow(batch.getSchema()).getParquetSchema();
+    private static void writeInto(OutputFile outputFile, VectorSchemaRoot batch)
+            throws IOException {
+        MessageType parquetSchema =
+                new SchemaConverter().fromArrow(batch.getSchema()).getParquetSchema();
         SimpleGroupFactory groups = new SimpleGroupFactory(parquetSchema);
-        ExampleParquetWriter.Builder builder = ExampleParquetWriter.builder(outputFile)
-                .withType(parquetSchema)
-                .withCompressionCodec(CompressionCodecName.UNCOMPRESSED);
+        ExampleParquetWriter.Builder builder =
+                ExampleParquetWriter.builder(outputFile)
+                        .withType(parquetSchema)
+                        .withCompressionCodec(CompressionCodecName.UNCOMPRESSED);
         try (ParquetWriter<Group> writer = builder.build()) {
             int rows = batch.getRowCount();
             List<FieldVector> vectors = batch.getFieldVectors();
@@ -124,8 +128,8 @@ public class ParquetPartFormat implements PartFormat {
     }
 
     @Override
-    public VectorSchemaRoot read(Path part, Schema schema, BufferAllocator allocator,
-                                   int[] projectedColumns) {
+    public VectorSchemaRoot read(
+            Path part, Schema schema, BufferAllocator allocator, int[] projectedColumns) {
         try (ParquetFileReader reader = openReader(part)) {
             return readAll(reader, schema, allocator, projectedColumns);
         } catch (IOException e) {
@@ -135,8 +139,8 @@ public class ParquetPartFormat implements PartFormat {
 
     @Override
     public VectorSchemaRoot read(byte[] data, Schema schema, BufferAllocator allocator) {
-        try (ParquetFileReader reader = ParquetFileReader.open(
-                new ByteArrayInputFile(data), options())) {
+        try (ParquetFileReader reader =
+                ParquetFileReader.open(new ByteArrayInputFile(data), options())) {
             return readAll(reader, schema, allocator, null);
         } catch (IOException e) {
             throw new UncheckedIOException(e);
@@ -144,8 +148,12 @@ public class ParquetPartFormat implements PartFormat {
     }
 
     /** 从已打开的 reader 读全部行组为一个 batch(列裁剪见 projectedColumns)。 */
-    private VectorSchemaRoot readAll(ParquetFileReader reader, Schema schema,
-                                     BufferAllocator allocator, int[] projectedColumns) throws IOException {
+    private VectorSchemaRoot readAll(
+            ParquetFileReader reader,
+            Schema schema,
+            BufferAllocator allocator,
+            int[] projectedColumns)
+            throws IOException {
         MessageType parquetSchema = reader.getFooter().getFileMetaData().getSchema();
         // 列裁剪:构建投影 schema 和 Parquet 列路径
         Schema projSchema;
@@ -191,7 +199,8 @@ public class ParquetPartFormat implements PartFormat {
             for (int r = 0; r < rows; r++) {
                 Group group = recordReader.read();
                 for (int groupCol = 0; groupCol < outCols; groupCol++) {
-                    int parquetCol = projectedColumns == null ? groupCol : projectedColumns[groupCol];
+                    int parquetCol =
+                            projectedColumns == null ? groupCol : projectedColumns[groupCol];
                     // 列裁剪时 Group 索引是投影后的位置(c),不是原列索引(parquetCol)
                     if (parquetCol < parquetSchema.getFieldCount()
                             && group.getFieldRepetitionCount(groupCol) > 0) {
@@ -215,10 +224,10 @@ public class ParquetPartFormat implements PartFormat {
     }
 
     /**
-     * 打开 reader,显式用 {@link PlainParquetConfiguration} 而非无参
-     * {@code ParquetReadOptions.builder()}:后者内部 {@code new HadoopParquetConfiguration()}
-     * 会触发 Hadoop Configuration 静态初始化(引 mapreduce 的 FileInputFormat),把运行时
-     * 重新拖回 hadoop-* 依赖。PlainParquetConfiguration 全程 Hadoop-free。
+     * 打开 reader,显式用 {@link PlainParquetConfiguration} 而非无参 {@code
+     * ParquetReadOptions.builder()}:后者内部 {@code new HadoopParquetConfiguration()} 会触发 Hadoop
+     * Configuration 静态初始化(引 mapreduce 的 FileInputFormat),把运行时 重新拖回 hadoop-*
+     * 依赖。PlainParquetConfiguration 全程 Hadoop-free。
      */
     private static ParquetFileReader openReader(Path part) throws IOException {
         return ParquetFileReader.open(new NioInputFile(part), options());
@@ -431,8 +440,12 @@ public class ParquetPartFormat implements PartFormat {
         private final FileChannel channel;
 
         NioPositionOutputStream(Path path) throws IOException {
-            this.channel = FileChannel.open(path,
-                    StandardOpenOption.CREATE, StandardOpenOption.WRITE, StandardOpenOption.TRUNCATE_EXISTING);
+            this.channel =
+                    FileChannel.open(
+                            path,
+                            StandardOpenOption.CREATE,
+                            StandardOpenOption.WRITE,
+                            StandardOpenOption.TRUNCATE_EXISTING);
         }
 
         @Override

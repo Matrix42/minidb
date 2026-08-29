@@ -1,9 +1,9 @@
 package com.minidb.server.exec;
 
 import com.minidb.server.catalog.MiniDbCatalog;
-import com.minidb.server.storage.StorageManager;
 import com.minidb.server.stats.StatsManager;
-import java.nio.file.Path;
+import com.minidb.server.storage.StorageManager;
+
 import org.apache.arrow.memory.BufferAllocator;
 import org.apache.arrow.memory.RootAllocator;
 import org.apache.arrow.vector.IntVector;
@@ -14,13 +14,14 @@ import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
 
+import java.nio.file.Path;
+
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 
 class InformationSchemaQueryTest {
 
-    @TempDir
-    Path dataDir;
+    @TempDir Path dataDir;
     BufferAllocator allocator;
     MiniDbCatalog catalog;
     StorageManager storage;
@@ -57,27 +58,27 @@ class InformationSchemaQueryTest {
 
     @Test
     void rejectsCreatingReservedSchema() {
-        assertThrows(IllegalArgumentException.class,
+        assertThrows(
+                IllegalArgumentException.class,
                 () -> executor.execute("CREATE SCHEMA information_schema"));
     }
 
     @Test
     void rejectsDroppingReservedSchema() {
-        assertThrows(IllegalArgumentException.class,
+        assertThrows(
+                IllegalArgumentException.class,
                 () -> executor.execute("DROP SCHEMA information_schema"));
     }
 
     @Test
     void selectsInformationSchemaColumns() {
         executor.execute("CREATE TABLE t (price DECIMAL(10,2))");
-        QueryResult select = executor.execute(
-                "SELECT * FROM information_schema.columns WHERE table_name = 't'");
+        QueryResult select =
+                executor.execute("SELECT * FROM information_schema.columns WHERE table_name = 't'");
         VectorSchemaRoot root = ((QueryResult.Rows) select).data();
         assertEquals(1, root.getRowCount());
-        assertEquals("price",
-                new String(((VarCharVector) root.getVector("COLUMN_NAME")).get(0)));
-        assertEquals("DECIMAL",
-                new String(((VarCharVector) root.getVector("DATA_TYPE")).get(0)));
+        assertEquals("price", new String(((VarCharVector) root.getVector("COLUMN_NAME")).get(0)));
+        assertEquals("DECIMAL", new String(((VarCharVector) root.getVector("DATA_TYPE")).get(0)));
         assertEquals(10, ((IntVector) root.getVector("NUMERIC_PRECISION")).get(0));
         assertEquals(2, ((IntVector) root.getVector("NUMERIC_SCALE")).get(0));
         root.close();

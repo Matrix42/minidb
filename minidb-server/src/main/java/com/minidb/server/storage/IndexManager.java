@@ -15,6 +15,13 @@ import com.minidb.storage.common.TableStorage;
 import com.minidb.storage.common.TableType;
 import com.minidb.storage.lsm.LSMBackgroundExecutor;
 import com.minidb.storage.lsm.LSMTable;
+
+import org.apache.arrow.memory.BufferAllocator;
+import org.apache.arrow.vector.FieldVector;
+import org.apache.arrow.vector.VectorSchemaRoot;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
+
 import java.io.IOException;
 import java.io.UncheckedIOException;
 import java.nio.file.DirectoryStream;
@@ -29,25 +36,18 @@ import java.util.Map;
 import java.util.Objects;
 import java.util.Set;
 import java.util.concurrent.ConcurrentHashMap;
-import org.apache.arrow.memory.BufferAllocator;
-import org.apache.arrow.vector.FieldVector;
-import org.apache.arrow.vector.VectorSchemaRoot;
-import org.slf4j.Logger;
-import org.slf4j.LoggerFactory;
 
 /**
  * 二级索引的存储管理。
  *
- * <p>每张数据表对应一组索引表,目录位于:
- * {@code data/<schema>/<table>/.indexes/<indexName>/}。这些索引表不进入 catalog,
- * 也不对 Calcite 暴露,仅用于查询加速与 UNIQUE 约束校验。</p>
+ * <p>每张数据表对应一组索引表,目录位于: {@code data/<schema>/<table>/.indexes/<indexName>/}。这些索引表不进入 catalog, 也不对
+ * Calcite 暴露,仅用于查询加速与 UNIQUE 约束校验。
  *
- * <p>索引表 schema = (索引列..., 数据主键列...),主键 = 全部列。合成 schema 的
- * PK 列会被 {@link TableSchema} 强制标为 NOT NULL,但这只是元数据;LSM 对 null
- * 主键按空串编码,UNIQUE 校验与查询路径通过跳过 null 键来避免语义问题。</p>
+ * <p>索引表 schema = (索引列..., 数据主键列...),主键 = 全部列。合成 schema 的 PK 列会被 {@link TableSchema} 强制标为 NOT
+ * NULL,但这只是元数据;LSM 对 null 主键按空串编码,UNIQUE 校验与查询路径通过跳过 null 键来避免语义问题。
  *
- * <p>索引表的 LSMTable 必须注册到 {@link LSMBackgroundExecutor},否则 MemTable
- * 写满后不会自动落盘(测试路径无后台时退化同步 flush,但仍需注册以获得 executor)。</p>
+ * <p>索引表的 LSMTable 必须注册到 {@link LSMBackgroundExecutor},否则 MemTable 写满后不会自动落盘(测试路径无后台时退化同步
+ * flush,但仍需注册以获得 executor)。
  */
 public class IndexManager {
 
@@ -66,9 +66,13 @@ public class IndexManager {
     // outer key = schema.table(小写);inner key = indexName(小写)
     private final Map<String, Map<String, TableHandle>> indexes = new ConcurrentHashMap<>();
 
-    IndexManager(MiniDbCatalog catalog, MiniDbConfig config, BufferAllocator allocator,
-                 Map<StorageFormat, PartFormat> formats, TableStorage tableStorage,
-                 LSMBackgroundExecutor lsmExecutor) {
+    IndexManager(
+            MiniDbCatalog catalog,
+            MiniDbConfig config,
+            BufferAllocator allocator,
+            Map<StorageFormat, PartFormat> formats,
+            TableStorage tableStorage,
+            LSMBackgroundExecutor lsmExecutor) {
         this.catalog = catalog;
         this.config = config;
         this.allocator = allocator;
@@ -78,9 +82,8 @@ public class IndexManager {
     }
 
     /**
-     * 合成索引表 schema。列序 = 索引列 + 数据表主键列,PK = 全部列。
-     * 列类型、precision/scale、nullable 均保留数据表原样,storageFormat 与数据表同款。
-     * 这是一个公共静态 helper,查询路径(MiniDbScan)需要复用同一合成逻辑。
+     * 合成索引表 schema。列序 = 索引列 + 数据表主键列,PK = 全部列。 列类型、precision/scale、nullable 均保留数据表原样,storageFormat
+     * 与数据表同款。 这是一个公共静态 helper,查询路径(MiniDbScan)需要复用同一合成逻辑。
      */
     public static TableSchema indexSchema(String schemaName, IndexDef def, TableSchema data) {
         List<ColumnMeta> cols = new ArrayList<>(def.columns().size() + data.primaryKey().size());
@@ -94,15 +97,22 @@ public class IndexManager {
         for (ColumnMeta c : cols) {
             pk.add(c.name());
         }
-        return new TableSchema(schemaName, def.name(), cols, pk, List.of(), List.of(),
-                data.storageFormat(), TableType.LSM, List.of(), null);
+        return new TableSchema(
+                schemaName,
+                def.name(),
+                cols,
+                pk,
+                List.of(),
+                List.of(),
+                data.storageFormat(),
+                TableType.LSM,
+                List.of(),
+                null);
     }
 
-    /**
-     * 创建索引表句柄,目录位于数据表目录下的 {@code .indexes/<name>}。
-     * 目录必须不存在;调用方负责后续 populate。
-     */
-    public TableHandle createIndex(String schemaName, String tableName, IndexDef def, TableSchema data) {
+    /** 创建索引表句柄,目录位于数据表目录下的 {@code .indexes/<name>}。 目录必须不存在;调用方负责后续 populate。 */
+    public TableHandle createIndex(
+            String schemaName, String tableName, IndexDef def, TableSchema data) {
         Path idxDir = indexDir(schemaName, tableName, def.name());
         if (Files.exists(idxDir)) {
             throw new IllegalArgumentException("index directory already exists: " + idxDir);
@@ -121,12 +131,11 @@ public class IndexManager {
     }
 
     /**
-     * 扫描数据表,把每行的(索引列..., 主键列...)提取出来批量写入索引表。
-     * LSMTable 的 scan() 返回超集语义(对索引表 key 无裁剪),但这里写入的是精确键,
+     * 扫描数据表,把每行的(索引列..., 主键列...)提取出来批量写入索引表。 LSMTable 的 scan() 返回超集语义(对索引表 key 无裁剪),但这里写入的是精确键,
      * 因此无超集问题。
-     * <p>若索引为 UNIQUE,在写入前逐批用 seen 集校验无重复(含存量与批内);冲突抛
-     * {@link IllegalArgumentException}。调用方(QueryExecutor.handleCreateIndex)
-     * 捕获异常后清理索引半成品。
+     *
+     * <p>若索引为 UNIQUE,在写入前逐批用 seen 集校验无重复(含存量与批内);冲突抛 {@link
+     * IllegalArgumentException}。调用方(QueryExecutor.handleCreateIndex) 捕获异常后清理索引半成品。
      */
     public void populateFromTable(IndexDef def, TableHandle dataTable, TableHandle indexTable) {
         TableSchema data = dataTable.schema();
@@ -161,11 +170,12 @@ public class IndexManager {
                         List<Object> idxKey = new ArrayList<>(idxPositions.size());
                         idxKey.addAll(Arrays.asList(key).subList(0, idxPositions.size()));
                         // null 键不参与唯一性
-                        if (idxKey.stream().noneMatch(Objects::isNull)
-                                && !seen.add(idxKey)) {
+                        if (idxKey.stream().noneMatch(Objects::isNull) && !seen.add(idxKey)) {
                             throw new IllegalArgumentException(
                                     "unique index constraint violation: "
-                                            + def.name() + " — duplicate key " + idxKey);
+                                            + def.name()
+                                            + " — duplicate key "
+                                            + idxKey);
                         }
                     }
                     buffer.add(key);
@@ -197,39 +207,45 @@ public class IndexManager {
     }
 
     public void onInsert(TableSchema data, VectorSchemaRoot dataBatch) {
-        applyToIndexes(data, (indexTable, idxPositions, pkPositions) -> {
-            List<Object[]> buffer = extractIndexRows(dataBatch, idxPositions, pkPositions);
-            writeBatch(indexTable, buffer, TableHandle.Operation.INSERT);
-        });
+        applyToIndexes(
+                data,
+                (indexTable, idxPositions, pkPositions) -> {
+                    List<Object[]> buffer = extractIndexRows(dataBatch, idxPositions, pkPositions);
+                    writeBatch(indexTable, buffer, TableHandle.Operation.INSERT);
+                });
     }
 
     public void onDelete(TableSchema data, VectorSchemaRoot dataBatch) {
-        applyToIndexes(data, (indexTable, idxPositions, pkPositions) -> {
-            List<Object[]> buffer = extractIndexRows(dataBatch, idxPositions, pkPositions);
-            writeBatch(indexTable, buffer, TableHandle.Operation.DELETE);
-        });
+        applyToIndexes(
+                data,
+                (indexTable, idxPositions, pkPositions) -> {
+                    List<Object[]> buffer = extractIndexRows(dataBatch, idxPositions, pkPositions);
+                    writeBatch(indexTable, buffer, TableHandle.Operation.DELETE);
+                });
     }
 
     public void onUpdate(TableSchema data, VectorSchemaRoot oldBatch, VectorSchemaRoot newBatch) {
-        applyToIndexes(data, (indexTable, idxPositions, pkPositions) -> {
-            int rows = oldBatch.getRowCount();
-            List<Object[]> toDelete = new ArrayList<>(rows);
-            List<Object[]> toInsert = new ArrayList<>(rows);
-            for (int r = 0; r < rows; r++) {
-                Object[] oldKey = extractIndexRow(oldBatch, r, idxPositions, pkPositions);
-                Object[] newKey = extractIndexRow(newBatch, r, idxPositions, pkPositions);
-                if (!keysEqual(oldKey, newKey)) {
-                    toDelete.add(oldKey);
-                    toInsert.add(newKey);
-                }
-            }
-            if (!toDelete.isEmpty()) {
-                writeBatch(indexTable, toDelete, TableHandle.Operation.DELETE);
-            }
-            if (!toInsert.isEmpty()) {
-                writeBatch(indexTable, toInsert, TableHandle.Operation.INSERT);
-            }
-        });
+        applyToIndexes(
+                data,
+                (indexTable, idxPositions, pkPositions) -> {
+                    int rows = oldBatch.getRowCount();
+                    List<Object[]> toDelete = new ArrayList<>(rows);
+                    List<Object[]> toInsert = new ArrayList<>(rows);
+                    for (int r = 0; r < rows; r++) {
+                        Object[] oldKey = extractIndexRow(oldBatch, r, idxPositions, pkPositions);
+                        Object[] newKey = extractIndexRow(newBatch, r, idxPositions, pkPositions);
+                        if (!keysEqual(oldKey, newKey)) {
+                            toDelete.add(oldKey);
+                            toInsert.add(newKey);
+                        }
+                    }
+                    if (!toDelete.isEmpty()) {
+                        writeBatch(indexTable, toDelete, TableHandle.Operation.DELETE);
+                    }
+                    if (!toInsert.isEmpty()) {
+                        writeBatch(indexTable, toInsert, TableHandle.Operation.INSERT);
+                    }
+                });
     }
 
     private void applyToIndexes(TableSchema data, IndexAction action) {
@@ -247,7 +263,11 @@ public class IndexManager {
         for (IndexDef def : data.indexes()) {
             TableHandle indexTable = map.get(key(def.name()));
             if (indexTable == null) {
-                LOG.warn("index handle missing: {}.{}.{}", data.schemaName(), data.name(), def.name());
+                LOG.warn(
+                        "index handle missing: {}.{}.{}",
+                        data.schemaName(),
+                        data.name(),
+                        def.name());
                 continue;
             }
             List<Integer> idxPositions = new ArrayList<>(def.columns().size());
@@ -263,9 +283,8 @@ public class IndexManager {
         void apply(TableHandle indexTable, List<Integer> idxPositions, List<Integer> pkPositions);
     }
 
-    private List<Object[]> extractIndexRows(VectorSchemaRoot batch,
-                                            List<Integer> idxPositions,
-                                            List<Integer> pkPositions) {
+    private List<Object[]> extractIndexRows(
+            VectorSchemaRoot batch, List<Integer> idxPositions, List<Integer> pkPositions) {
         List<Object[]> rows = new ArrayList<>(batch.getRowCount());
         for (int r = 0; r < batch.getRowCount(); r++) {
             rows.add(extractIndexRow(batch, r, idxPositions, pkPositions));
@@ -273,9 +292,11 @@ public class IndexManager {
         return rows;
     }
 
-    private Object[] extractIndexRow(VectorSchemaRoot batch, int row,
-                                     List<Integer> idxPositions,
-                                     List<Integer> pkPositions) {
+    private Object[] extractIndexRow(
+            VectorSchemaRoot batch,
+            int row,
+            List<Integer> idxPositions,
+            List<Integer> pkPositions) {
         Object[] key = new Object[idxPositions.size() + pkPositions.size()];
         int pos = 0;
         for (int col : idxPositions) {
@@ -307,7 +328,8 @@ public class IndexManager {
         if (rows.isEmpty()) {
             return;
         }
-        try (VectorSchemaRoot root = VectorSchemaRoot.create(ArrowTypes.arrowSchema(indexTable.schema()), allocator)) {
+        try (VectorSchemaRoot root =
+                VectorSchemaRoot.create(ArrowTypes.arrowSchema(indexTable.schema()), allocator)) {
             for (FieldVector v : root.getFieldVectors()) {
                 v.setInitialCapacity(rows.size());
                 v.allocateNew();
@@ -367,7 +389,8 @@ public class IndexManager {
             return;
         }
         String outer = storageKey(schemaName, tableName);
-        Map<String, TableHandle> map = indexes.computeIfAbsent(outer, k -> new ConcurrentHashMap<>());
+        Map<String, TableHandle> map =
+                indexes.computeIfAbsent(outer, k -> new ConcurrentHashMap<>());
         for (IndexDef def : data.indexes()) {
             Path idxDir = idxParent.resolve(def.name());
             if (!Files.exists(idxDir)) {
@@ -385,11 +408,18 @@ public class IndexManager {
         TableSchema schema = indexSchema(schemaName, def, data);
         PartFormat format = formats.get(data.storageFormat());
         if (format == null) {
-            throw new IllegalArgumentException("unknown storage format for index: " + data.storageFormat());
+            throw new IllegalArgumentException(
+                    "unknown storage format for index: " + data.storageFormat());
         }
-        return new LSMTable(schema, format, allocator, idxDir,
-                config.lsmMemtableSizeBytes(), config.lsmBloomBitsPerKey(),
-                config.lsmL0FileLimit(), config.lsmLevelSizeMultiplier());
+        return new LSMTable(
+                schema,
+                format,
+                allocator,
+                idxDir,
+                config.lsmMemtableSizeBytes(),
+                config.lsmBloomBitsPerKey(),
+                config.lsmL0FileLimit(),
+                config.lsmLevelSizeMultiplier());
     }
 
     private void closeAndUnregister(String key, TableHandle table) {

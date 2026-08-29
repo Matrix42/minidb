@@ -2,11 +2,10 @@ package com.minidb.server.exec;
 
 import com.minidb.server.calcite.MiniDbCalciteTable;
 import com.minidb.server.catalog.MiniDbCatalog;
-import com.minidb.storage.common.TableSchema;
 import com.minidb.server.stats.StatsManager;
 import com.minidb.server.storage.StorageManager;
-import java.nio.file.Path;
-import java.util.List;
+import com.minidb.storage.common.TableSchema;
+
 import org.apache.arrow.memory.BufferAllocator;
 import org.apache.arrow.memory.RootAllocator;
 import org.apache.arrow.vector.IntVector;
@@ -18,14 +17,16 @@ import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
 
+import java.nio.file.Path;
+import java.util.List;
+
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 class ConstraintTest {
 
-    @TempDir
-    Path dataDir;
+    @TempDir Path dataDir;
     BufferAllocator allocator;
     MiniDbCatalog catalog;
     StorageManager storage;
@@ -104,7 +105,8 @@ class ConstraintTest {
 
     @Test
     void getStatisticExposesKeys() {
-        executor.execute("CREATE TABLE t (id INTEGER PRIMARY KEY, name VARCHAR UNIQUE, age INTEGER)");
+        executor.execute(
+                "CREATE TABLE t (id INTEGER PRIMARY KEY, name VARCHAR UNIQUE, age INTEGER)");
         TableSchema schema = catalog.getTable("public", "t");
         Statistic statistic = new MiniDbCalciteTable(schema, catalog).getStatistic();
         List<ImmutableBitSet> keys = statistic.getKeys();
@@ -122,8 +124,7 @@ class ConstraintTest {
         assertEquals(false, schema.column("id").nullable());
         assertEquals(true, schema.column("name").nullable());
         executor.execute("INSERT INTO t VALUES (1, 'a')");
-        assertThrows(Exception.class,
-                () -> executor.execute("INSERT INTO t VALUES (NULL, 'x')"));
+        assertThrows(Exception.class, () -> executor.execute("INSERT INTO t VALUES (NULL, 'x')"));
     }
 
     @Test
@@ -134,8 +135,7 @@ class ConstraintTest {
         TableSchema schema = catalog.getTable("public", "t");
         assertEquals(false, schema.column("id").nullable());
         executor.execute("INSERT INTO t VALUES (1, 'a')");
-        assertThrows(Exception.class,
-                () -> executor.execute("INSERT INTO t VALUES (NULL, 'x')"));
+        assertThrows(Exception.class, () -> executor.execute("INSERT INTO t VALUES (NULL, 'x')"));
     }
 
     @Test
@@ -145,10 +145,8 @@ class ConstraintTest {
         assertEquals(false, schema.column("a").nullable());
         assertEquals(false, schema.column("b").nullable());
         // 任一主键列为 null 都被拒。
-        assertThrows(Exception.class,
-                () -> executor.execute("INSERT INTO t VALUES (NULL, 1)"));
-        assertThrows(Exception.class,
-                () -> executor.execute("INSERT INTO t VALUES (1, NULL)"));
+        assertThrows(Exception.class, () -> executor.execute("INSERT INTO t VALUES (NULL, 1)"));
+        assertThrows(Exception.class, () -> executor.execute("INSERT INTO t VALUES (1, NULL)"));
     }
 
     @Test

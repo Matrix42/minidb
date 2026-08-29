@@ -1,17 +1,18 @@
 package com.minidb.server.exec;
 
 import com.minidb.storage.common.BatchIterator;
-import java.util.ArrayList;
-import java.util.List;
+
 import org.apache.arrow.vector.FieldVector;
 import org.apache.arrow.vector.VectorSchemaRoot;
 import org.apache.arrow.vector.types.pojo.Schema;
 
+import java.util.ArrayList;
+import java.util.List;
+
 /**
- * A not-yet-consumed query result: the pull-mode iterator plus the execution
- * context it runs against. The server keeps this alive across fetch requests
- * (cursor paging); materialize() is the eager fallback used by the test-facing
- * {@link QueryExecutor#execute} entry point.
+ * A not-yet-consumed query result: the pull-mode iterator plus the execution context it runs
+ * against. The server keeps this alive across fetch requests (cursor paging); materialize() is the
+ * eager fallback used by the test-facing {@link QueryExecutor#execute} entry point.
  */
 public record CursorHandle(BatchIterator iterator, ExecContext context, Schema schema) {
 

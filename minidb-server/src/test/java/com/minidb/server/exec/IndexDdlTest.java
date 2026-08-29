@@ -1,20 +1,12 @@
 package com.minidb.server.exec;
 
-import static org.junit.jupiter.api.Assertions.assertEquals;
-import static org.junit.jupiter.api.Assertions.assertNotNull;
-import static org.junit.jupiter.api.Assertions.assertThrows;
-import static org.junit.jupiter.api.Assertions.assertTrue;
-
 import com.minidb.server.catalog.MiniDbCatalog;
-import com.minidb.server.plan.Planner;
 import com.minidb.server.stats.StatsManager;
 import com.minidb.server.storage.StorageManager;
 import com.minidb.storage.common.IndexDef;
 import com.minidb.storage.common.TableHandle;
 import com.minidb.storage.common.TableSchema;
-import java.nio.file.Files;
-import java.nio.file.Path;
-import java.util.List;
+
 import org.apache.arrow.memory.BufferAllocator;
 import org.apache.arrow.memory.RootAllocator;
 import org.junit.jupiter.api.AfterEach;
@@ -22,10 +14,18 @@ import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
 
+import java.nio.file.Files;
+import java.nio.file.Path;
+import java.util.List;
+
+import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertNotNull;
+import static org.junit.jupiter.api.Assertions.assertThrows;
+import static org.junit.jupiter.api.Assertions.assertTrue;
+
 class IndexDdlTest {
 
-    @TempDir
-    Path dataDir;
+    @TempDir Path dataDir;
 
     BufferAllocator allocator;
     MiniDbCatalog catalog;
@@ -111,51 +111,58 @@ class IndexDdlTest {
     @Test
     void dropIndexMissingThrows() {
         executor.execute("CREATE TABLE t (id INTEGER PRIMARY KEY, a INTEGER)");
-        assertThrows(IllegalArgumentException.class, () ->
-                executor.execute("DROP INDEX nope ON t"));
+        assertThrows(
+                IllegalArgumentException.class, () -> executor.execute("DROP INDEX nope ON t"));
     }
 
     @Test
     void noPrimaryKeyTableThrows() {
         executor.execute("CREATE TABLE t (id INTEGER, a INTEGER)");
-        assertThrows(IllegalArgumentException.class, () ->
-                executor.execute("CREATE INDEX idx_a ON t (a)"));
+        assertThrows(
+                IllegalArgumentException.class,
+                () -> executor.execute("CREATE INDEX idx_a ON t (a)"));
     }
 
     @Test
     void simpleTableThrows() {
-        executor.execute("CREATE TABLE t (id INTEGER NOT NULL PRIMARY KEY, a INTEGER) WITH ('type' = 'simple')");
-        assertThrows(IllegalArgumentException.class, () ->
-                executor.execute("CREATE INDEX idx_a ON t (a)"));
+        executor.execute(
+                "CREATE TABLE t (id INTEGER NOT NULL PRIMARY KEY, a INTEGER) WITH ('type' = 'simple')");
+        assertThrows(
+                IllegalArgumentException.class,
+                () -> executor.execute("CREATE INDEX idx_a ON t (a)"));
     }
 
     @Test
     void doubleColumnThrows() {
         executor.execute("CREATE TABLE t (id INTEGER PRIMARY KEY, d DOUBLE, a INTEGER)");
-        assertThrows(IllegalArgumentException.class, () ->
-                executor.execute("CREATE INDEX idx_d ON t (d)"));
+        assertThrows(
+                IllegalArgumentException.class,
+                () -> executor.execute("CREATE INDEX idx_d ON t (d)"));
     }
 
     @Test
     void missingColumnThrows() {
         executor.execute("CREATE TABLE t (id INTEGER PRIMARY KEY, a INTEGER)");
-        assertThrows(IllegalArgumentException.class, () ->
-                executor.execute("CREATE INDEX idx_x ON t (x)"));
+        assertThrows(
+                IllegalArgumentException.class,
+                () -> executor.execute("CREATE INDEX idx_x ON t (x)"));
     }
 
     @Test
     void duplicateIndexNameThrows() {
         executor.execute("CREATE TABLE t (id INTEGER PRIMARY KEY, a INTEGER, b INTEGER)");
         executor.execute("CREATE INDEX idx_a ON t (a)");
-        assertThrows(IllegalArgumentException.class, () ->
-                executor.execute("CREATE INDEX idx_a ON t (b)"));
+        assertThrows(
+                IllegalArgumentException.class,
+                () -> executor.execute("CREATE INDEX idx_a ON t (b)"));
     }
 
     @Test
     void duplicateColumnsInIndexThrows() {
         executor.execute("CREATE TABLE t (id INTEGER PRIMARY KEY, a INTEGER)");
-        assertThrows(IllegalArgumentException.class, () ->
-                executor.execute("CREATE INDEX idx ON t (a, a)"));
+        assertThrows(
+                IllegalArgumentException.class,
+                () -> executor.execute("CREATE INDEX idx ON t (a, a)"));
     }
 
     @Test

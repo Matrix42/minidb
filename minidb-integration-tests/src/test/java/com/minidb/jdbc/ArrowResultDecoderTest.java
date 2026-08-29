@@ -1,15 +1,17 @@
 package com.minidb.jdbc;
 
 import com.minidb.server.MiniDbServer;
+
+import org.junit.jupiter.api.AfterAll;
+import org.junit.jupiter.api.BeforeAll;
+import org.junit.jupiter.api.Test;
+
 import java.nio.file.Files;
 import java.sql.Connection;
 import java.sql.DriverManager;
 import java.sql.ResultSet;
 import java.sql.SQLException;
 import java.sql.Statement;
-import org.junit.jupiter.api.AfterAll;
-import org.junit.jupiter.api.BeforeAll;
-import org.junit.jupiter.api.Test;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
@@ -43,11 +45,10 @@ class ArrowResultDecoderTest {
     @Test
     void endToEndSelectDecodesArrow() throws Exception {
         try (Connection c = DriverManager.getConnection(url);
-             Statement s = c.createStatement()) {
+                Statement s = c.createStatement()) {
             s.execute("CREATE TABLE t (id INTEGER, name VARCHAR)");
             s.executeUpdate("INSERT INTO t VALUES (1, 'a'), (2, 'b')");
-            try (ResultSet rs = s.executeQuery(
-                    "SELECT id, name FROM t ORDER BY id")) {
+            try (ResultSet rs = s.executeQuery("SELECT id, name FROM t ORDER BY id")) {
                 assertTrue(rs.next());
                 assertEquals(1, rs.getInt(1));
                 assertEquals("a", rs.getString(2));
@@ -62,7 +63,7 @@ class ArrowResultDecoderTest {
     @Test
     void nullValuesReported() throws Exception {
         try (Connection c = DriverManager.getConnection(url);
-             Statement s = c.createStatement()) {
+                Statement s = c.createStatement()) {
             s.execute("CREATE TABLE n (id INTEGER, name VARCHAR)");
             s.executeUpdate("INSERT INTO n VALUES (1, NULL)");
             try (ResultSet rs = s.executeQuery("SELECT id, name FROM n")) {
@@ -77,11 +78,11 @@ class ArrowResultDecoderTest {
     @Test
     void whereOrderLimitWork() throws Exception {
         try (Connection c = DriverManager.getConnection(url);
-             Statement s = c.createStatement()) {
+                Statement s = c.createStatement()) {
             s.execute("CREATE TABLE w (id INTEGER)");
             s.executeUpdate("INSERT INTO w VALUES (5), (3), (8), (1)");
-            try (ResultSet rs = s.executeQuery(
-                    "SELECT id FROM w WHERE id > 2 ORDER BY id DESC LIMIT 2")) {
+            try (ResultSet rs =
+                    s.executeQuery("SELECT id FROM w WHERE id > 2 ORDER BY id DESC LIMIT 2")) {
                 assertTrue(rs.next());
                 assertEquals(8, rs.getInt(1));
                 assertTrue(rs.next());
@@ -94,16 +95,15 @@ class ArrowResultDecoderTest {
     @Test
     void badSqlThrowsSQLException() throws Exception {
         try (Connection c = DriverManager.getConnection(url);
-             Statement s = c.createStatement()) {
-            assertThrows(SQLException.class,
-                    () -> s.executeQuery("SELECT * FROM does_not_exist"));
+                Statement s = c.createStatement()) {
+            assertThrows(SQLException.class, () -> s.executeQuery("SELECT * FROM does_not_exist"));
         }
     }
 
     @Test
     void selectOverEmptyTableReturnsZeroRows() throws Exception {
         try (Connection c = DriverManager.getConnection(url);
-             Statement s = c.createStatement()) {
+                Statement s = c.createStatement()) {
             s.execute("CREATE TABLE e (id INTEGER, name VARCHAR)");
             try (ResultSet rs = s.executeQuery("SELECT id, name FROM e")) {
                 assertFalse(rs.next());

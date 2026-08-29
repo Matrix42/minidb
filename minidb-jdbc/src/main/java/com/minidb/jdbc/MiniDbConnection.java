@@ -1,6 +1,7 @@
 package com.minidb.jdbc;
 
 import com.minidb.protocol.Message;
+
 import java.sql.Array;
 import java.sql.Blob;
 import java.sql.CallableStatement;
@@ -144,7 +145,7 @@ public class MiniDbConnection implements Connection {
         // 主动探测连通性:发一个轻量查询,服务端宕机但未感知时也应返回 false,
         // 否则连接池会把失效连接分发给用户。失败(异常)一律视为失效。
         try (Statement stmt = createStatement();
-             java.sql.ResultSet rs = stmt.executeQuery("SELECT 1")) {
+                java.sql.ResultSet rs = stmt.executeQuery("SELECT 1")) {
             return true;
         } catch (SQLException e) {
             return false;
@@ -168,8 +169,7 @@ public class MiniDbConnection implements Connection {
     }
 
     @Override
-    public void setReadOnly(boolean readOnly) {
-    }
+    public void setReadOnly(boolean readOnly) {}
 
     @Override
     public boolean isReadOnly() {
@@ -177,8 +177,7 @@ public class MiniDbConnection implements Connection {
     }
 
     @Override
-    public void setCatalog(String catalog) {
-    }
+    public void setCatalog(String catalog) {}
 
     @Override
     public String getCatalog() {
@@ -201,8 +200,7 @@ public class MiniDbConnection implements Connection {
     }
 
     @Override
-    public void clearWarnings() {
-    }
+    public void clearWarnings() {}
 
     @Override
     public Statement createStatement(int resultSetType, int resultSetConcurrency)
@@ -211,14 +209,14 @@ public class MiniDbConnection implements Connection {
     }
 
     @Override
-    public PreparedStatement prepareStatement(String sql, int resultSetType,
-                                              int resultSetConcurrency) throws SQLException {
+    public PreparedStatement prepareStatement(
+            String sql, int resultSetType, int resultSetConcurrency) throws SQLException {
         return prepareStatement(sql);
     }
 
     @Override
-    public CallableStatement prepareCall(String sql, int resultSetType,
-                                         int resultSetConcurrency) throws SQLException {
+    public CallableStatement prepareCall(String sql, int resultSetType, int resultSetConcurrency)
+            throws SQLException {
         throw new SQLFeatureNotSupportedException();
     }
 
@@ -233,8 +231,7 @@ public class MiniDbConnection implements Connection {
     }
 
     @Override
-    public void setHoldability(int holdability) {
-    }
+    public void setHoldability(int holdability) {}
 
     @Override
     public int getHoldability() {
@@ -262,21 +259,22 @@ public class MiniDbConnection implements Connection {
     }
 
     @Override
-    public Statement createStatement(int resultSetType, int resultSetConcurrency,
-                                     int resultSetHoldability) throws SQLException {
+    public Statement createStatement(
+            int resultSetType, int resultSetConcurrency, int resultSetHoldability)
+            throws SQLException {
         return createStatement();
     }
 
     @Override
-    public PreparedStatement prepareStatement(String sql, int resultSetType,
-                                              int resultSetConcurrency, int resultSetHoldability)
+    public PreparedStatement prepareStatement(
+            String sql, int resultSetType, int resultSetConcurrency, int resultSetHoldability)
             throws SQLException {
         return prepareStatement(sql);
     }
 
     @Override
-    public CallableStatement prepareCall(String sql, int resultSetType,
-                                         int resultSetConcurrency, int resultSetHoldability)
+    public CallableStatement prepareCall(
+            String sql, int resultSetType, int resultSetConcurrency, int resultSetHoldability)
             throws SQLException {
         throw new SQLFeatureNotSupportedException();
     }
@@ -288,8 +286,7 @@ public class MiniDbConnection implements Connection {
     }
 
     @Override
-    public PreparedStatement prepareStatement(String sql, int[] columnIndexes)
-            throws SQLException {
+    public PreparedStatement prepareStatement(String sql, int[] columnIndexes) throws SQLException {
         return prepareStatement(sql);
     }
 
@@ -320,12 +317,10 @@ public class MiniDbConnection implements Connection {
     }
 
     @Override
-    public void setClientInfo(String name, String value) throws SQLClientInfoException {
-    }
+    public void setClientInfo(String name, String value) throws SQLClientInfoException {}
 
     @Override
-    public void setClientInfo(Properties properties) throws SQLClientInfoException {
-    }
+    public void setClientInfo(Properties properties) throws SQLClientInfoException {}
 
     @Override
     public String getClientInfo(String name) {
@@ -374,8 +369,7 @@ public class MiniDbConnection implements Connection {
     }
 
     @Override
-    public void setNetworkTimeout(Executor executor, int milliseconds) {
-    }
+    public void setNetworkTimeout(Executor executor, int milliseconds) {}
 
     @Override
     public int getNetworkTimeout() {

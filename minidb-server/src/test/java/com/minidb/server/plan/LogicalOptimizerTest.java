@@ -7,11 +7,9 @@ import com.minidb.server.plan.physical.MiniDbFilter;
 import com.minidb.server.plan.physical.MiniDbJoin;
 import com.minidb.server.plan.physical.MiniDbScan;
 import com.minidb.server.plan.physical.MiniDbSort;
-import com.minidb.server.storage.StorageManager;
 import com.minidb.server.stats.StatsManager;
-import java.nio.file.Path;
-import java.util.ArrayList;
-import java.util.List;
+import com.minidb.server.storage.StorageManager;
+
 import org.apache.arrow.memory.BufferAllocator;
 import org.apache.arrow.memory.RootAllocator;
 import org.apache.arrow.vector.VectorSchemaRoot;
@@ -19,13 +17,16 @@ import org.apache.calcite.rel.RelNode;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
 
+import java.nio.file.Path;
+import java.util.ArrayList;
+import java.util.List;
+
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 class LogicalOptimizerTest {
 
-    @TempDir
-    Path dataDir;
+    @TempDir Path dataDir;
 
     @Test
     void filterIsPushedIntoJoinInputs() {
@@ -46,9 +47,12 @@ class LogicalOptimizerTest {
                 assertTrue(join != null, "plan has no join: " + plan);
                 // FilterPushDown: join 的输入中应有过滤——可能是 MiniDbFilter 或
                 // 下推到 Scan 的 MiniDbScan(含 pushedFilter)
-                assertTrue(isDirectInput(join, MiniDbFilter.class)
-                                || isDirectInput(join, MiniDbScan.class, scan ->
-                                        ((MiniDbScan) scan).pushedFilter() != null),
+                assertTrue(
+                        isDirectInput(join, MiniDbFilter.class)
+                                || isDirectInput(
+                                        join,
+                                        MiniDbScan.class,
+                                        scan -> ((MiniDbScan) scan).pushedFilter() != null),
                         "filter should be pushed into join inputs, plan=" + plan);
 
                 List<String> rows = rows(executor, sql);
@@ -74,7 +78,8 @@ class LogicalOptimizerTest {
                 String sql = "SELECT * FROM t WHERE id = 1 ORDER BY id";
                 RelNode plan = new Planner(catalog).plan(sql);
                 // WHERE id=1 makes the sort key constant, so the Sort is redundant.
-                assertTrue(!containsSort(plan),
+                assertTrue(
+                        !containsSort(plan),
                         "sort should be removed when the sort key is constant, plan=" + plan);
 
                 List<String> rows = rows(executor, sql);
@@ -120,8 +125,8 @@ class LogicalOptimizerTest {
         return false;
     }
 
-    private static boolean isDirectInput(MiniDbJoin join, Class<?> clazz,
-                                          java.util.function.Predicate<RelNode> pred) {
+    private static boolean isDirectInput(
+            MiniDbJoin join, Class<?> clazz, java.util.function.Predicate<RelNode> pred) {
         for (RelNode input : join.getInputs()) {
             if (clazz.isInstance(input) && pred.test(input)) {
                 return true;
@@ -141,8 +146,8 @@ class LogicalOptimizerTest {
                     if (c > 0) {
                         sb.append('|');
                     }
-                    sb.append(root.getVector(c).isNull(r)
-                            ? "NULL" : root.getVector(c).getObject(r));
+                    sb.append(
+                            root.getVector(c).isNull(r) ? "NULL" : root.getVector(c).getObject(r));
                 }
                 out.add(sb.toString());
             }

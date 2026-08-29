@@ -1,15 +1,17 @@
 package com.minidb.server.exec;
 
 import com.minidb.server.catalog.MiniDbCatalog;
-import com.minidb.server.storage.StorageManager;
 import com.minidb.server.stats.StatsManager;
-import java.nio.file.Path;
+import com.minidb.server.storage.StorageManager;
+
 import org.apache.arrow.memory.BufferAllocator;
 import org.apache.arrow.memory.RootAllocator;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
+
+import java.nio.file.Path;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
@@ -18,8 +20,7 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
 
 class SchemaDdlTest {
 
-    @TempDir
-    Path dataDir;
+    @TempDir Path dataDir;
     BufferAllocator allocator;
     MiniDbCatalog catalog;
     StorageManager storage;
@@ -57,8 +58,7 @@ class SchemaDdlTest {
     @Test
     void createDuplicateSchemaThrows() {
         executor.execute("CREATE SCHEMA other", "public");
-        assertThrows(Exception.class,
-                () -> executor.execute("CREATE SCHEMA other", "public"));
+        assertThrows(Exception.class, () -> executor.execute("CREATE SCHEMA other", "public"));
     }
 
     @Test
@@ -84,8 +84,7 @@ class SchemaDdlTest {
 
     @Test
     void useSchemaMissingThrows() {
-        assertThrows(Exception.class,
-                () -> executor.execute("USE SCHEMA ghost", "public"));
+        assertThrows(Exception.class, () -> executor.execute("USE SCHEMA ghost", "public"));
     }
 
     @Test
@@ -129,8 +128,10 @@ class SchemaDdlTest {
         executor.execute("INSERT INTO other.t VALUES (7)", "other");
         QueryResult r = executor.execute("SELECT id FROM t", "other");
         assertTrue(r instanceof QueryResult.Rows);
-        assertEquals(7, ((org.apache.arrow.vector.IntVector)
-                ((QueryResult.Rows) r).data().getVector(0)).get(0));
+        assertEquals(
+                7,
+                ((org.apache.arrow.vector.IntVector) ((QueryResult.Rows) r).data().getVector(0))
+                        .get(0));
         ((QueryResult.Rows) r).data().close();
     }
 }
