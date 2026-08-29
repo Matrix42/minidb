@@ -145,7 +145,9 @@ public class SSTableWriter {
         // 把 rows 转成 VectorSchemaRoot 然后用 PartFormat 编码为内存字节
         VectorSchemaRoot root = rowsToRoot(rows);
         try {
-            // 直接编码进字节数组,不落临时文件(format.writeToBytes 内存编码)
+            // 块头 = rows(2) + dataLen(4)。rows 计数是历史格式的一部分,保留写入——
+            // 旧版本写入的 .sst 文件含该字段,新版本读取时跳过它以保持对齐(见
+            // SSTableReader.ScanIterator),删除它会让旧文件块头错位 → EOF。
             byte[] blockBytes = format.writeToBytes(root);
             ByteBuffer buf = ByteBuffer.allocate(2 + 4 + blockBytes.length);
             buf.putShort((short) rows.size());
@@ -299,6 +301,8 @@ public class SSTableWriter {
         // 页脚内容: magic(6) + level(1) + blockCount(4) + rowCount(8)
         //   + minKeyLen(2) + minBytes + maxKeyLen(2) + maxBytes
         //   + indexOffset(8) + bloomOffset(8)
+        // blockCount 是历史格式的一部分,保留写入——旧版本 .sst 文件含该字段,
+        // 新版本读取时跳过它以保持对齐(SSTableReader),删除它会让旧文件页脚错位 → EOF。
         int footerLen = 6 + 1 + 4 + 8 + 2 + minBytes.length + 2 + maxBytes.length + 8 + 8;
         ByteBuffer footer = ByteBuffer.allocate(footerLen + FOOTER_LEN_SIZE);
         footer.put(MAGIC);

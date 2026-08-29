@@ -50,6 +50,10 @@ public class SSTableReader implements AutoCloseable {
                 throw new IllegalArgumentException("not a valid SSTable: " + file);
             }
             int level = footerBuf.get();
+            // 跳过历史格式的 blockCount(4)——读取方不使用它(block 数从 index block 的
+            // entryCount 取),但旧版本写入的 .sst 文件含该字段,必须消耗字节保持对齐,
+            // 否则 rowCount/minKeyLen 读到错位字节 → decodeKey EOF(重启回归)。
+            footerBuf.getInt();
             long rowCount = footerBuf.getLong();
             short minKeyLen = footerBuf.getShort();
             byte[] minKeyBytes = new byte[minKeyLen];
@@ -249,10 +253,13 @@ public class SSTableReader implements AutoCloseable {
             public VectorSchemaRoot next() {
                 BlockIndex bi = blockIndex.get(idx++);
                 try {
+                    // 块头 = rows(2) + dataLen(4)。rows 计数读取方不使用(行数从 Arrow
+                    // 数据恢复),但旧版本写入的 .sst 文件含该字段,必须消耗字节保持对齐。
                     ByteBuffer header = ByteBuffer.allocate(6);
                     channel.position(bi.offset);
                     readFully(channel, header);
                     header.flip();
+                    header.getShort();
                     int dataLen = header.getInt();
                     ByteBuffer data = ByteBuffer.allocate(dataLen);
                     readFully(channel, data);
