@@ -1,1 +1,1 @@
-E:/jdbc server/AGENTS.md
+@../AGENTS.md
