@@ -38,25 +38,14 @@ public final class MiniDbCse extends SingleRel implements MiniDbRel {
         if (cached != null) {
             return replay(cached);
         }
-        // 首次执行:物化全部批
+        // 首次执行:物化输入到单一 owned root(数据深拷贝到新 root),再关源迭代器。
+        // 不能直接收集源迭代器发出的批并缓存——所有权模型是「批归迭代器所有」,
+        // 源迭代器 close 会释放它发出的批(如 MiniDbAggregate 的迭代器 close 关
+        // 输出 root),缓存已释放的批 → 回放读到 null。materializeToRoot 先拷贝
+        // 到自有 root 再安全 close 源,缓存的生命周期由 ExecContext 统一释放。
+        VectorSchemaRoot materialized = RowVectors.materializeToRoot(getInput(), ctx);
         List<VectorSchemaRoot> batches = new ArrayList<>();
-        BatchIterator it = ((MiniDbRel) getInput()).execute(ctx);
-        try {
-            while (it.hasNext()) {
-                batches.add(it.next());
-            }
-        } catch (RuntimeException e) {
-            it.close();
-            // 释放已收集的批
-            for (VectorSchemaRoot b : batches) {
-                b.close();
-            }
-            throw e;
-        } finally {
-            // 不在此 close it——批已转移给 batches,it.close() 会关源迭代器
-            // 但批的所有权在我们这,it.close() 安全
-            it.close();
-        }
+        batches.add(materialized);
         ctx.putCseCache(key, batches);
         return replay(batches);
     }
