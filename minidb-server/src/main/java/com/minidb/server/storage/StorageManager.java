@@ -402,7 +402,11 @@ public class StorageManager implements AutoCloseable {
 
     @Override
     public void close() {
-        // 先关闭所有 LSMTable(flush MemTable + 关闭 WAL),再关闭后台线程。
+        // 先停后台线程并等 compaction/flush 全部结束,再关表——否则正在运行的 compaction
+        // 仍持有 allocator 引用,lsmExecutor.close() 若在表关闭之后才执行(或 await 超时),
+        // compaction 会用到已关闭的 allocator → IllegalStateException + 内存泄漏
+        // (TpcdsDataGenerator 大表 bulk load 触发连续 compaction,5s 等待不够)。
+        lsmExecutor.close();
         for (TableHandle table : tables.values()) {
             if (table instanceof LSMTable) {
                 try {
@@ -412,7 +416,6 @@ public class StorageManager implements AutoCloseable {
                 }
             }
         }
-        lsmExecutor.close();
         txLog.close();
     }
 

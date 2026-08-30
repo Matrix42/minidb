@@ -1,6 +1,6 @@
 # MiniDB
 
-基于 **Apache Calcite**(SQL 解析/规划)+ **Apache Arrow**(列式存储)+ **Netty**(网络协议)自研的微型 JDBC 数据库。
+基于 **Apache Calcite**(SQL 解析/规划)+ **Apache Arrow**(列式存储)+ **Netty**(网络协议)自研的单机 JDBC 数据库。
 
 单机、零配置文件开箱即用,支持完整的 SQL 语法(JOIN / 递归 CTE / 窗口函数 / 物化视图 / 二级索引 / 事务),数据以列式批次(Arrow)在内存中处理、持久化为 Parquet / Arrow IPC 文件,提供自研 JDBC 驱动(`jdbc:minidb://host:port`)与 sqlline 命令行客户端。
 

@@ -170,18 +170,19 @@ public class Planner {
     }
 
     /** 计算子树的结构哈希(不含 RelNode 实例 ID)。Join/Aggregate 递归包含子节点哈希, 其他节点用 explainTerms 去掉实例 ID 的部分。 */
+    /**
+     * 计算子树的结构哈希(不含 RelNode 实例 ID)。递归包含全部子节点,因为 Calcite 的 getDigest() 把输入只渲染成类型名 (如
+     * input=MiniDbScan),不带子节点细节——若只用自身 digest,不同 filter 的 Scan 子树会得到相同哈希,导致 CSE 错误合并语义 不同的子树(如两个
+     * only 过滤范围不同的 count(*) 标量子查询)。
+     */
     private static String structuralDigest(RelNode node) {
         StringBuilder sb = new StringBuilder();
         sb.append(node.getClass().getSimpleName());
         // 用 explainTerms 输出,去掉 #id 后缀
         sb.append('{').append(inputStrippedDigest(node)).append('}');
-        // 追加子节点信息
+        // 追加全部子节点信息(递归)
         for (RelNode input : node.getInputs()) {
-            if (input instanceof MiniDbJoin || input instanceof MiniDbAggregate) {
-                sb.append('(').append(structuralDigest(input)).append(')');
-            } else {
-                sb.append('[').append(inputStrippedDigest(input)).append(']');
-            }
+            sb.append('(').append(structuralDigest(input)).append(')');
         }
         return sb.toString();
     }
@@ -544,9 +545,17 @@ public class Planner {
         // MiniDbJoin.copyProjectionTo),重建/CSE 不会丢投影导致上层引用错位。
         List<Integer> leftNeededList = new ArrayList<>(leftNeeded);
         List<Integer> rightNeededList = new ArrayList<>(rightNeeded);
+        // count(*) 等不引用 join 任何输出列时 neededCols 为空:若把 join 输出投影成 0 列,
+        // buildOutput 产出 0 向量 root → rowCount=0 → 上层聚合看到 0 行(count(*) 恒 0)。
+        // join 至少要输出一列才能携带匹配行数,故补上首个 join 条件列作为「行数载体」
+        // (count(*) 聚合忽略该列,不增加逻辑列)。
+        List<Integer> effectiveNeeded = new ArrayList<>(neededCols);
+        if (effectiveNeeded.isEmpty() && !leftNeededList.isEmpty()) {
+            effectiveNeeded.add(leftNeededList.get(0));
+        }
         RelNode newLeft = pruneColumns(join.getLeft(), leftNeededList);
         RelNode newRight = pruneColumns(join.getRight(), rightNeededList);
-        if (isIdentity(neededCols, total)
+        if (isIdentity(effectiveNeeded, total)
                 && newLeft == join.getLeft()
                 && newRight == join.getRight()) {
             return new Pruned(join, identityList(total));
@@ -568,22 +577,22 @@ public class Planner {
         for (int k : rightNeededList) {
             joinOrder.add(leftCols + k);
         }
-        if (!isIdentity(neededCols, total) && newJoin instanceof MiniDbJoin j) {
+        if (!isIdentity(effectiveNeeded, total) && newJoin instanceof MiniDbJoin j) {
             // join 输出投影到上层需要的列(条件列内部保留不输出):buildOutput 按投影列
             // 输出 + rowType 收窄——避免插额外 Project(插 Project 会让每层多一次全列
             // 拷贝,反而负优化)。投影数组是 newJoin 输出索引(左 needed + 右 needed 拼接序),
-            // 即原输出列 neededCols[k] 在 joinOrder 中的位置。
-            int[] proj = new int[neededCols.size()];
-            for (int k = 0; k < neededCols.size(); k++) {
-                proj[k] = joinOrder.indexOf(neededCols.get(k));
+            // 即原输出列 effectiveNeeded[k] 在 joinOrder 中的位置。
+            int[] proj = new int[effectiveNeeded.size()];
+            for (int k = 0; k < effectiveNeeded.size(); k++) {
+                proj[k] = joinOrder.indexOf(effectiveNeeded.get(k));
                 if (proj[k] < 0) {
-                    throw new IllegalStateException("join 输出列不在裁剪结果中: " + neededCols.get(k));
+                    throw new IllegalStateException("join 输出列不在裁剪结果中: " + effectiveNeeded.get(k));
                 }
             }
             j.setOutputProjection(
-                    proj, neededCols, join.getCluster().getTypeFactory(), join.getRowType());
-            // join 输出列序 = neededCols 序(投影序)
-            return new Pruned(newJoin, neededCols);
+                    proj, effectiveNeeded, join.getCluster().getTypeFactory(), join.getRowType());
+            // join 输出列序 = effectiveNeeded 序(投影序)
+            return new Pruned(newJoin, effectiveNeeded);
         }
         return new Pruned(newJoin, joinOrder);
     }
@@ -656,6 +665,16 @@ public class Planner {
             neededInput.addAll(call.getArgList());
             if (call.filterArg >= 0) {
                 neededInput.add(call.filterArg);
+            }
+        }
+        // count(*) 等无参数聚合且无 group 时(如 SELECT count(*) FROM t1, t2),
+        // 输入没有任何列被引用:若把输入裁剪成 0 列,Scan 产出 0 向量 root →
+        // rowCount=0 → 聚合看到 0 行,count(*) 恒 0。join 场景已在 pruneJoin 补了
+        // 行数载体列,但聚合输入若直接是单表/子查询,这里也必须保留至少一列。
+        if (neededInput.isEmpty()) {
+            int inCols = aggregate.getInput().getRowType().getFieldCount();
+            if (inCols > 0) {
+                neededInput.add(0); // 保留首列作「行数载体」,count(*) 忽略其值
             }
         }
         List<Integer> neededInputList = new ArrayList<>(neededInput);

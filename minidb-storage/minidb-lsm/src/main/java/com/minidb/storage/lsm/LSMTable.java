@@ -173,6 +173,10 @@ public class LSMTable implements TableHandle {
 
     /**
      * 按列投影包装迭代器:每批把所选列的 buffer 零拷贝转移(transfer)到新 root。 源批被转移的列 buffer 变空,close 由 source 迭代器统一处理。
+     *
+     * <p>空投影(cols 为空数组,如 count(*) 的裁剪)也要保持「每行一条批」的行数语义: {@code VectorSchemaRoot.of(0 个向量)} 的
+     * rowCount 会退化推导为 0(见本文件 {@code projectColumns}),故空投影用 setRowCount 显式补回行数,保证上层聚合 读到正确行数。非空投影下
+     * of() 已按首个向量 valueCount 设值,无需处理。
      */
     private BatchIterator projectColumns(BatchIterator source, int[] cols) {
         if (cols == null) {
